@@ -206,10 +206,16 @@ impl LauncherApp {
                                         )
                                         .fill(p.accent_subtle)
                                         .rounding(Rounding::same(8.0));
-                                        if ui.add(restart_btn).on_hover_text("Restart this remote server").clicked() {
-                                            let restart_cmd = build_remote_restart_cmd(&l.name, l.port, l.pid);
-                                            self.run_remote_ssh_command(host, &restart_cmd, Some(ui.ctx().clone()));
-                                            self.schedule_remote_scan(host, 2000, ui.ctx().clone());
+                                        let restart_cmd = build_remote_restart_cmd(l, host.port);
+                                        if ui.add_enabled(restart_cmd.is_some(), restart_btn)
+                                            .on_hover_text("Restart the verified systemd service")
+                                            .on_disabled_hover_text("Restart requires a verified TCP listener outside the SSH service.")
+                                            .clicked()
+                                        {
+                                            if let Some(command) = restart_cmd {
+                                                self.run_remote_ssh_command(host, &command, Some(ui.ctx().clone()));
+                                                self.schedule_remote_scan(host, 2000, ui.ctx().clone());
+                                            }
                                         }
 
                                         ui.menu_button(RichText::new("⋯").size(11.0), |ui| {

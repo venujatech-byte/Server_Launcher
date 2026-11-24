@@ -68,30 +68,37 @@ pub fn guess_remote_start_cmd(name: &str, port: u16) -> String {
     }
 }
 
-pub fn build_remote_restart_cmd(name: &str, port: u16, pid: Option<u32>) -> String {
-    let clean_svc = clean_service_name(name);
-    let pid_str = pid.map(|p| p.to_string()).unwrap_or_default();
-    format!(
-r#"echo "[launcher] Restarting {name} on port {port}..."; \
-if [ -n "{clean_svc}" ] && sudo systemctl is-active --quiet "{clean_svc}" 2>/dev/null; then \
-    sudo systemctl restart "{clean_svc}" && echo "[launcher] {clean_svc} restarted via systemd."; \
-elif [ -n "{pid_str}" ]; then \
-    CMD=$(tr '\0' ' ' < /proc/{pid_str}/cmdline 2>/dev/null || ps -p {pid_str} -o args= 2>/dev/null); \
-    CWD=$(readlink /proc/{pid_str}/cwd 2>/dev/null || echo "."); \
-    kill -15 {pid_str} 2>/dev/null || kill -9 {pid_str} 2>/dev/null; \
-    sleep 1; \
-    if [ -n "$CMD" ]; then \
-        (cd "$CWD" && nohup $CMD >/dev/null 2>&1 &); \
-        echo "[launcher] Relaunched: $CMD"; \
-    elif [ -n "{clean_svc}" ]; then \
-        sudo systemctl restart "{clean_svc}" 2>/dev/null || true; \
-    fi; \
-elif [ -n "{clean_svc}" ]; then \
-    sudo systemctl restart "{clean_svc}" 2>/dev/null || echo "[launcher] systemctl restart {clean_svc} failed."; \
-else \
-    echo "[launcher] Could not determine restart command for port {port}."; \
-fi"#
-    )
+pub fn build_remote_restart_cmd(listener: &RemoteListener, ssh_port: u16) -> Option<String> {
+    let pid = listener.pid.filter(|&pid| pid > 1)?;
+    let marker = listener.start_marker?;
+    let name = listener.name.to_ascii_lowercase();
+    if !listener.proto.eq_ignore_ascii_case("tcp")
+        || matches!(listener.port, 22) || listener.port == ssh_port
+        || name == "ssh" || name.split(|c: char| !c.is_ascii_alphanumeric()).any(|part| part == "sshd")
+    {
+        return None;
+    }
+    let unit = clean_service_name(&listener.name);
+    if unit.is_empty() || unit.starts_with('-')
+        || !unit.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"_.@-".contains(&byte))
+    {
+        return None;
+    }
+    let unit = shell_quote(&unit);
+    Some(format!(r#"set -f
+if [ "$(systemctl show --property=MainPID --value -- {unit})" != "{pid}" ]; then
+    echo '[launcher] Restart requires a systemd service whose main process owns this listener.' >&2
+    exit 1
+fi
+if ! IFS= read -r stat < /proc/{pid}/stat; then
+    exit 1
+fi
+set -- ${{stat##*) }}
+if [ "${{20}}" != "{marker}" ]; then
+    echo '[launcher] Process changed or exited. Scan again before restarting.' >&2
+    exit 1
+fi
+sudo -n -- systemctl restart -- {unit}"#))
 }
 
 pub fn build_remote_start_cmd(name: &str, port: u16, custom_cmd: Option<&str>) -> String {
@@ -113,47 +120,6 @@ else \
     echo "[launcher] No start command configured for port {port}."; \
 fi"#
     )
-}
-
-#[allow(dead_code)]
-pub fn build_remote_stop_all_cmd(listeners: &[RemoteListener], host_port: u16) -> String {
-    let targets: Vec<_> = listeners.iter().filter(|l| l.port != host_port && l.port != 22).collect();
-    if targets.is_empty() {
-        return "echo '[launcher] No non-SSH servers to stop.'".to_string();
-    }
-    let pids: Vec<String> = targets.iter().filter_map(|l| l.pid.map(|p| p.to_string())).collect();
-    let ports: Vec<String> = targets.iter().map(|l| l.port.to_string()).collect();
-    let mut script = String::from("echo '[launcher] Stopping all remote servers (preserving SSH session)...'; ");
-    if !pids.is_empty() {
-        script.push_str(&format!("kill -15 {} 2>/dev/null || kill -9 {} 2>/dev/null; ", pids.join(" "), pids.join(" ")));
-    }
-    for port in ports {
-        script.push_str(&format!("fuser -k -n tcp {} 2>/dev/null || true; ", port));
-    }
-    script.push_str("echo '[launcher] All remote servers stopped.'");
-    script
-}
-
-#[allow(dead_code)]
-pub fn build_remote_restart_all_cmd(listeners: &[RemoteListener], host_port: u16) -> String {
-    let targets: Vec<_> = listeners.iter().filter(|l| l.port != host_port && l.port != 22).collect();
-    if targets.is_empty() {
-        return "echo '[launcher] No non-SSH servers to restart.'".to_string();
-    }
-    let mut script = String::from("echo '[launcher] Restarting all remote servers (preserving SSH session)...'; ");
-    for l in &targets {
-        let clean = clean_service_name(&l.name);
-        if !clean.is_empty() {
-            script.push_str(&format!("(sudo systemctl restart {} 2>/dev/null || true); ", clean));
-        } else if let Some(pid) = l.pid {
-            script.push_str(&format!(
-                "CMD=$(tr '\\0' ' ' < /proc/{}/cmdline 2>/dev/null || ps -p {} -o args= 2>/dev/null); CWD=$(readlink /proc/{}/cwd 2>/dev/null || echo '.'); kill -15 {} 2>/dev/null || kill -9 {} 2>/dev/null; (cd \"$CWD\" && nohup $CMD >/dev/null 2>&1 &); ",
-                pid, pid, pid, pid, pid
-            ));
-        }
-    }
-    script.push_str("echo '[launcher] Restart commands dispatched.'");
-    script
 }
 
 pub fn is_sshpass_available() -> bool {
@@ -700,40 +666,35 @@ tcp    LISTEN  0       128            0.0.0.0:3000        0.0.0.0:*      users:(
         assert_eq!(clean_service_name("sshd"), "sshd");
         assert_eq!(clean_service_name("port_8080"), "");
 
-        let restart_cmd = build_remote_restart_cmd("nginx", 80, Some(1234));
-        assert!(restart_cmd.contains("systemctl restart \"nginx\""));
-
         let start_cmd = build_remote_start_cmd("nginx", 80, None);
         assert!(start_cmd.contains("systemctl start \"nginx\""));
 
         let start_custom = build_remote_start_cmd("app", 3000, Some("python3 main.py"));
         assert!(start_custom.contains("nohup python3 main.py"));
 
-        let listeners = vec![
-            RemoteListener {
-                proto: "TCP".to_string(),
-                port: 22,
-                name: "sshd".to_string(),
-                pid: Some(100),
-                start_marker: None,
-                cmd: "".to_string(),
-                cpu_pct: None,
-                mem_mb: None,
-            },
-            RemoteListener {
-                proto: "TCP".to_string(),
-                port: 80,
-                name: "nginx".to_string(),
-                pid: Some(200),
-                start_marker: None,
-                cmd: "".to_string(),
-                cpu_pct: None,
-                mem_mb: None,
-            },
-        ];
-        let stop_all = build_remote_stop_all_cmd(&listeners, 22);
-        // Ensure sshd port 22 is NOT killed!
-        assert!(!stop_all.contains("kill -15 100"));
-        assert!(stop_all.contains("kill -15 200"));
+    }
+
+    #[test]
+    fn restart_requires_identity_and_excludes_ssh() {
+        let mut listener = RemoteListener {
+            proto: "TCP".into(),
+            port: 80,
+            name: "nginx".into(),
+            pid: Some(1234),
+            start_marker: Some(5678),
+            cmd: String::new(),
+            cpu_pct: None,
+            mem_mb: None,
+        };
+        let command = build_remote_restart_cmd(&listener, 2222).unwrap();
+        assert!(command.contains("MainPID"));
+        assert!(command.contains("5678"));
+        assert!(command.ends_with("systemctl restart -- 'nginx'"));
+        assert!(build_remote_restart_cmd(&listener, 80).is_none());
+        listener.name = "sshd".into();
+        assert!(build_remote_restart_cmd(&listener, 2222).is_none());
+        listener.name = "nginx".into();
+        listener.start_marker = None;
+        assert!(build_remote_restart_cmd(&listener, 2222).is_none());
     }
 }

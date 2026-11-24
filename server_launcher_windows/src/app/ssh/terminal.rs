@@ -16,7 +16,7 @@ impl LauncherApp {
         }
     }
 
-    pub(in crate::app) fn run_remote_ssh_command(&self, host: &SshRemoteHost, cmd_str: &str, ctx: Option<egui::Context>) -> bool {
+    pub(in crate::app) fn run_remote_ssh_command(&self, host: &SshRemoteHost, cmd_str: &str, ctx: Option<egui::Context>, refresh_ports: bool) -> bool {
         let logs = self.get_remote_logs(&host.id);
         let generation = {
             const MAX_COMMANDS_PER_HOST: usize = 4;
@@ -59,6 +59,7 @@ impl LauncherApp {
                 c.process_group(0);
             }
 
+            let mut exited = false;
             match c.spawn() {
                 Ok(mut child) => {
                     if let Some(stdout) = child.stdout.take() {
@@ -69,7 +70,10 @@ impl LauncherApp {
                     }
                     loop {
                         let message = match child.try_wait() {
-                            Ok(Some(_)) => break,
+                            Ok(Some(_)) => {
+                                exited = true;
+                                break;
+                            }
                             Ok(None) => {
                                 let reason = {
                                     let activity = counts.lock().unwrap();
@@ -124,7 +128,11 @@ impl LauncherApp {
                 }
             }
             if let Some(ctx) = ctx_clone {
-                ctx.request_repaint();
+                if refresh_ports && exited {
+                    request_remote_listener_refresh(&ctx, host_clone.id);
+                } else {
+                    ctx.request_repaint();
+                }
             }
         });
         true
@@ -166,7 +174,7 @@ impl LauncherApp {
                                 let button = egui::Button::new(RichText::new(command).monospace().size(11.0).color(p.text_secondary))
                                     .fill(p.bg_button).stroke(Stroke::NONE).rounding(8.0);
                                 if ui.add(button).on_hover_text(hint).clicked() {
-                                    self.run_remote_ssh_command(host, command, Some(ui.ctx().clone()));
+                                    self.run_remote_ssh_command(host, command, Some(ui.ctx().clone()), false);
                                 }
                             }
                         });
@@ -241,7 +249,7 @@ impl LauncherApp {
                     ui.painter().rect_stroke(composer.response.rect, 8.0, Stroke::new(1.0_f32, p.accent));
                 }
                 if let Some(command) = command {
-                    if self.run_remote_ssh_command(host, &command, Some(ui.ctx().clone())) {
+                    if self.run_remote_ssh_command(host, &command, Some(ui.ctx().clone()), false) {
                         if let Some(input) = self.remote_terminal_inputs.get_mut(&host.id) {
                             input.clear();
                         }

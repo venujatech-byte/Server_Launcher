@@ -3197,7 +3197,7 @@ impl eframe::App for LauncherApp {
             self.remote_start_server_modal.open = false;
             if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == req.host_id).cloned() {
                 let full_cmd = build_remote_start_cmd(&req.name, req.port.unwrap_or_default(), Some(&req.command), &req.cwd);
-                if !self.run_remote_ssh_command(&host, &full_cmd, Some(ctx.clone())) {
+                if !self.run_remote_ssh_command(&host, &full_cmd, Some(ctx.clone()), true) {
                     self.remote_start_server_modal.open = true;
                 } else {
                     if let Some(port) = req.port {
@@ -3216,7 +3216,6 @@ impl eframe::App for LauncherApp {
                             }
                         }
                     }
-                    self.schedule_remote_scan(&host, 1500, ctx.clone());
                 }
             }
         }

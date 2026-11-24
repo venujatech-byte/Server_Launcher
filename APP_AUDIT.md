@@ -126,3 +126,5 @@ SSH Servers output readers request a repaint after publishing rows, including fi
 A refresh requested during an SSH port scan queues one follow-up for that host. Repeated requests coalesce, and the follow-up respects the latest requested delay.
 
 SSH Stop and Kill schedule a listener refresh after the signaling request finishes, with a short settling delay. The launcher only queues that refresh if the host is still configured.
+
+SSH Start and Restart also use the completion-based port refresh. A rejected submission, failed local spawn, timeout, or cancellation does not add a follow-up scan.

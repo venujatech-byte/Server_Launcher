@@ -4,6 +4,14 @@ mod listeners;
 mod terminal;
 mod connection;
 
+fn request_remote_listener_refresh(ctx: &Context, host_id: String) {
+    ctx.data_mut(|data| {
+        data.get_temp_mut_or_default::<BTreeSet<String>>(egui::Id::new(REMOTE_LISTENER_REFRESH))
+            .insert(host_id);
+    });
+    ctx.request_repaint();
+}
+
 impl LauncherApp {
     pub(in crate::app) fn render_remote_pc_dashboard(&mut self, ui: &mut Ui, host_id: &str) {
         let p = self.palette();

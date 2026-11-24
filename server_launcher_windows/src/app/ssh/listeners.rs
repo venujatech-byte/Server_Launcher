@@ -227,8 +227,7 @@ impl LauncherApp {
                                             .clicked()
                                         {
                                             if let Some(command) = restart_cmd {
-                                                self.run_remote_ssh_command(host, &command, Some(ui.ctx().clone()));
-                                                self.schedule_remote_scan(host, 2000, ui.ctx().clone());
+                                                self.run_remote_ssh_command(host, &command, Some(ui.ctx().clone()), true);
                                             }
                                         }
 
@@ -251,7 +250,7 @@ impl LauncherApp {
                                                 .on_hover_text("Probe HTTP response")
                                                 .on_disabled_hover_text("Available for HTTP over TCP").clicked() {
                                                 let curl_cmd = format!("curl -I -s --connect-timeout 2 http://localhost:{} | head -n 5", l.port);
-                                                self.run_remote_ssh_command(host, &curl_cmd, Some(ui.ctx().clone()));
+                                                self.run_remote_ssh_command(host, &curl_cmd, Some(ui.ctx().clone()), false);
                                                 ui.close_menu();
                                             }
                                         });
@@ -268,7 +267,7 @@ impl LauncherApp {
                                             } else {
                                                 format!("lsof -i :{} 2>/dev/null", l.port)
                                             };
-                                            self.run_remote_ssh_command(host, &ps_cmd, Some(ui.ctx().clone()));
+                                            self.run_remote_ssh_command(host, &ps_cmd, Some(ui.ctx().clone()), false);
                                         }
                                     });
                                 });
@@ -325,8 +324,7 @@ impl LauncherApp {
                                         .rounding(Rounding::same(8.0));
                                         if ui.add(start_btn).on_hover_text("Start this remote server").clicked() {
                                             let start_cmd = build_remote_start_cmd(&s.name, s.port, if s.start_cmd.is_empty() { None } else { Some(&s.start_cmd) }, &s.cwd);
-                                            self.run_remote_ssh_command(host, &start_cmd, Some(ui.ctx().clone()));
-                                            self.schedule_remote_scan(host, 1500, ui.ctx().clone());
+                                            self.run_remote_ssh_command(host, &start_cmd, Some(ui.ctx().clone()), true);
                                         }
 
                                         // Restart Button
@@ -337,8 +335,7 @@ impl LauncherApp {
                                         .rounding(Rounding::same(8.0));
                                         if ui.add(restart_btn).on_hover_text("Attempt to restart this remote server").clicked() {
                                             let start_cmd = build_remote_start_cmd(&s.name, s.port, if s.start_cmd.is_empty() { None } else { Some(&s.start_cmd) }, &s.cwd);
-                                            self.run_remote_ssh_command(host, &start_cmd, Some(ui.ctx().clone()));
-                                            self.schedule_remote_scan(host, 1500, ui.ctx().clone());
+                                            self.run_remote_ssh_command(host, &start_cmd, Some(ui.ctx().clone()), true);
                                         }
 
                                         // Dismiss Button
@@ -362,7 +359,7 @@ impl LauncherApp {
                                             if let Some(unit) = crate::remote::remote_service_operand(&s.name) {
                                                 info_cmd.push_str(&format!(" || systemctl status -- {unit}"));
                                             }
-                                            self.run_remote_ssh_command(host, &info_cmd, Some(ui.ctx().clone()));
+                                            self.run_remote_ssh_command(host, &info_cmd, Some(ui.ctx().clone()), false);
                                         }
                                     });
                                 });
@@ -478,11 +475,7 @@ impl LauncherApp {
                 }
                 Err(error) => crate::service::push_log_line(&format!("[ssh] Listener action failed: {error}"), &logs, 1000, crate::service::LogKind::Error),
             }
-            repaint.data_mut(|data| {
-                data.get_temp_mut_or_default::<BTreeSet<String>>(egui::Id::new(REMOTE_LISTENER_REFRESH))
-                    .insert(host_id);
-            });
-            repaint.request_repaint();
+            request_remote_listener_refresh(&repaint, host_id);
         });
     }
 }

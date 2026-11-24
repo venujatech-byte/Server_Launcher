@@ -62,10 +62,10 @@ impl LauncherApp {
             match c.spawn() {
                 Ok(mut child) => {
                     if let Some(stdout) = child.stdout.take() {
-                        crate::service::spawn_stream_reader(stdout, logs_clone.clone(), 1000, crate::service::LogKind::Stdout);
+                        crate::service::spawn_stream_reader_with_repaint(stdout, logs_clone.clone(), 1000, crate::service::LogKind::Stdout, ctx_clone.clone());
                     }
                     if let Some(stderr) = child.stderr.take() {
-                        crate::service::spawn_stream_reader(stderr, logs_clone.clone(), 1000, crate::service::LogKind::Stderr);
+                        crate::service::spawn_stream_reader_with_repaint(stderr, logs_clone.clone(), 1000, crate::service::LogKind::Stderr, ctx_clone.clone());
                     }
                     loop {
                         let message = match child.try_wait() {

@@ -1351,11 +1351,26 @@ pub fn push_log_line(
 }
 
 pub fn spawn_stream_reader<R: Read + Send + 'static>(
-    mut stream: R,
+    stream: R,
     logs: Arc<Mutex<VecDeque<LogEntry>>>,
     max_logs: usize,
     default_kind: LogKind,
 ) {
+    spawn_stream_reader_with_repaint(stream, logs, max_logs, default_kind, None);
+}
+
+pub fn spawn_stream_reader_with_repaint<R: Read + Send + 'static>(
+    mut stream: R,
+    logs: Arc<Mutex<VecDeque<LogEntry>>>,
+    max_logs: usize,
+    default_kind: LogKind,
+    repaint: Option<egui::Context>,
+) {
+    let output_ready = move || {
+        if let Some(ctx) = &repaint {
+            ctx.request_repaint_after(std::time::Duration::from_millis(33));
+        }
+    };
     thread::spawn(move || {
         let mut buf = [0u8; 4096];
         let mut pending = Vec::new();
@@ -1369,6 +1384,7 @@ pub fn spawn_stream_reader<R: Read + Send + 'static>(
                         for line in text.split(|c| c == '\n' || c == '\r') {
                             push_log_line(line, &logs, max_logs, default_kind.clone());
                         }
+                        output_ready();
                     }
                     break;
                 }
@@ -1391,11 +1407,13 @@ pub fn spawn_stream_reader<R: Read + Send + 'static>(
                         }
 
                         pending = pending[last_delim..].to_vec();
+                        output_ready();
                     } else if pending.len() > 1024 {
                         // Flush long output lines even without newline to prevent stalling
                         let text = String::from_utf8_lossy(&pending).to_string();
                         push_log_line(&text, &logs, max_logs, default_kind.clone());
                         pending.clear();
+                        output_ready();
                     }
                 }
                 Err(_) => {
@@ -1404,6 +1422,7 @@ pub fn spawn_stream_reader<R: Read + Send + 'static>(
                         for line in text.split(|c| c == '\n' || c == '\r') {
                             push_log_line(line, &logs, max_logs, default_kind.clone());
                         }
+                        output_ready();
                     }
                     break;
                 }

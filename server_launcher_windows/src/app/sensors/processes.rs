@@ -1383,8 +1383,9 @@ impl LauncherApp {
                                                 }
 
                                                 let mut exp_rect = egui::Rect::NOTHING;
+                                                let expander_size = egui::vec2(20.0, 20.0);
                                                 if is_multi {
-                                                    let (chev_rect, chev_resp) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+                                                    let (chev_rect, chev_resp) = ui.allocate_exact_size(expander_size, egui::Sense::click());
                                                     exp_rect = chev_rect;
                                                     if chev_resp.hovered() {
                                                         ui.painter().rect_filled(
@@ -1414,7 +1415,8 @@ impl LauncherApp {
                                                         right_clicked_pid = Some(grp.pids[0]);
                                                     }
                                                 } else {
-                                                    ui.add_space(20.0);
+                                                    // Allocate a widget slot so egui adds the same spacing on every row.
+                                                    ui.allocate_space(expander_size);
                                                 }
 
                                                 let icon = if is_app_sec { crate::lucide::MONITOR } else { crate::lucide::CPU };

@@ -1,5 +1,7 @@
 use super::*;
 
+mod model;
+
 #[derive(Clone)]
 struct RemoteFiles {
     path: String,
@@ -27,7 +29,8 @@ impl LauncherApp {
         if refresh || files.listing.is_none() {
             let path = if files.path.trim().is_empty() { "." } else { files.path.as_str() };
             // Pass the path as one shell argument and stop option parsing before it.
-            let command = format!("ls -lah -- {}", crate::remote::shell_quote(path));
+            let path = if path.starts_with('/') { path.to_owned() } else { format!("./{path}") };
+            let command = format!(r#"cd {} && printf '%s\0' "$(pwd -P)" && LC_ALL=C find . -mindepth 1 -maxdepth 1 -printf '%y\0%TY-%Tm-%Td %TH:%TM\0%m\0%s\0%f\0'"#, crate::remote::shell_quote(&path));
             let command = crate::remote::build_ssh_command(host, &command);
             let result = Arc::new(Mutex::new(None));
             files.listing = Some(Arc::clone(&result));
@@ -37,7 +40,14 @@ impl LauncherApp {
                     .map_err(|error| error.to_string())
                     .and_then(|output| {
                         if output.status.success() {
-                            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+                            model::parse_listing(&output.stdout).map(|listing| {
+                                use std::fmt::Write;
+                                let mut text = format!("{}\n", listing.path);
+                                for entry in listing.entries {
+                                    let _ = writeln!(text, "{}  {}  {}  {}  {}", entry.modified, entry.mode, entry.size, entry.kind.label(), model::join(&listing.path, &entry.name).escape_debug());
+                                }
+                                text
+                            })
                         } else {
                             let error = String::from_utf8_lossy(&output.stderr);
                             Err(if error.trim().is_empty() { format!("SSH exited with {}", output.status) } else { error.into_owned() })

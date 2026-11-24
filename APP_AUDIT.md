@@ -100,3 +100,5 @@ The Add/Edit SSH Host dialog now runs Test Connection on a background thread. Th
 SSH terminal output now lays out selectable labels only for visible rows. Explicit line breaks are preserved, and long lines scroll horizontally. The retained log limit is unchanged. CPU and memory impact still need runtime measurement.
 
 SSH Servers now shares each completed listener scan as an immutable snapshot. Search borrows rows, and successful scans prune stopped entries by port. The renderer still hides a stopped entry while the same port appears in its current listener snapshot.
+
+Local server logs now reuse a single active-view snapshot and cache matching row indexes until the log or filter changes. Display and retained log limits are unchanged. Runtime CPU and memory impact remain unmeasured.

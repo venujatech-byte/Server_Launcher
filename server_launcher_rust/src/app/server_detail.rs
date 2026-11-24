@@ -1,5 +1,12 @@
 use super::*;
 
+#[derive(Clone, Default)]
+struct ServerLogViewCache {
+    logs: Arc<Vec<crate::service::LogEntry>>,
+    filter: String,
+    matches: Option<Arc<Vec<usize>>>,
+}
+
 impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
     // RIGHT PANEL: Notebook Tabs Bar + Overview / Server Log View
@@ -430,25 +437,40 @@ impl LauncherApp {
         // ─────────────────────────────────────────────────────────────────────
         // Section B: Terminal Output Area (Recessed Monospace Code Well)
         // ─────────────────────────────────────────────────────────────────────
-        let logs_vec: Vec<_> = {
-            if let Some(s) = self.find_service(key) {
-                if let Ok(l) = s.logs.lock() {
-                    l.iter().cloned().collect()
-                } else {
-                    Vec::new()
-                }
-            } else {
-                Vec::new()
-            }
-        };
-
+        let cache_id = egui::Id::new("active_server_log_snapshot");
+        let mut cache = ui.ctx().data(|data| data.get_temp::<ServerLogViewCache>(cache_id)).unwrap_or_default();
         let q = self.search_queries.get(key).cloned().unwrap_or_default().to_lowercase();
         let filter_active = self.filter_lines.get(key).copied().unwrap_or(false) && !q.is_empty();
-
-        let filtered_logs: Vec<&crate::service::LogEntry> = logs_vec
-            .iter()
-            .filter(|entry| !filter_active || entry.text.to_lowercase().contains(&q))
-            .collect();
+        let filter = if filter_active { q.as_str() } else { "" };
+        let snapshot = self.find_service(key)
+            .and_then(|service| service.logs.lock().ok())
+            .map(|logs| {
+                // Entries are immutable and writers only append, evict from the front, or clear.
+                let same_entry = |left: Option<&crate::service::LogEntry>, right: Option<&crate::service::LogEntry>| {
+                    match (left, right) {
+                        (Some(left), Some(right)) => Arc::ptr_eq(&left.text, &right.text),
+                        (None, None) => true,
+                        _ => false,
+                    }
+                };
+                let unchanged = logs.len() == cache.logs.len()
+                    && same_entry(logs.front(), cache.logs.first())
+                    && same_entry(logs.back(), cache.logs.last());
+                (!unchanged).then(|| logs.iter().cloned().collect())
+            })
+            .unwrap_or_else(|| (!cache.logs.is_empty()).then(Vec::new));
+        let logs_changed = snapshot.is_some();
+        if let Some(snapshot) = snapshot {
+            cache.logs = Arc::new(snapshot);
+        }
+        if logs_changed || cache.filter != filter {
+            cache.filter = filter.into();
+            cache.matches = filter_active.then(|| Arc::new(cache.logs.iter().enumerate()
+                .filter_map(|(index, entry)| entry.text.to_lowercase().contains(filter).then_some(index))
+                .collect()));
+            ui.ctx().data_mut(|data| data.insert_temp(cache_id, cache.clone()));
+        }
+        let logs_vec = &cache.logs;
 
         let bottom_dock_reserve = 48.0;
         let terminal_available_height = (ui.available_height() - bottom_dock_reserve).max(100.0);
@@ -456,7 +478,7 @@ impl LauncherApp {
         let inner_terminal_height = (terminal_available_height - frame_v_margin).max(80.0);
         let auto_scroll_enabled = self.auto_scroll.get(key).copied().unwrap_or(true);
         let row_height = 17.0_f32;
-        let total_rows = filtered_logs.len();
+        let total_rows = cache.matches.as_ref().map_or(logs_vec.len(), |matches| matches.len());
 
         Frame::none()
             .fill(p.terminal_bg)
@@ -487,7 +509,8 @@ impl LauncherApp {
                             ui.set_width(ui.available_width());
                             for idx in row_range {
                                 if idx < total_rows {
-                                    if let Some(entry) = filtered_logs.get(idx) {
+                                    let index = cache.matches.as_ref().map_or(idx, |matches| matches[idx]);
+                                    if let Some(entry) = logs_vec.get(index) {
                                         let base_color = match entry.kind {
                                             LogKind::Launcher => p.log_launcher,
                                             LogKind::Stdin => p.log_stdin,

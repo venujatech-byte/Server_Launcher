@@ -76,3 +76,11 @@ For a repeatable baseline, record 30 seconds each for idle Servers, scrolling Ov
 4. Remove proven dead view code and consolidate identical UI modules only after Linux and native Windows builds agree.
 
 The moved Rust modules were checked with `cargo check --locked --offline --tests` in both crates on Linux. This compiles test code but does not run it. Native Windows, UI rendering, dependency advisory scans, and runtime profiling were outside the verification performed here. The report does not claim a clean bill of security.
+
+## Remediation progress
+
+- `f7de58e` stages configuration writes before replacing the previous file and reports save failures. External SSH launches no longer put passwords in temporary scripts or interpolate the destination into a Windows command shell. Remote power actions send sudo credentials through SSH stdin. Stopped services allocate log storage on demand.
+- `5048742` saves and enforces the per-host host-key and agent options. Existing records retain their previous defaults.
+- `4b85f44` shares immutable log text across snapshots and moves SSH terminal layout out of the log lock. The terminal still lays out all retained rows. A runtime profile is needed before assigning CPU or memory savings.
+
+Android Cockpit is deferred by request. Saved SSH credentials still need migration out of JSON. Remaining work also includes process identity checks for listener actions, SSH command lifecycle and host removal cleanup, trusted update signing, and runtime profiling. External password authentication now prompts in the terminal instead of copying the saved credential into a launcher script.

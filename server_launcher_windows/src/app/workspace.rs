@@ -271,13 +271,7 @@ impl LauncherApp {
             self.ssh_host_modal.open_edit(&h);
         }
         if let Some(id) = host_to_delete {
-            if let Some(pos) = self.ssh_hosts.iter().position(|h| h.id == id) {
-                self.ssh_hosts.remove(pos);
-                if self.selected_machine == id {
-                    self.selected_machine = "local".to_string();
-                }
-                self.persist_config();
-            }
+            self.delete_ssh_host(&id);
         }
         if let Some(id) = adb_to_delete {
             if let Some(pos) = self.adb_devices.iter().position(|d| d.id == id) {

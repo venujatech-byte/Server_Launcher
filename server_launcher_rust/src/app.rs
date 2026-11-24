@@ -3274,13 +3274,7 @@ impl eframe::App for LauncherApp {
             }
             ModalAction::DeleteSshHost(id) => {
                 self.ssh_host_modal.open = false;
-                if let Some(pos) = self.ssh_hosts.iter().position(|h| h.id == id) {
-                    self.ssh_hosts.remove(pos);
-                    if self.selected_machine == id {
-                        self.selected_machine = "local".to_string();
-                    }
-                    self.persist_config();
-                }
+                self.delete_ssh_host(&id);
             }
             _ => {}
         }
@@ -3348,18 +3342,20 @@ impl eframe::App for LauncherApp {
             let pass_clone = password.clone();
             let ctx_clone = ctx.clone();
             let rem_status = self.remote_connection_status.clone();
-            let rem_conn = self.remote_connecting.clone();
 
             std::thread::spawn(move || {
                 match crate::remote::reboot_remote_device(&host_clone, &pass_clone) {
                     Ok(msg) => {
                         println!("[reboot] {}", msg);
-                        rem_conn.lock().unwrap().insert(host_clone.id.clone());
-                        rem_status.lock().unwrap().insert(host_clone.id.clone(), Err("Rebooting device...".to_string()));
+                        if let Some(status) = rem_status.lock().unwrap().get_mut(&host_clone.id) {
+                            *status = Err("Rebooting device...".to_string());
+                        }
                     }
                     Err(err) => {
                         eprintln!("[reboot error] {}", err);
-                        rem_status.lock().unwrap().insert(host_clone.id.clone(), Err(format!("Reboot failed: {}", err)));
+                        if let Some(status) = rem_status.lock().unwrap().get_mut(&host_clone.id) {
+                            *status = Err(format!("Reboot failed: {}", err));
+                        }
                     }
                 }
                 ctx_clone.request_repaint();
@@ -3377,18 +3373,20 @@ impl eframe::App for LauncherApp {
             let pass_clone = password.clone();
             let ctx_clone = ctx.clone();
             let rem_status = self.remote_connection_status.clone();
-            let rem_conn = self.remote_connecting.clone();
 
             std::thread::spawn(move || {
                 match crate::remote::shutdown_remote_device(&host_clone, &pass_clone) {
                     Ok(msg) => {
                         println!("[shutdown] {}", msg);
-                        rem_conn.lock().unwrap().insert(host_clone.id.clone());
-                        rem_status.lock().unwrap().insert(host_clone.id.clone(), Err("Shutting down device...".to_string()));
+                        if let Some(status) = rem_status.lock().unwrap().get_mut(&host_clone.id) {
+                            *status = Err("Shutting down device...".to_string());
+                        }
                     }
                     Err(err) => {
                         eprintln!("[shutdown error] {}", err);
-                        rem_status.lock().unwrap().insert(host_clone.id.clone(), Err(format!("Shutdown failed: {}", err)));
+                        if let Some(status) = rem_status.lock().unwrap().get_mut(&host_clone.id) {
+                            *status = Err(format!("Shutdown failed: {}", err));
+                        }
                     }
                 }
                 ctx_clone.request_repaint();

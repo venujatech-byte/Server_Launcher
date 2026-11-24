@@ -446,17 +446,18 @@ impl LauncherApp {
                 Ok(()) => {
                     if !force {
                         if let Ok(mut map) = stopped.lock() {
-                            let list = map.entry(host_id).or_default();
-                            if !list.iter().any(|entry| entry.port == listener.port) {
-                                list.push(RemoteStoppedServer {
-                                    name: listener.name.clone(),
-                                    port: listener.port,
-                                    proto: listener.proto,
-                                    last_pid: Some(pid),
-                                    cmd: listener.cmd,
-                                    start_cmd: guess_remote_start_cmd(&listener.name, listener.port),
-                                    cwd: String::new(),
-                                });
+                            if let Some(list) = map.get_mut(&host_id) {
+                                if !list.iter().any(|entry| entry.port == listener.port) {
+                                    list.push(RemoteStoppedServer {
+                                        name: listener.name.clone(),
+                                        port: listener.port,
+                                        proto: listener.proto,
+                                        last_pid: Some(pid),
+                                        cmd: listener.cmd,
+                                        start_cmd: guess_remote_start_cmd(&listener.name, listener.port),
+                                        cwd: String::new(),
+                                    });
+                                }
                             }
                         }
                     }

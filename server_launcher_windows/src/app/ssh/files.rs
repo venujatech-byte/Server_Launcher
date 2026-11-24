@@ -1,75 +1,58 @@
 use super::*;
 
+mod backend;
 mod model;
 
 #[derive(Clone)]
 struct RemoteFiles {
     path: String,
-    listing: Option<Arc<Mutex<Option<Result<String, String>>>>>,
+    worker: Option<backend::Worker>,
+    listing: Option<Result<model::Listing, String>>,
 }
 
 impl LauncherApp {
     pub(super) fn render_remote_files(&self, ui: &mut Ui, host: &SshRemoteHost) {
         let id = egui::Id::new(("remote_files", &host.id));
         let mut files = ui.ctx().data(|data| data.get_temp::<RemoteFiles>(id))
-            .unwrap_or_else(|| RemoteFiles { path: ".".into(), listing: None });
-        let loading = files.listing.as_ref().is_some_and(|result| result.lock().unwrap().is_none());
+            .unwrap_or_else(|| RemoteFiles { path: ".".into(), worker: None, listing: None });
 
-        ui.heading("Remote files");
-        ui.label("Enter a directory path to list its contents over SSH.");
-        let mut refresh = false;
-        ui.horizontal_wrapped(|ui| {
-            let path = ui.add(egui::TextEdit::singleline(&mut files.path)
-                .hint_text("Directory path")
-                .desired_width(260.0));
-            refresh = ui.add_enabled(!loading, egui::Button::new("List directory")).clicked()
-                || (!loading && path.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)));
+        let result = files.worker.as_ref().and_then(|worker| match worker.lock().unwrap().try_recv() {
+            Ok(result) => Some(result),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err("File operation stopped unexpectedly.".into())),
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
         });
-
-        if refresh || files.listing.is_none() {
-            let path = if files.path.trim().is_empty() { "." } else { files.path.as_str() };
-            // Pass the path as one shell argument and stop option parsing before it.
-            let path = if path.starts_with('/') { path.to_owned() } else { format!("./{path}") };
-            let command = format!(r#"cd {} && printf '%s\0' "$(pwd -P)" && LC_ALL=C find . -mindepth 1 -maxdepth 1 -printf '%y\0%TY-%Tm-%Td %TH:%TM\0%m\0%s\0%f\0'"#, crate::remote::shell_quote(&path));
-            let command = crate::remote::build_ssh_command(host, &command);
-            let result = Arc::new(Mutex::new(None));
-            files.listing = Some(Arc::clone(&result));
-            let ctx = ui.ctx().clone();
-            std::thread::spawn(move || {
-                let listing = crate::remote::ssh_probe_output(command, Duration::from_secs(15))
-                    .map_err(|error| error.to_string())
-                    .and_then(|output| {
-                        if output.status.success() {
-                            model::parse_listing(&output.stdout).map(|listing| {
-                                use std::fmt::Write;
-                                let mut text = format!("{}\n", listing.path);
-                                for entry in listing.entries {
-                                    let _ = writeln!(text, "{}  {}  {}  {}  {}", entry.modified, entry.mode, entry.size, entry.kind.label(), model::join(&listing.path, &entry.name).escape_debug());
-                                }
-                                text
-                            })
-                        } else {
-                            let error = String::from_utf8_lossy(&output.stderr);
-                            Err(if error.trim().is_empty() { format!("SSH exited with {}", output.status) } else { error.into_owned() })
-                        }
-                    });
-                *result.lock().unwrap() = Some(listing);
-                ctx.request_repaint();
-            });
+        if let Some(result) = result {
+            files.worker = None;
+            files.listing = Some(result.and_then(|result| match result {
+                backend::Outcome::Listing(listing) => Ok(listing),
+                backend::Outcome::Changed => Err("No listing returned.".into()),
+            }));
         }
 
-        ui.add_space(8.0);
-        if let Some(result) = &files.listing {
-            let result = result.lock().unwrap();
-            match result.as_ref() {
-                None => { ui.spinner(); }
-                Some(Ok(listing)) => {
-                    egui::ScrollArea::both().id_salt(id).show(ui, |ui| {
-                        ui.add(egui::Label::new(RichText::new(listing).monospace()).extend());
-                    });
-                }
-                Some(Err(error)) => { ui.label(format!("Could not list directory: {error}")); }
+        ui.heading("Remote files");
+        let mut refresh = false;
+        ui.horizontal_wrapped(|ui| {
+            let path = ui.add(egui::TextEdit::singleline(&mut files.path).hint_text("Directory path").desired_width(260.0));
+            refresh = ui.add_enabled(files.worker.is_none(), egui::Button::new("List directory")).clicked()
+                || (files.worker.is_none() && path.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)));
+        });
+        if refresh || (files.worker.is_none() && files.listing.is_none()) {
+            files.worker = Some(backend::start(host, backend::Job::List(files.path.clone()), ui.ctx().clone()));
+        }
+        if files.worker.is_some() {
+            ui.spinner();
+        }
+        match &files.listing {
+            Some(Ok(listing)) => {
+                ui.label(&listing.path);
+                egui::ScrollArea::both().id_salt(id).show(ui, |ui| {
+                    for entry in &listing.entries {
+                        ui.monospace(format!("{}  {}  {}  {}  {}", entry.modified, entry.mode, entry.size, entry.kind.label(), model::join(&listing.path, &entry.name).escape_debug()));
+                    }
+                });
             }
+            Some(Err(error)) => { ui.label(format!("Could not list directory: {error}")); }
+            None => {}
         }
         ui.ctx().data_mut(|data| data.insert_temp(id, files));
     }

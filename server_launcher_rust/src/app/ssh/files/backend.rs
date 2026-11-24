@@ -10,7 +10,7 @@ pub(super) enum Job {
     Paste(Vec<String>, String, bool),
     Delete(Vec<String>),
     Compress(Vec<String>, String),
-    Extract(String, String),
+    Extract(String, String, bool),
     Transfer(transfers::Transfer),
 }
 
@@ -54,8 +54,9 @@ fn run(host: &SshRemoteHost, job: Job) -> Result<Outcome, String> {
         let output = execute(host, &command, 15)?;
         return model::parse_listing(&output).map(Outcome::Listing);
     }
+    let moved = matches!(&job, Job::Paste(_, _, true));
     let command = mutation_command(job)?;
-    execute(host, &command, 300).map(|_| Outcome::Changed("Operation complete.".into()))
+    execute(host, &command, 300).map(|_| Outcome::Changed(if moved { "Moved selected items.".into() } else { "Operation complete.".into() }))
 }
 
 pub(super) fn execute(host: &SshRemoteHost, command: &str, timeout: u64) -> Result<Vec<u8>, String> {
@@ -127,7 +128,7 @@ fn mutation_command(job: Job) -> Result<String, String> {
             };
             format!("{}; {}; cd {} && {tool} {args}", require(tool), absent(&target), shell_quote(if directory.is_empty() { "/" } else { directory }))
         }
-        Job::Extract(archive, directory) => {
+        Job::Extract(archive, directory, create) => {
             let source = shell_quote(&archive);
             let (tool, args) = match model::archive_extension(&archive) {
                 Some(".zip") => ("unzip", format!("-n {source}")),
@@ -136,7 +137,9 @@ fn mutation_command(job: Job) -> Result<String, String> {
                 None => return Err("Unsupported archive extension.".into()),
             };
             // Extract in an isolated staging folder, then publish only if no top-level names collide.
-            format!(r#"{}; cd {} || exit; temp=$(mktemp -d .explorer-extract.XXXXXXXX) || exit
+            let directory = shell_quote(&directory);
+            let enter = if create { format!("mkdir -- {directory} && cd {directory}") } else { format!("cd {directory}") };
+            format!(r#"{}; {enter} || exit; temp=$(mktemp -d .explorer-extract.XXXXXXXX) || exit
 trap 'rm -rf -- "$temp"' EXIT
 (cd "$temp" && {tool} {args}) || exit
 for path in "$temp"/* "$temp"/.[!.]* "$temp"/..?*; do
@@ -148,7 +151,7 @@ for path in "$temp"/* "$temp"/.[!.]* "$temp"/..?*; do
     [ -e "$path" ] || [ -L "$path" ] || continue
     name=${{path##*/}}
     mv -T -- "$path" "./$name" || exit
-done"#, require(tool), shell_quote(&directory))
+done"#, require(tool))
         }
         Job::List(_) | Job::Transfer(_) => unreachable!(),
     })

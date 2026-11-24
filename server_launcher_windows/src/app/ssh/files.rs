@@ -3,62 +3,135 @@ use super::*;
 mod backend;
 mod model;
 mod transfers;
+mod ui;
+
+use backend::{Event, Job, Outcome, Worker};
+use model::{Entry, Kind, Listing};
+use std::collections::BTreeSet;
+use transfers::Transfer;
 
 #[derive(Clone)]
+enum Prompt {
+    Create(bool),
+    Rename(String),
+    Delete(Vec<String>),
+    Compress(Vec<String>),
+    Extract(String),
+}
+
+#[derive(Clone, Default)]
 struct RemoteFiles {
-    path: String,
-    worker: Option<backend::Worker>,
-    listing: Option<Result<model::Listing, String>>,
+    listing: Option<Arc<Listing>>,
+    worker: Option<Worker>,
+    transfer: bool,
+    refreshing_after_change: bool,
+    progress: Option<(String, f32)>,
+    notice: Option<(String, bool)>,
+    history: Vec<String>,
+    history_index: usize,
+    history_target: Option<usize>,
+    selected: BTreeSet<String>,
+    anchor: Option<String>,
+    clipboard: Option<(bool, Vec<String>)>,
+    filter: String,
+    hidden: bool,
+    sort: usize,
+    descending: bool,
+    address: Option<(String, bool)>,
+    prompt: Option<Prompt>,
+    name: String,
+    format: usize,
+}
+
+impl RemoteFiles {
+    fn directory(&self) -> Option<&str> {
+        self.listing.as_ref().map(|listing| listing.path.as_str())
+    }
+
+    fn start(&mut self, host: &SshRemoteHost, ctx: &egui::Context, job: Job) {
+        if self.worker.is_none() {
+            self.notice = None;
+            self.progress = None;
+            self.transfer = matches!(job, Job::Transfer(_));
+            self.worker = Some(backend::start(host, job, ctx.clone()));
+        }
+    }
+
+    fn poll(&mut self, host: &SshRemoteHost, ctx: &egui::Context) {
+        let Some(worker) = &self.worker else { return };
+        let result = {
+            let receiver = worker.events.lock().unwrap();
+            loop {
+                match receiver.try_recv() {
+                    Ok(Event::Progress(text, ratio)) => self.progress = Some((text, ratio)),
+                    Ok(Event::Finished(result)) => break result,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => break Err("File worker disconnected.".into()),
+                }
+            }
+        };
+        self.worker = None;
+        self.progress = None;
+        self.transfer = false;
+
+        match result {
+            Ok(Outcome::Listing(listing)) => {
+                if let Some(index) = self.history_target.take() {
+                    self.history_index = index;
+                } else if self.history.get(self.history_index) != Some(&listing.path) {
+                    self.history.truncate(self.history_index + 1);
+                    self.history.push(listing.path.clone());
+                    self.history_index = self.history.len() - 1;
+                }
+                if self.directory() != Some(&listing.path) {
+                    self.selected.clear();
+                    self.anchor = None;
+                    self.filter.clear();
+                } else {
+                    let names: BTreeSet<_> = listing.entries.iter().map(|entry| entry.name.as_str()).collect();
+                    self.selected.retain(|name| names.contains(name.as_str()));
+                }
+                self.listing = Some(Arc::new(listing));
+            }
+            Ok(Outcome::Changed(message)) => {
+                if let Some(path) = self.directory().map(str::to_owned) {
+                    self.start(host, ctx, Job::List(path));
+                    self.refreshing_after_change = true;
+                }
+                self.notice = Some((message, false));
+                if self.clipboard.as_ref().is_some_and(|(cut, _)| *cut) && self.clear_cut_on_success() {
+                    self.clipboard = None;
+                }
+            }
+            Err(error) => {
+                self.history_target = None;
+                if self.refreshing_after_change {
+                    let previous = self.notice.take().map(|(text, _)| text).unwrap_or_default();
+                    self.notice = Some((format!("{previous}\nCould not refresh: {error}"), true));
+                } else {
+                    self.notice = Some((error, true));
+                }
+            }
+        }
+        if self.worker.is_none() {
+            self.refreshing_after_change = false;
+        }
+    }
+
+    fn clear_cut_on_success(&self) -> bool {
+        self.notice.as_ref().is_some_and(|(text, _)| text == "Moved selected items.")
+    }
 }
 
 impl LauncherApp {
     pub(super) fn render_remote_files(&self, ui: &mut Ui, host: &SshRemoteHost) {
-        let id = egui::Id::new(("remote_files", &host.id));
-        let mut files = ui.ctx().data(|data| data.get_temp::<RemoteFiles>(id))
-            .unwrap_or_else(|| RemoteFiles { path: ".".into(), worker: None, listing: None });
-
-        let result = files.worker.as_ref().and_then(|worker| match worker.events.lock().unwrap().try_recv() {
-            Ok(backend::Event::Finished(result)) => Some(result),
-            Ok(backend::Event::Progress(_, _)) => None,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err("File operation stopped unexpectedly.".into())),
-            Err(std::sync::mpsc::TryRecvError::Empty) => None,
-        });
-        if let Some(result) = result {
-            files.worker = None;
-            files.listing = Some(result.and_then(|result| match result {
-                backend::Outcome::Listing(listing) => Ok(listing),
-                backend::Outcome::Changed(message) => Err(message),
-            }));
+        let id = egui::Id::new(("remote_files_explorer", &host.id));
+        let mut files = ui.ctx().data_mut(|data| data.remove_temp::<RemoteFiles>(id)).unwrap_or_default();
+        files.poll(host, ui.ctx());
+        if files.worker.is_none() && files.listing.is_none() && files.notice.is_none() {
+            files.start(host, ui.ctx(), Job::List(".".into()));
         }
-
-        ui.heading("Remote files");
-        let mut refresh = false;
-        ui.horizontal_wrapped(|ui| {
-            let path = ui.add(egui::TextEdit::singleline(&mut files.path).hint_text("Directory path").desired_width(260.0));
-            refresh = ui.add_enabled(files.worker.is_none(), egui::Button::new("List directory")).clicked()
-                || (files.worker.is_none() && path.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)));
-        });
-        if refresh || (files.worker.is_none() && files.listing.is_none()) {
-            files.worker = Some(backend::start(host, backend::Job::List(files.path.clone()), ui.ctx().clone()));
-        }
-        if let Some(worker) = &files.worker {
-            ui.spinner();
-            if ui.button("Cancel").clicked() {
-                worker.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-            }
-        }
-        match &files.listing {
-            Some(Ok(listing)) => {
-                ui.label(&listing.path);
-                egui::ScrollArea::both().id_salt(id).show(ui, |ui| {
-                    for entry in &listing.entries {
-                        ui.monospace(format!("{}  {}  {}  {}  {}", entry.modified, entry.mode, entry.size, entry.kind.label(), model::join(&listing.path, &entry.name).escape_debug()));
-                    }
-                });
-            }
-            Some(Err(error)) => { ui.label(format!("Could not list directory: {error}")); }
-            None => {}
-        }
+        ui::explorer(ui, id, host, &self.palette(), &mut files);
         ui.ctx().data_mut(|data| data.insert_temp(id, files));
     }
 }

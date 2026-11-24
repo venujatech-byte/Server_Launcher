@@ -115,7 +115,7 @@ The local external terminal now quotes Unix display text and directory operands 
 
 Unix server launch in an external console now passes the environment and working directory directly to the child, quotes its title, and uses an owner-only temporary bootstrap script. Its legacy PID marker is created without overwriting an existing file.
 
-The SSH Servers terminal now limits submissions and quick actions to four concurrent commands per host, releases slots on child exit or spawn failure, and disconnects inherited stdin. SSH Servers commands default to a five-minute inactivity timeout. Settings → Startup controls the delay and whether to time out when the page or window is inactive, only when the window is inactive, or never. Expiration closes the local SSH child and releases its slot. Manual cancellation and remote process termination remain open.
+The SSH Servers terminal now limits submissions and quick actions to four concurrent commands per host, releases slots on child exit or spawn failure, and disconnects inherited stdin. SSH Servers commands default to a five-minute inactivity timeout. Settings → Startup controls the delay and whether to time out when the page or window is inactive, only when the window is inactive, or never. Expiration closes the local SSH child and releases its slot. Cancel all closes the local command connections for the selected host, and host removal also requests cancellation. Remote process termination is still not guaranteed.
 
 Settings → Startup also controls the local subprocess deadlines for new SSH connection tests and listener scans (defaults 10 and 20 seconds). The OpenSSH handshake timeout still applies independently.
 

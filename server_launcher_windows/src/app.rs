@@ -316,6 +316,7 @@ struct RemoteListenerSnapshot {
 #[derive(Default)]
 struct RemoteCommandActivity {
     count: usize,
+    cancel_generation: u64,
     inactive_since: Option<Instant>,
     timeout: Option<std::time::Duration>,
 }

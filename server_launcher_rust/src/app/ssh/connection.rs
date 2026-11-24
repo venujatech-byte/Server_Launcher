@@ -85,6 +85,7 @@ impl LauncherApp {
     pub(in crate::app) fn delete_ssh_host(&mut self, id: &str) {
         let Some(position) = self.ssh_hosts.iter().position(|host| host.id == id) else { return };
         self.ssh_hosts.remove(position);
+        self.cancel_remote_commands(id);
         self.remote_scanning.lock().unwrap().remove(id);
         self.remote_connecting.lock().unwrap().remove(id);
         self.remote_listeners.lock().unwrap().remove(id);

@@ -18,7 +18,7 @@ impl LauncherApp {
 
     pub(in crate::app) fn run_remote_ssh_command(&self, host: &SshRemoteHost, cmd_str: &str, ctx: Option<egui::Context>) -> bool {
         let logs = self.get_remote_logs(&host.id);
-        {
+        let generation = {
             const MAX_COMMANDS_PER_HOST: usize = 4;
             let mut counts = self.remote_command_activity.lock().unwrap();
             let count = counts.entry(host.id.clone()).or_default();
@@ -33,7 +33,8 @@ impl LauncherApp {
                 return false;
             }
             count.count += 1;
-        }
+            count.cancel_generation
+        };
         let counts = self.remote_command_activity.clone();
         let prompt = format!("{}> {}", host.user, cmd_str);
         crate::service::push_log_line(&prompt, &logs, 1000, crate::service::LogKind::Stdin);
@@ -69,13 +70,27 @@ impl LauncherApp {
                     loop {
                         let message = match child.try_wait() {
                             Ok(Some(_)) => break,
-                            Ok(None) if !counts.lock().unwrap().get(&host_clone.id).is_some_and(|activity| {
-                                activity.inactive_since.zip(activity.timeout).is_some_and(|(since, timeout)| since.elapsed() >= timeout)
-                            }) => {
-                                std::thread::sleep(std::time::Duration::from_millis(250));
-                                continue;
+                            Ok(None) => {
+                                let reason = {
+                                    let activity = counts.lock().unwrap();
+                                    activity.get(&host_clone.id).and_then(|state| {
+                                        if state.cancel_generation != generation {
+                                            Some("[ssh] Canceled command. Closing the local SSH connection.")
+                                        } else if state.inactive_since.zip(state.timeout)
+                                            .is_some_and(|(since, timeout)| since.elapsed() >= timeout)
+                                        {
+                                            Some("[ssh] Closing the SSH connection after the configured inactivity timeout.")
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                };
+                                let Some(reason) = reason else {
+                                    std::thread::sleep(std::time::Duration::from_millis(250));
+                                    continue;
+                                };
+                                reason.to_owned()
                             }
-                            Ok(None) => "[ssh] Closing the SSH connection after the configured inactivity timeout.".to_owned(),
                             Err(error) => format!("[ssh] Could not check command status: {error}"),
                         };
 
@@ -115,6 +130,12 @@ impl LauncherApp {
         true
     }
 
+    pub(in crate::app) fn cancel_remote_commands(&self, host_id: &str) {
+        if let Some(activity) = self.remote_command_activity.lock().unwrap().get_mut(host_id) {
+            activity.cancel_generation = activity.cancel_generation.wrapping_add(1);
+        }
+    }
+
     pub(in crate::app) fn clear_remote_terminal_logs(&self, host_id: &str) {
         if let Ok(map) = self.remote_terminal_logs.lock() {
             if let Some(logs) = map.get(host_id) {
@@ -132,7 +153,8 @@ impl LauncherApp {
             .inner_margin(8.0).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal_top(|ui| {
-                    let tools_width = (ui.available_width() - 84.0).max(0.0);
+                    let running = self.remote_command_activity.lock().unwrap().contains_key(&host.id);
+                    let tools_width = (ui.available_width() - if running { 164.0 } else { 84.0 }).max(0.0);
                     ui.allocate_ui_with_layout([tools_width, 0.0].into(), egui::Layout::top_down(egui::Align::Min), |ui| {
                         ui.set_width(tools_width);
                         ui.label(RichText::new("Remote SSH Terminal").size(12.0).strong().color(p.text_primary));
@@ -149,6 +171,12 @@ impl LauncherApp {
                             }
                         });
                     });
+                    if running && ui.add_sized([72.0, 24.0], egui::Button::new(RichText::new("Cancel all").size(11.0))
+                        .fill(p.bg_button).stroke(Stroke::NONE).rounding(8.0))
+                        .on_hover_text("Close all running command connections for this host").clicked()
+                    {
+                        self.cancel_remote_commands(&host.id);
+                    }
                     if ui.add_sized([68.0, 24.0], egui::Button::new(RichText::new(format!("{} Clear", crate::lucide::TRASH)).size(11.0))
                         .fill(p.bg_button).stroke(Stroke::NONE).rounding(8.0)).on_hover_text("Clear terminal output").clicked() {
                         self.clear_remote_terminal_logs(&host.id);

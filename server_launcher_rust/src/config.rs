@@ -195,6 +195,19 @@ impl Default for SshIdleSettings {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SshProbeTimeouts {
+    pub connection_test_seconds: u32,
+    pub port_scan_seconds: u32,
+}
+
+impl Default for SshProbeTimeouts {
+    fn default() -> Self {
+        Self { connection_test_seconds: 10, port_scan_seconds: 20 }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConfigFile {
     pub servers: Vec<ServerConfig>,
@@ -218,6 +231,8 @@ pub struct ConfigFile {
     pub journal_refresh_interval: Option<u32>,
     #[serde(default)]
     pub ssh_idle: SshIdleSettings,
+    #[serde(default)]
+    pub ssh_probe_timeouts: SshProbeTimeouts,
 }
 
 impl ConfigFile {

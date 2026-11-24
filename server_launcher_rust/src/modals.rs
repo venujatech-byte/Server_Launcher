@@ -1564,7 +1564,7 @@ impl SshHostModalState {
     }
 }
 
-pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palette: &ThemePalette) -> ModalAction {
+pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palette: &ThemePalette, timeout_seconds: u32) -> ModalAction {
     if !state.open {
         state.pending_test = None;
         return ModalAction::None;
@@ -1833,7 +1833,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                     state.pending_test = Some(receiver);
                     let ctx = ctx.clone();
                     std::thread::spawn(move || {
-                        let _ = sender.send(crate::remote::test_ssh_connection(&host_obj));
+                        let _ = sender.send(crate::remote::test_ssh_connection(&host_obj, timeout_seconds));
                         ctx.request_repaint();
                     });
                 }

@@ -26,9 +26,10 @@ impl LauncherApp {
         let host_clone = host.clone();
         let status_arc = self.remote_connection_status.clone();
         let connecting_arc = self.remote_connecting.clone();
+        let timeout = self.ssh_probe_timeouts.connection_test_seconds;
 
         std::thread::spawn(move || {
-            let res = test_ssh_connection(&host_clone);
+            let res = test_ssh_connection(&host_clone, timeout);
             let mut connecting = connecting_arc.lock().unwrap();
             if connecting.remove(&host_clone.id) {
                 status_arc.lock().unwrap().insert(host_clone.id, res);
@@ -53,6 +54,7 @@ impl LauncherApp {
         let listeners = self.remote_listeners.clone();
         let stopped = self.remote_stopped_servers.clone();
         let scanning = self.remote_scanning.clone();
+        let timeout = self.ssh_probe_timeouts.port_scan_seconds;
         std::thread::spawn(move || {
             if delay_ms != 0 {
                 std::thread::sleep(std::time::Duration::from_millis(delay_ms));
@@ -60,7 +62,7 @@ impl LauncherApp {
             if !scanning.lock().unwrap().contains(&host.id) {
                 return;
             }
-            let result = fetch_remote_listeners(&host);
+            let result = fetch_remote_listeners(&host, timeout);
             let mut scanning = scanning.lock().unwrap();
             if scanning.remove(&host.id) {
                 let mut snapshots = listeners.lock().unwrap();

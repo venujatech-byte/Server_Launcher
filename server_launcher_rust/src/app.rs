@@ -388,6 +388,7 @@ pub struct LauncherApp {
     remote_terminal_logs: Arc<Mutex<HashMap<String, Arc<Mutex<VecDeque<crate::service::LogEntry>>>>>>,
     remote_command_activity: Arc<Mutex<HashMap<String, RemoteCommandActivity>>>,
     ssh_idle: crate::config::SshIdleSettings,
+    ssh_probe_timeouts: crate::config::SshProbeTimeouts,
     remote_terminal_inputs: HashMap<String, String>,
     remote_connection_status: Arc<Mutex<HashMap<String, Result<String, String>>>>,
     remote_connecting: Arc<Mutex<BTreeSet<String>>>,
@@ -914,6 +915,7 @@ impl LauncherApp {
             remote_terminal_logs,
             remote_command_activity: Arc::default(),
             ssh_idle: config_file.ssh_idle,
+            ssh_probe_timeouts: config_file.ssh_probe_timeouts,
             remote_terminal_inputs,
             remote_connection_status,
             remote_connecting,
@@ -1359,6 +1361,7 @@ impl LauncherApp {
             app_autostart: self.app_autostart,
             journal_refresh_interval: Some(self.journal_refresh_interval),
             ssh_idle: self.ssh_idle,
+            ssh_probe_timeouts: self.ssh_probe_timeouts,
         };
         if let Err(error) = cfg.save_to_file(&self.config_path) {
             crate::ssh_credentials::discard(staged_refs);
@@ -3267,7 +3270,7 @@ impl eframe::App for LauncherApp {
             _ => {}
         }
 
-        let ssh_modal_action = render_ssh_host_modal(ctx, &mut self.ssh_host_modal, &p);
+        let ssh_modal_action = render_ssh_host_modal(ctx, &mut self.ssh_host_modal, &p, self.ssh_probe_timeouts.connection_test_seconds);
         match ssh_modal_action {
             ModalAction::SaveSshHost(mut new_host, old_id) => {
                 self.ssh_host_modal.open = false;

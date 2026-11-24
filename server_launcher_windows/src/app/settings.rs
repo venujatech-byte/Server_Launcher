@@ -566,7 +566,7 @@ impl LauncherApp {
                                             });
                                     });
                                 ui.add_space(12.0);
-                                let previous = self.ssh_idle;
+                                let previous = (self.ssh_idle, self.ssh_probe_timeouts);
                                 Frame::none().fill(palette.bg_subtle).rounding(12.0)
                                     .inner_margin(16.0).show(ui, |ui| {
                                         use crate::config::SshIdleMode;
@@ -588,8 +588,19 @@ impl LauncherApp {
                                             self.ssh_idle.mode != SshIdleMode::Never,
                                             egui::DragValue::new(&mut self.ssh_idle.minutes).range(1..=120).suffix(" min"),
                                         ).on_hover_text("Continuous time inactive before closing the local SSH connection");
+                                        ui.separator();
+                                        ui.label(RichText::new("SSH probe timeouts").size(14.0).strong().color(palette.text_primary));
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.label("Connection test");
+                                            ui.add(egui::DragValue::new(&mut self.ssh_probe_timeouts.connection_test_seconds)
+                                                .range(5..=120).suffix(" s"));
+                                            ui.label("Port scan");
+                                            ui.add(egui::DragValue::new(&mut self.ssh_probe_timeouts.port_scan_seconds)
+                                                .range(5..=120).suffix(" s"));
+                                        });
+                                        ui.label("Applies the next time a test or scan starts.");
                                     });
-                                if previous != self.ssh_idle {
+                                if previous != (self.ssh_idle, self.ssh_probe_timeouts) {
                                     self.persist_config();
                                 }
                             }

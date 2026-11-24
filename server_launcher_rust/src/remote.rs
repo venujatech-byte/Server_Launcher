@@ -212,7 +212,7 @@ fn ssh_probe_output(mut command: Command, timeout: std::time::Duration) -> std::
 }
 
 /// Test connection to remote SSH host with timeout
-pub fn test_ssh_connection(host: &SshRemoteHost) -> Result<String, String> {
+pub fn test_ssh_connection(host: &SshRemoteHost, timeout_seconds: u32) -> Result<String, String> {
     let has_password = !host.password.trim().is_empty();
     let mut cmd;
 
@@ -237,7 +237,7 @@ pub fn test_ssh_connection(host: &SshRemoteHost) -> Result<String, String> {
     let target = format!("{}@{}", host.user.trim(), host.host.trim());
     cmd.arg("--").arg(&target).arg("echo __LAUNCHER_SSH_OK__ && uname -s -r -m");
 
-    match ssh_probe_output(cmd, std::time::Duration::from_secs(10)) {
+    match ssh_probe_output(cmd, std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120)))) {
         Ok(out) => {
             if out.status.success() {
                 let stdout = String::from_utf8_lossy(&out.stdout);
@@ -305,7 +305,7 @@ pub(crate) fn shell_quote(value: &str) -> String {
 }
 
 /// Fetch listening ports and processes on the remote PC
-pub fn fetch_remote_listeners(host: &SshRemoteHost) -> Result<Vec<RemoteListener>, String> {
+pub fn fetch_remote_listeners(host: &SshRemoteHost, timeout_seconds: u32) -> Result<Vec<RemoteListener>, String> {
     // Run ss -tulpn or lsof or netstat on the remote host, plus ps for CPU & RAM metrics
     let remote_script = r#"
 set -f
@@ -331,7 +331,7 @@ printf '%s\n' "$metrics"
 "#;
 
     let cmd = build_ssh_command(host, remote_script);
-    let out = ssh_probe_output(cmd, std::time::Duration::from_secs(20)).map_err(|e| format!("SSH error: {}", e))?;
+    let out = ssh_probe_output(cmd, std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120)))).map_err(|e| format!("SSH error: {}", e))?;
 
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);

@@ -16,7 +16,6 @@ impl LauncherApp {
         self.remote_connection_status.lock().unwrap().remove(id);
         self.remote_stopped_servers.lock().unwrap().remove(id);
         self.remote_terminal_logs.lock().unwrap().remove(id);
-        self.remote_command_activity.lock().unwrap().remove(id);
         self.remote_sensors_snapshots.lock().unwrap().remove(id);
         self.remote_sensors_in_flight.lock().unwrap().remove(id);
         self.remote_sensors_last_fetch.lock().unwrap().remove(id);

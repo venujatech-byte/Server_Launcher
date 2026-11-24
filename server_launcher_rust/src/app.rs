@@ -449,6 +449,7 @@ pub struct LauncherApp {
     // Close confirmation dialog state
     close_confirm_open: bool,
     close_confirmed: bool,
+    close_waiting_for_ssh_commands: bool,
 
     // ADB / Android Device Cockpit State
     pub adb_devices: Vec<crate::config::AdbDeviceConfig>,
@@ -978,6 +979,7 @@ impl LauncherApp {
             remote_search_query: HashMap::new(),
             close_confirm_open: false,
             close_confirmed: false,
+            close_waiting_for_ssh_commands: false,
 
             script_executions,
             script_modal: ScriptModalState::default(),
@@ -2692,6 +2694,13 @@ impl eframe::App for LauncherApp {
                 // Block close and show dialog
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.close_confirm_open = true;
+            } else if self.remote_commands_active() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.close_confirmed = true;
+                self.close_waiting_for_ssh_commands = true;
+                self.cancel_all_remote_commands();
+            } else {
+                // No in-app SSH child needs cleanup before the window closes.
             }
         }
 
@@ -2704,21 +2713,39 @@ impl eframe::App for LauncherApp {
             let choice = render_close_confirmation_modal(ctx, &mut self.close_confirm_open, &running_info, &p);
             match choice {
                 CloseConfirmChoice::StopAndExit => {
+                    self.cancel_all_remote_commands();
                     self.close_confirmed = true;
                     self.close_confirm_open = false;
                     self.stop_all();
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    self.close_waiting_for_ssh_commands = self.remote_commands_active();
+                    if !self.close_waiting_for_ssh_commands {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
                 }
                 CloseConfirmChoice::KeepRunningAndExit => {
+                    self.cancel_all_remote_commands();
                     self.close_confirmed = true;
                     self.close_confirm_open = false;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    self.close_waiting_for_ssh_commands = self.remote_commands_active();
+                    if !self.close_waiting_for_ssh_commands {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
                 }
                 CloseConfirmChoice::Cancel => {
                     crate::updater::cancel_install(ctx);
                     self.close_confirm_open = false;
                 }
                 CloseConfirmChoice::None => {}
+            }
+        }
+
+        if self.close_waiting_for_ssh_commands {
+            if self.remote_commands_active() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            } else {
+                self.close_waiting_for_ssh_commands = false;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }
 
@@ -3366,7 +3393,10 @@ impl eframe::App for LauncherApp {
                         {
                             new_host.credential_ref.clone_from(&previous.credential_ref);
                         }
-                        if host_changed { self.invalidate_remote_host(&old); }
+                        if host_changed {
+                            self.cancel_remote_commands(&old);
+                            self.invalidate_remote_host(&old);
+                        }
                         self.ssh_hosts[pos] = new_host.clone();
                         self.remote_host_lifetime(&new_host);
                     }

@@ -1,5 +1,35 @@
 use super::*;
 
+fn advance_cancel_generation(activity: &mut RemoteCommandActivity) {
+    activity.cancel_generation = activity.cancel_generation.wrapping_add(1);
+}
+
+fn remote_command_was_cancelled(activity: &RemoteCommandActivity, generation: u64) -> bool {
+    activity.cancel_generation != generation
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+
+    #[test]
+    fn cancellation_is_host_scoped_and_new_jobs_use_the_current_generation() {
+        let mut activities = HashMap::from([
+            ("first".to_owned(), RemoteCommandActivity { count: 1, ..Default::default() }),
+            ("second".to_owned(), RemoteCommandActivity { count: 1, ..Default::default() }),
+        ]);
+        let first_generation = activities["first"].cancel_generation;
+        let second_generation = activities["second"].cancel_generation;
+        advance_cancel_generation(activities.get_mut("first").unwrap());
+        assert_ne!(activities["first"].cancel_generation, first_generation);
+        assert_eq!(activities["second"].cancel_generation, second_generation);
+        let new_job_generation = activities["first"].cancel_generation;
+        assert!(remote_command_was_cancelled(&activities["first"], first_generation));
+        assert!(!remote_command_was_cancelled(&activities["first"], new_job_generation));
+        assert!(!remote_command_was_cancelled(&activities["second"], second_generation));
+    }
+}
+
 impl LauncherApp {
     pub(in crate::app) fn get_remote_logs(&self, host_id: &str) -> Arc<Mutex<VecDeque<crate::service::LogEntry>>> {
         let mut map = self.remote_terminal_logs.lock().unwrap();
@@ -86,7 +116,7 @@ impl LauncherApp {
                                 let reason = {
                                     let activity = counts.lock().unwrap();
                                     activity.get(&host_clone.id).and_then(|state| {
-                                        if state.cancel_generation != generation {
+                                        if remote_command_was_cancelled(state, generation) {
                                             Some("[ssh] Canceled command. Closing the local SSH connection.")
                                         } else if state.inactive_since.zip(state.timeout)
                                             .is_some_and(|(since, timeout)| since.elapsed() >= timeout)
@@ -148,8 +178,18 @@ impl LauncherApp {
 
     pub(in crate::app) fn cancel_remote_commands(&self, host_id: &str) {
         if let Some(activity) = self.remote_command_activity.lock().unwrap().get_mut(host_id) {
-            activity.cancel_generation = activity.cancel_generation.wrapping_add(1);
+            advance_cancel_generation(activity);
         }
+    }
+
+    pub(in crate::app) fn cancel_all_remote_commands(&self) {
+        for activity in self.remote_command_activity.lock().unwrap().values_mut() {
+            advance_cancel_generation(activity);
+        }
+    }
+
+    pub(in crate::app) fn remote_commands_active(&self) -> bool {
+        self.remote_command_activity.lock().unwrap().values().any(|activity| activity.count > 0)
     }
 
     pub(in crate::app) fn clear_remote_terminal_logs(&self, host_id: &str) {

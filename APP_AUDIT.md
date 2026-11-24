@@ -94,3 +94,5 @@ SSH launch and retry now share one command builder. Service operands are validat
 Both SSH host deletion entry points now share cleanup for connection status, listener scans, saved stopped rows, terminal state, search and cached sudo input. Delayed and immediate scans share one per-host gate, and an in-flight listener scan or connection test cannot publish after deletion. Other remote workers and SSH subprocess lifetimes still need review.
 
 SSH connection probes and port scans now have 10-second and 20-second subprocess deadlines after spawn. Expired probes release their worker slots, and Unix cleanup also terminates the local SSH wrapper process group. Interactive SSH commands retain their existing lifecycle.
+
+The Add/Edit SSH Host dialog now runs Test Connection on a background thread. The form shows pending feedback, accepts Cancel or Escape, and discards results from closed dialogs. The test uses the existing SSH probe deadline.

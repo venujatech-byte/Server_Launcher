@@ -1507,7 +1507,7 @@ pub fn render_command_palette(
     action
 }
 
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct SshHostModalState {
     pub open: bool,
     pub is_edit: bool,
@@ -1521,7 +1521,7 @@ pub struct SshHostModalState {
     pub show_password: bool,
     pub remote_cwd: String,
     pub test_result: Option<Result<String, String>>,
-    pub is_testing: bool,
+    pending_test: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     pub use_agent: bool,
     pub strict_host_key: bool,
 }
@@ -1540,7 +1540,7 @@ impl SshHostModalState {
         self.show_password = false;
         self.remote_cwd = String::new();
         self.test_result = None;
-        self.is_testing = false;
+        self.pending_test = None;
         self.use_agent = true;
         self.strict_host_key = false;
     }
@@ -1558,7 +1558,7 @@ impl SshHostModalState {
         self.show_password = false;
         self.remote_cwd = h.remote_cwd.clone();
         self.test_result = None;
-        self.is_testing = false;
+        self.pending_test = None;
         self.use_agent = h.use_agent;
         self.strict_host_key = h.strict_host_key;
     }
@@ -1566,13 +1566,28 @@ impl SshHostModalState {
 
 pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palette: &ThemePalette) -> ModalAction {
     if !state.open {
+        state.pending_test = None;
         return ModalAction::None;
     }
 
     if ctx.input(|i| i.key_pressed(Key::Escape)) {
         state.open = false;
+        state.pending_test = None;
         return ModalAction::None;
     }
+
+    if let Some(receiver) = &state.pending_test {
+        use std::sync::mpsc::TryRecvError;
+        state.test_result = match receiver.try_recv() {
+            Ok(result) => Some(result),
+            Err(TryRecvError::Disconnected) => Some(Err("SSH connection test ended unexpectedly.".into())),
+            Err(TryRecvError::Empty) => None,
+        };
+        if state.test_result.is_some() {
+            state.pending_test = None;
+        }
+    }
+    let testing = state.pending_test.is_some();
 
     let mut action = ModalAction::None;
     let title = if state.is_edit { "Edit SSH Remote PC" } else { "Add SSH Remote PC" };
@@ -1614,6 +1629,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                 .max_height((max_h - 145.0).max(80.0))
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
+            if testing { ui.disable(); }
             ui.label(RichText::new("Configure an SSH connection. Required fields are marked *.").size(11.5).color(palette.text_muted));
             ui.add_space(4.0);
 
@@ -1797,7 +1813,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                     .fill(palette.bg_button)
                     .stroke(Stroke::NONE)
                     .rounding(Rounding::same(8.0));
-                if ui.add(test_btn).clicked() {
+                if ui.add_enabled(!testing && !state.host.trim().is_empty(), test_btn).clicked() {
                     let port = state.port_str.trim().parse::<u16>().unwrap_or(22);
                     let host_obj = crate::config::SshRemoteHost {
                         id: "test".to_string(),
@@ -1812,11 +1828,21 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                         use_agent: state.use_agent,
                         strict_host_key: state.strict_host_key,
                     };
-                    state.test_result = Some(crate::remote::test_ssh_connection(&host_obj));
+                    let (sender, receiver) = std::sync::mpsc::channel();
+                    state.test_result = None;
+                    state.pending_test = Some(receiver);
+                    let ctx = ctx.clone();
+                    std::thread::spawn(move || {
+                        let _ = sender.send(crate::remote::test_ssh_connection(&host_obj));
+                        ctx.request_repaint();
+                    });
                 }
 
                 ui.add_space(6.0);
-                if let Some(res) = &state.test_result {
+                if state.pending_test.is_some() {
+                    ui.spinner();
+                    ui.label(RichText::new("Testing connection…").size(11.0).color(palette.text_muted));
+                } else if let Some(res) = &state.test_result {
                     match res {
                         Ok(msg) => {
                             ui.label(RichText::new("●").size(9.0).color(palette.success));
@@ -1897,6 +1923,9 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
 
     if !is_open || !window_open {
         state.open = false;
+    }
+    if !state.open {
+        state.pending_test = None;
     }
     action
 }
@@ -3500,12 +3529,16 @@ mod tests {
     }
 
     #[test]
-    fn test_ssh_host_modal_state_close() {
+    fn reopening_ssh_host_modal_discards_previous_probe() {
         let mut modal = SshHostModalState::default();
-        modal.open = true;
-        modal.name = "My SSH".to_string();
-        modal.open = false;
-        assert!(!modal.open);
+        modal.open_add();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        modal.pending_test = Some(receiver);
+
+        modal.open_add();
+
+        assert!(sender.send(Ok("Connected to previous host".into())).is_err());
+        assert!(modal.test_result.is_none());
     }
 
     #[test]

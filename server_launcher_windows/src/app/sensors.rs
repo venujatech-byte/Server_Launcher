@@ -343,10 +343,6 @@ impl LauncherApp {
             } else {
                 self.ram_history.clear();
             }
-            let (total_storage, used_storage, _) = mounted_storage_totals(&snap.disks);
-            if total_storage > 0 {
-                push_telemetry(&mut self.storage_history, (used_storage as f64 / total_storage as f64 * 100.0) as f32, history_capacity);
-            }
 
             if snap.total_disk_rates_available {
                 push_telemetry(&mut self.disk_write_history, (snap.total_disk_write_rate_bps / 1_000_000.0) as f32, history_capacity);
@@ -390,13 +386,6 @@ impl LauncherApp {
             self.net_peak_mb = self.net_tx_history.iter().chain(&self.net_rx_history)
                 .copied().fold(0.0_f32, f32::max);
 
-            if snap.socket_stats_available {
-                push_telemetry(&mut self.socket_tcp_history, snap.socket_tcp as f32, history_capacity);
-                push_telemetry(&mut self.socket_udp_history, snap.socket_udp as f32, history_capacity);
-            } else {
-                self.socket_tcp_history.clear();
-                self.socket_udp_history.clear();
-            }
 
             let num_cores = snap.cpu_core_usages.len();
             if self.cpu_core_histories.len() != num_cores {
@@ -483,7 +472,6 @@ impl LauncherApp {
         self.cpu_history.clear();
         self.cpu_peak_usage = 0.0;
         self.ram_history.clear();
-        self.storage_history.clear();
         self.disk_write_history.clear();
         self.disk_read_history.clear();
         self.per_disk_write_history.clear();
@@ -491,8 +479,6 @@ impl LauncherApp {
         self.net_tx_history.clear();
         self.net_rx_history.clear();
         self.net_peak_mb = 0.0;
-        self.socket_tcp_history.clear();
-        self.socket_udp_history.clear();
         self.cpu_core_histories.clear();
     }
 

@@ -614,14 +614,11 @@ pub struct LauncherApp {
     pub cpu_core_histories: Vec<VecDeque<f32>>,
     pub cpu_peak_usage: f32,
     pub ram_history: VecDeque<(f32, f32)>,
-    pub storage_history: VecDeque<f32>,
     pub disk_write_history: VecDeque<f32>,
     pub disk_read_history: VecDeque<f32>,
     pub net_tx_history: VecDeque<f32>,
     pub net_rx_history: VecDeque<f32>,
     pub net_peak_mb: f32,
-    pub socket_tcp_history: VecDeque<f32>,
-    pub socket_udp_history: VecDeque<f32>,
     pub gpu_mode: usize,
     pub selected_gpu_idx: usize,
     pub selected_disk_idx: usize,
@@ -972,14 +969,11 @@ impl LauncherApp {
             cpu_core_histories: Vec::new(),
             cpu_peak_usage: 0.0,
             ram_history: VecDeque::with_capacity(60),
-            storage_history: VecDeque::with_capacity(60),
             disk_write_history: VecDeque::with_capacity(60),
             disk_read_history: VecDeque::with_capacity(60),
             net_tx_history: VecDeque::with_capacity(60),
             net_rx_history: VecDeque::with_capacity(60),
             net_peak_mb: 0.0,
-            socket_tcp_history: VecDeque::with_capacity(60),
-            socket_udp_history: VecDeque::with_capacity(60),
             gpu_mode: 1, // Balanced
             selected_gpu_idx: 0,
             selected_disk_idx: 0,
@@ -5030,108 +5024,6 @@ fn draw_dual_network_chart(
         painter.line_segment([tx_pts[i], tx_pts[i + 1]], Stroke::new(2.0_f32, accent));
     }
 }
-
-fn draw_sockets_chart(
-    ui: &mut Ui,
-    height: f32,
-    tcp_hist: &VecDeque<f32>,
-    udp_hist: &VecDeque<f32>,
-    accent: Color32,
-) {
-    let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
-    let rect = response.rect;
-
-    painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 14, 22));
-
-    let y_base = rect.bottom() - 12.0;
-
-    let y_mid = rect.top() + rect.height() * 0.45;
-    draw_dotted_hline(
-        &painter,
-        y_mid,
-        rect.left() + 10.0,
-        rect.right() - 10.0,
-        Stroke::new(1.2_f32, accent_with_alpha(accent, 100)),
-        6.0,
-        4.0,
-    );
-
-    let n = tcp_hist.len().max(udp_hist.len());
-    if n < 2 {
-        return;
-    }
-
-    let graph_w = (rect.width() - 20.0).max(20.0);
-    let step_x = graph_w / (n - 1) as f32;
-    let max_v = 250.0_f32;
-
-    let tcp_pts: Vec<egui::Pos2> = tcp_hist
-        .iter()
-        .enumerate()
-        .map(|(i, &v)| {
-            let x = rect.left() + 10.0 + i as f32 * step_x;
-            let norm = (v / max_v).clamp(0.04, 0.94);
-            let y = y_base - norm * (y_base - rect.top() - 10.0);
-            egui::pos2(x, y)
-        })
-        .collect();
-
-    let mut mesh_tcp = egui::Mesh::default();
-    let c_top = accent_with_alpha(accent, 35);
-    let c_bot = accent_with_alpha(accent, 2);
-    for i in 0..(tcp_pts.len() - 1) {
-        let p1 = tcp_pts[i];
-        let p2 = tcp_pts[i + 1];
-        let b1 = egui::pos2(p1.x, y_base);
-        let b2 = egui::pos2(p2.x, y_base);
-        let idx = mesh_tcp.vertices.len() as u32;
-        mesh_tcp.vertices.push(egui::epaint::Vertex { pos: p1, uv: egui::epaint::WHITE_UV, color: c_top });
-        mesh_tcp.vertices.push(egui::epaint::Vertex { pos: p2, uv: egui::epaint::WHITE_UV, color: c_top });
-        mesh_tcp.vertices.push(egui::epaint::Vertex { pos: b2, uv: egui::epaint::WHITE_UV, color: c_bot });
-        mesh_tcp.vertices.push(egui::epaint::Vertex { pos: b1, uv: egui::epaint::WHITE_UV, color: c_bot });
-        mesh_tcp.indices.extend_from_slice(&[idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
-    }
-    painter.add(egui::Shape::mesh(mesh_tcp));
-
-    for i in 0..(tcp_pts.len() - 1) {
-        painter.line_segment([tcp_pts[i], tcp_pts[i + 1]], Stroke::new(2.0_f32, accent));
-    }
-
-    let udp_pts: Vec<egui::Pos2> = udp_hist
-        .iter()
-        .enumerate()
-        .map(|(i, &v)| {
-            let x = rect.left() + 10.0 + i as f32 * step_x;
-            let norm = (v / max_v).clamp(0.02, 0.92);
-            let y = y_base - norm * (y_base - rect.top() - 10.0);
-            egui::pos2(x, y)
-        })
-        .collect();
-
-    let mut mesh_udp = egui::Mesh::default();
-    let cu_top = Color32::from_rgba_unmultiplied(148, 163, 184, 20);
-    let cu_bot = Color32::from_rgba_unmultiplied(148, 163, 184, 2);
-    for i in 0..(udp_pts.len() - 1) {
-        let p1 = udp_pts[i];
-        let p2 = udp_pts[i + 1];
-        let b1 = egui::pos2(p1.x, y_base);
-        let b2 = egui::pos2(p2.x, y_base);
-        let idx = mesh_udp.vertices.len() as u32;
-        mesh_udp.vertices.push(egui::epaint::Vertex { pos: p1, uv: egui::epaint::WHITE_UV, color: cu_top });
-        mesh_udp.vertices.push(egui::epaint::Vertex { pos: p2, uv: egui::epaint::WHITE_UV, color: cu_top });
-        mesh_udp.vertices.push(egui::epaint::Vertex { pos: b2, uv: egui::epaint::WHITE_UV, color: cu_bot });
-        mesh_udp.vertices.push(egui::epaint::Vertex { pos: b1, uv: egui::epaint::WHITE_UV, color: cu_bot });
-        mesh_udp.indices.extend_from_slice(&[idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
-    }
-    painter.add(egui::Shape::mesh(mesh_udp));
-
-    for i in 0..(udp_pts.len() - 1) {
-        painter.line_segment([udp_pts[i], udp_pts[i + 1]], Stroke::new(1.6_f32, Color32::from_rgb(148, 163, 184)));
-    }
-}
-
-
-
 
 fn render_custom_toggle_switch(ui: &mut Ui, on: &mut bool, accent: Color32) -> bool {
     let desired_size = egui::vec2(34.0, 18.0);

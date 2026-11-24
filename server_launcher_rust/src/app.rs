@@ -2923,8 +2923,15 @@ impl eframe::App for LauncherApp {
                             ui.horizontal(|ui| {
                                 let name = egui::Label::new(RichText::new(&host.name)
                                     .size(16.5).strong().color(p.text_primary))
+                                    .truncate()
                                     .sense(egui::Sense::click());
-                                if ui.add(name).on_hover_text("Edit SSH host").clicked() {
+                                let name_width = ui.available_width().min(220.0);
+                                let name_response = ui.scope(|ui| {
+                                    ui.set_max_width(name_width);
+                                    ui.add(name)
+                                }).inner;
+                                if name_response.on_hover_text(format!("{} · Click to edit SSH host", host.name)).clicked()
+                                {
                                     self.ssh_host_modal.open_edit(host);
                                 }
                                 ui.add_space(5.0);

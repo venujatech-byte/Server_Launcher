@@ -28,86 +28,90 @@ impl LauncherApp {
         Frame::none()
             .fill(p.bg_card)
             .stroke(Stroke::NONE)
-            .rounding(Rounding::same(999.0))
-            .inner_margin(egui::Margin::symmetric(12.0, 4.5))
+            .rounding(Rounding::same(10.0))
+            .inner_margin(egui::Margin::symmetric(10.0, 4.0))
             .show(ui, |ui| {
                 let total_avail_w = ui.available_width();
-                let right_w = 104.0;
-                let left_w = (total_avail_w - right_w - 6.0).max(30.0);
+                let right_w = total_avail_w.min(108.0);
+                let left_w = (total_avail_w - right_w - 8.0).max(0.0);
 
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.spacing_mut().item_spacing.x = 8.0;
 
-                    // 1. Left Telemetry Strip (strictly bounded to left_w to NEVER collide with right controls)
-                    ui.allocate_ui_with_layout(egui::vec2(left_w, ui.available_height()), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.set_clip_rect(ui.max_rect());
-                        ui.spacing_mut().item_spacing.x = 6.0;
+                    if left_w >= 34.0 {
+                        ui.allocate_ui_with_layout(egui::vec2(left_w, 24.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.set_max_width(left_w);
+                            ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
+                            ui.spacing_mut().item_spacing.x = 8.0;
 
-                        // Left Icon + Host / System Name
-                        ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(accent));
-                        let host_name = self.host_display_name(host_id);
-                        ui.label(RichText::new(host_name).size(10.5).strong().color(p.text_primary));
+                            // Left Icon + Host / System Name
+                            ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(accent));
+                            let host_name = self.host_display_name(host_id);
+                            ui.add(egui::Label::new(RichText::new(&host_name).size(11.5).strong().color(p.text_primary)).truncate())
+                                .on_hover_text(host_name);
 
-                        // CPU brief info (clean up "(R)", "(TM)", "CPU" to keep it concise)
-                        if ui.available_width() > 140.0 {
-                            ui.label(RichText::new("•").size(9.5).color(p.border));
+                            // CPU brief info (clean up "(R)", "(TM)", "CPU" to keep it concise)
+                            if ui.available_width() > 140.0 {
+                                ui.label(RichText::new("│").size(10.0).color(p.border));
 
-                            let cpu_clean = if !snap.cpu_brand.is_empty() {
-                                let b = snap.cpu_brand
-                                    .replace("(R)", "")
-                                    .replace("(TM)", "")
-                                    .replace("CPU", "");
-                                let first_part = b.split('@').next().unwrap_or(&b).trim();
-                                first_part.split_whitespace().collect::<Vec<_>>().join(" ")
-                            } else if host_id.is_some() {
-                                "Remote CPU".to_string()
-                            } else {
-                                "Local CPU".to_string()
-                            };
+                                let cpu_clean = if !snap.cpu_brand.is_empty() {
+                                    let b = snap.cpu_brand
+                                        .replace("(R)", "")
+                                        .replace("(TM)", "")
+                                        .replace("CPU", "");
+                                    let first_part = b.split('@').next().unwrap_or(&b).trim();
+                                    first_part.split_whitespace().collect::<Vec<_>>().join(" ")
+                                } else if host_id.is_some() {
+                                    "Remote CPU".to_string()
+                                } else {
+                                    "Local CPU".to_string()
+                                };
 
-                            let cpu_disp = if ui.available_width() < 240.0 && cpu_clean.len() > 18 {
-                                format!("{}…", cpu_clean.chars().take(17).collect::<String>())
-                            } else {
-                                cpu_clean
-                            };
+                                let cpu_disp = if ui.available_width() < 240.0 && cpu_clean.len() > 18 {
+                                    format!("{}…", cpu_clean.chars().take(17).collect::<String>())
+                                } else {
+                                    cpu_clean
+                                };
 
-                            let cores_label = format!("{}C/{}T", if snap.cpu_cores_physical > 0 { snap.cpu_cores_physical.to_string() } else { "—".into() }, if snap.cpu_cores_logical > 0 { snap.cpu_cores_logical.to_string() } else { "—".into() });
-                            ui.label(RichText::new(format!("{} {}", crate::lucide::CPU, cpu_disp)).size(10.0).color(p.text_secondary));
-                            ui.label(RichText::new(cores_label).size(9.5).monospace().color(p.text_muted));
-                        }
+                                let cores_label = format!("{}C/{}T", if snap.cpu_cores_physical > 0 { snap.cpu_cores_physical.to_string() } else { "—".into() }, if snap.cpu_cores_logical > 0 { snap.cpu_cores_logical.to_string() } else { "—".into() });
+                                ui.label(RichText::new(format!("{} {}", crate::lucide::CPU, cpu_disp)).size(10.0).color(p.text_secondary));
+                                ui.label(RichText::new(cores_label).size(9.5).monospace().color(p.text_muted));
+                            }
 
-                        // RAM brief info
-                        if ui.available_width() > 65.0 {
-                            ui.label(RichText::new("•").size(9.5).color(p.border));
-                            let ram_gb = (snap.mem_total_bytes as f64 / (1024.0 * 1024.0 * 1024.0)).round() as u64;
-                            let ram_label = if ram_gb > 0 { format!("{}GB RAM", ram_gb) } else { "RAM —".to_string() };
-                            ui.label(RichText::new(format!("{} {}", crate::lucide::RAM, ram_label)).size(10.0).color(p.text_secondary));
-                        }
+                            // RAM brief info
+                            if ui.available_width() > 65.0 {
+                                ui.label(RichText::new("│").size(10.0).color(p.border));
+                                let ram_gb = (snap.mem_total_bytes as f64 / (1024.0 * 1024.0 * 1024.0)).round() as u64;
+                                let ram_label = if ram_gb > 0 { format!("{}GB RAM", ram_gb) } else { "RAM —".to_string() };
+                                ui.label(RichText::new(format!("{} {}", crate::lucide::RAM, ram_label)).size(10.0).color(p.text_secondary));
+                            }
 
-                        // Storage brief info
-                        let phys_disk: u64 = snap.physical_disks.iter().map(|d| d.total_bytes).sum();
-                        let total_disk = if phys_disk > 0 { phys_disk } else { mounted_storage_totals(&snap.disks).0 };
-                        if total_disk > 0 && ui.available_width() > 70.0 {
-                            ui.label(RichText::new("•").size(9.5).color(p.border));
-                            ui.label(RichText::new(format!("{} {}", crate::lucide::STORAGE, crate::sensors::format_bytes(total_disk))).size(10.0).color(p.text_secondary))
-                                .on_hover_text(if phys_disk > 0 { "Installed physical storage capacity" } else { "Mounted filesystem capacity" });
-                        }
+                            // Storage brief info
+                            let phys_disk: u64 = snap.physical_disks.iter().map(|d| d.total_bytes).sum();
+                            let total_disk = if phys_disk > 0 { phys_disk } else { mounted_storage_totals(&snap.disks).0 };
+                            if total_disk > 0 && ui.available_width() > 70.0 {
+                                ui.label(RichText::new("│").size(10.0).color(p.border));
+                                ui.label(RichText::new(format!("{} {}", crate::lucide::STORAGE, crate::sensors::format_bytes(total_disk))).size(10.0).color(p.text_secondary))
+                                    .on_hover_text(if phys_disk > 0 { "Installed physical storage capacity" } else { "Mounted filesystem capacity" });
+                            }
 
-                        // System Uptime
-                        if ui.available_width() > 75.0 {
-                            let up_secs = if snap.uptime_secs > 0 { snap.uptime_secs } else if host_id.is_none() { get_system_uptime() } else { 0 };
-                            ui.label(RichText::new("•").size(9.5).color(p.border));
-                            ui.label(RichText::new(format!("Up {}", format_uptime(up_secs))).size(9.5).monospace().color(p.text_muted));
-                        }
-                    });
+                            // System Uptime
+                            if ui.available_width() > 75.0 {
+                                let up_secs = if snap.uptime_secs > 0 { snap.uptime_secs } else if host_id.is_none() { get_system_uptime() } else { 0 };
+                                ui.label(RichText::new("│").size(10.0).color(p.border));
+                                ui.label(RichText::new(format!("Up {}", format_uptime(up_secs))).size(9.5).monospace().color(p.text_muted));
+                            }
+                        });
 
-                    // 2. Right Actions (LIVE badge + Refresh button)
-                    ui.allocate_ui_with_layout(egui::vec2(right_w, ui.available_height()), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    }
+
+                    ui.allocate_ui_with_layout(egui::vec2(right_w, 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 5.0;
 
                         let btn_ref = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(10.5).color(p.text_secondary))
                             .fill(p.bg_button)
-                            .rounding(Rounding::same(999.0));
+                            .rounding(Rounding::same(7.0))
+                            .min_size(egui::vec2(26.0, 24.0));
                         if ui.add(btn_ref).on_hover_text("Refresh system telemetry now").clicked() {
                             if let Some(hid) = host_id {
                                 if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
@@ -131,7 +135,7 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 4.0;
                                     ui.label(RichText::new("●").size(7.5).color(state_color));
-                                    ui.label(RichText::new(state).size(9.0).monospace().strong().color(p.text_primary));
+                                    ui.label(RichText::new(state).size(9.5).monospace().strong().color(state_color));
                                 });
                             }).response.on_hover_text(age.map(|age| format!("Last updated {}s ago", age.as_secs())).unwrap_or_else(|| "No sensor snapshot received yet".into()));
                     });
@@ -150,6 +154,7 @@ impl LauncherApp {
             let navigation_width = ui.available_width().min(SENSORS_SIDEBAR_WIDTH);
             ui.set_width(navigation_width);
             ui.set_max_width(navigation_width);
+            ui.add_space(8.0);
 
             ScrollArea::vertical()
                 .id_salt("sensors_left_sidebar_scroll")
@@ -159,42 +164,48 @@ impl LauncherApp {
                         ui.set_width(ui.available_width());
                         ui.set_max_width(ui.available_width());
 
-                        // Header Row: Title & Manual Refresh (Image 1 / Image 2)
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("HARDWARE ENGINES").size(11.0).strong().color(p.text_muted));
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let btn_ref = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(p.text_secondary))
-                                    .fill(p.bg_button);
-                                if ui.add(btn_ref).on_hover_text("Refresh all sensors now").clicked() {
-                                    if let Some(hid) = host_id {
-                                        if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                            self.trigger_remote_sensors_query(host);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ui.available_width(), 26.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.spacing_mut().interact_size.y = 26.0;
+                                ui.label(RichText::new("HARDWARE ENGINES").size(11.0).strong().color(p.text_muted));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let btn_ref = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(p.text_secondary))
+                                        .fill(p.bg_button)
+                                        .rounding(Rounding::same(7.0))
+                                        .min_size(egui::vec2(28.0, 26.0));
+                                    if ui.add(btn_ref).on_hover_text("Refresh all sensors now").clicked() {
+                                        if let Some(hid) = host_id {
+                                            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                                self.trigger_remote_sensors_query(host);
+                                            }
+                                        } else {
+                                            let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited)
+                                                || self.sensors_subtab == SensorsSubTab::Ram;
+                                            self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
+                                            self.last_sensors_refresh = Instant::now();
                                         }
-                                    } else {
-                                        let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited)
-                                            || self.sensors_subtab == SensorsSubTab::Ram;
-                                        self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
-                                        self.last_sensors_refresh = Instant::now();
                                     }
-                                }
 
-                                // Auto-refresh interval dropdown
-                                let interval_label = match self.sensors_refresh_interval {
-                                    0 => format!("{} Off", crate::lucide::CLOCK),
-                                    s => format!("{} {}s", crate::lucide::CLOCK, s),
-                                };
-                                egui::ComboBox::from_id_salt("sensors_refresh_interval_combo")
-                                    .selected_text(RichText::new(interval_label).size(10.0).color(p.text_primary))
-                                    .width(62.0)
-                                    .show_ui(ui, |ui| {
-                                        ui.selectable_value(&mut self.sensors_refresh_interval, 0, "Off (Manual)");
-                                        ui.selectable_value(&mut self.sensors_refresh_interval, 1, "1 second");
-                                        ui.selectable_value(&mut self.sensors_refresh_interval, 2, "2 seconds");
-                                        ui.selectable_value(&mut self.sensors_refresh_interval, 3, "3 seconds");
-                                        ui.selectable_value(&mut self.sensors_refresh_interval, 5, "5 seconds");
-                                    });
-                            });
-                        });
+                                    // Auto-refresh interval dropdown
+                                    let interval_label = match self.sensors_refresh_interval {
+                                        0 => format!("{} Off", crate::lucide::CLOCK),
+                                        s => format!("{} {}s", crate::lucide::CLOCK, s),
+                                    };
+                                    egui::ComboBox::from_id_salt("sensors_refresh_interval_combo")
+                                        .selected_text(RichText::new(interval_label).size(10.0).color(p.text_primary))
+                                        .width(62.0)
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(&mut self.sensors_refresh_interval, 0, "Off (Manual)");
+                                            ui.selectable_value(&mut self.sensors_refresh_interval, 1, "1 second");
+                                            ui.selectable_value(&mut self.sensors_refresh_interval, 2, "2 seconds");
+                                            ui.selectable_value(&mut self.sensors_refresh_interval, 3, "3 seconds");
+                                            ui.selectable_value(&mut self.sensors_refresh_interval, 5, "5 seconds");
+                                        });
+                                });
+                            },
+                        );
 
                         ui.add_space(6.0);
 

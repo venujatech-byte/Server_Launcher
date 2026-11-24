@@ -2725,7 +2725,9 @@ impl eframe::App for LauncherApp {
             )
             .show(ctx, |ui| {
                 if listener_dialog_open { ui.disable(); }
-                ui.horizontal(|ui| {
+                let header_bounds = ui.available_rect_before_wrap();
+                let mut tabs_bounds = None;
+                let header = ui.horizontal(|ui| {
                     let remote_host_opt = if self.selected_machine != "local" {
                         self.ssh_hosts.iter().find(|h| h.id == self.selected_machine).cloned()
                     } else {
@@ -2858,6 +2860,8 @@ impl eframe::App for LauncherApp {
                         });
                     }
 
+                    let left_edge = ui.cursor().left() + 8.0;
+
                     // Right: Actions buttons in modern pill layout
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
@@ -2967,12 +2971,37 @@ impl eframe::App for LauncherApp {
                                 self.palette_modal.query.clear();
                             }
 
+                            tabs_bounds = Some((left_edge, ui.cursor().right() - 8.0));
 
                         }
 
 
                     });
                 });
+                if let Some((left, right)) = tabs_bounds.filter(|_| self.selected_machine == "local") {
+                    const TABS_WIDTH: f32 = 348.0;
+                    if right - left >= TABS_WIDTH {
+                        let x = (header_bounds.center().x - TABS_WIDTH * 0.5).clamp(left, right - TABS_WIDTH);
+                        let rect = egui::Rect::from_min_size(
+                            egui::pos2(x, header.response.rect.center().y - 16.0),
+                            egui::vec2(TABS_WIDTH, 32.0),
+                        );
+                        let mut tabs = ui.new_child(egui::UiBuilder::new()
+                            .id_salt("local_header_tabs")
+                            .max_rect(rect)
+                            .layout(egui::Layout::top_down(egui::Align::Min)));
+                        self.render_sidebar_tabs_bar(&mut tabs);
+                    } else {
+                        let width = ui.available_width().min(TABS_WIDTH);
+                        ui.horizontal(|ui| {
+                            ui.add_space(((header_bounds.width() - width) * 0.5).max(0.0));
+                            ui.allocate_ui(egui::vec2(width, 0.0), |ui| {
+                                ui.set_max_width(width);
+                                self.render_sidebar_tabs_bar(ui);
+                            });
+                        });
+                    }
+                }
             });
 
         // ═════════════════════════════════════════════════════════════════════
@@ -3045,7 +3074,7 @@ impl eframe::App for LauncherApp {
                                 ui.set_height(total_h);
                                 ui.set_min_height(total_h);
                                 ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
-                                let mut body_ui = workspace_sidebar_body(ui);
+                                let mut body_ui = workspace_sidebar_body(ui, false);
                                 self.render_left_panel(&mut body_ui);
                             });
 
@@ -4456,9 +4485,11 @@ fn draw_card_sparkline(
 }
 
 // Sidebar frames inherit the horizontal split layout; give their content a vertical, clipped body.
-fn workspace_sidebar_body(ui: &mut Ui) -> Ui {
+fn workspace_sidebar_body(ui: &mut Ui, reserve_header: bool) -> Ui {
     let mut rect = ui.max_rect();
-    rect.min.y = (rect.top() + WORKSPACE_HEADER_HEIGHT).min(rect.bottom());
+    if reserve_header {
+        rect.min.y = (rect.top() + WORKSPACE_HEADER_HEIGHT).min(rect.bottom());
+    }
     let mut body = ui.new_child(egui::UiBuilder::new()
         .id_salt("workspace_sidebar_body")
         .max_rect(rect)
@@ -4834,7 +4865,7 @@ mod layout_tests {
                     ui.set_width(WORKSPACE_SIDEBAR_WIDTH);
                     ui.set_height(400.0);
                     let parent = ui.max_rect();
-                    let mut body = workspace_sidebar_body(ui);
+                    let mut body = workspace_sidebar_body(ui, true);
                     let first = body.label("Group filter").rect;
                     let second = body.label("Server list").rect;
                     assert_eq!(first.left(), parent.left());

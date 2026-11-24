@@ -85,7 +85,7 @@ impl LauncherApp {
                     ui.set_max_width(left_w);
                     ui.set_height(total_h);
                     ui.set_min_height(total_h);
-                    let mut body_ui = workspace_sidebar_body(ui);
+                    let mut body_ui = workspace_sidebar_body(ui, true);
                     let ui = &mut body_ui;
                     // Left panel content for active tab
                     match self.active_sidebar_tab {

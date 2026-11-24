@@ -294,6 +294,9 @@ impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
     // The top strip keeps one geometry while the workspace below can use a compact sidebar.
     pub(in crate::app) fn render_workspace_header(&mut self, ui: &mut Ui, workspace_rect: egui::Rect, host_id: Option<&str>) {
+        if host_id.is_none() && self.active_sidebar_tab != SidebarTab::Sensors {
+            return;
+        }
         let p = self.palette();
         // Reserve header space per column so other detail panes can still start at the top.
         let rect = egui::Rect::from_min_size(workspace_rect.min, egui::vec2(workspace_rect.width(), 32.0));
@@ -303,13 +306,15 @@ impl LauncherApp {
             ui.set_min_height(32.0);
             ui.spacing_mut().item_spacing.x = 0.0;
             Frame::none()
-                .fill(p.bg_sidebar)
+                .fill(if host_id.is_some() { p.bg_sidebar } else { Color32::TRANSPARENT })
                 .inner_margin(WORKSPACE_SIDEBAR_MARGIN)
                 .show(ui, |ui| {
                     ui.set_width(SERVERS_SIDEBAR_WIDTH);
                     ui.set_max_width(SERVERS_SIDEBAR_WIDTH);
                     ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
-                    self.render_sidebar_tabs_bar(ui);
+                    if host_id.is_some() {
+                        self.render_sidebar_tabs_bar(ui);
+                    }
                 });
             ui.add_space(WORKSPACE_GAP);
             if self.active_sidebar_tab == SidebarTab::Sensors {

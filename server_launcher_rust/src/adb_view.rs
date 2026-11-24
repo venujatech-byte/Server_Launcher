@@ -246,7 +246,7 @@ impl LauncherApp {
                                 ui.label(RichText::new("USB & Wireless ADB").size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
                             });
                             ui.add_space(3.0);
-                            ui.label(RichText::new("Full Android control suite: screen mirroring, clipboard, terminal, files, and recovery tools in the separate Android Cockpit app.")
+                            ui.label(RichText::new("Full Android control suite: screen mirroring, clipboard, terminal, files, and recovery tools in DroidM.")
                                 .size(10.5).color(p.text_muted));
                         });
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -720,18 +720,18 @@ impl LauncherApp {
                             .color(palette.accent),
                     );
                     ui.add_space(14.0);
-                    ui.heading("Android Cockpit");
+                    ui.heading("DroidM");
                     ui.label(
                         RichText::new(format!("{} · {}", adb_dev.name, adb_dev.serial))
                             .color(palette.text_secondary),
                     );
                     ui.add_space(8.0);
                     ui.label(
-                        RichText::new("Device management opens in the GTK-style Android Cockpit window.")
+                        RichText::new("Device management opens in a separate DroidM window.")
                             .color(palette.text_muted),
                     );
                     ui.add_space(18.0);
-                    if ui.button("Open Android Cockpit").clicked() {
+                    if ui.button("Open DroidM").clicked() {
                         self.launch_adb_tauri_window(adb_dev);
                     }
                 });
@@ -768,14 +768,14 @@ impl LauncherApp {
                 match command.spawn() {
                     Ok(_) => {
                         self.adb_status_msg = Some((
-                            format!("Android Cockpit opened for {}", adb_dev.name),
+                            format!("DroidM opened for {}", adb_dev.name),
                             false,
                             Instant::now(),
                         ));
                     }
                     Err(error) => {
                         self.adb_status_msg = Some((
-                            format!("Could not open Android Cockpit: {error}"),
+                            format!("Could not open DroidM: {error}"),
                             true,
                             Instant::now(),
                         ));

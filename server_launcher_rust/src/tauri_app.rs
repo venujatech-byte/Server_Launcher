@@ -472,5 +472,5 @@ pub fn run() {
             adb_action
         ])
         .run(tauri::generate_context!())
-        .expect("failed to start Android Cockpit");
+        .expect("failed to start DroidM");
 }

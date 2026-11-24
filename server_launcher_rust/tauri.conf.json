@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Server Launcher Android Cockpit",
+  "productName": "Server Launcher",
   "version": "0.1.0",
   "identifier": "com.serverlauncher.android-cockpit",
   "build": {
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "adb-cockpit",
-        "title": "Android Cockpit · Server Launcher",
+        "title": "DroidM",
         "width": 1360,
         "height": 860,
         "minWidth": 900,

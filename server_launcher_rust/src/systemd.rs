@@ -44,6 +44,22 @@ fn checked_output(output: std::process::Output, context: &str) -> Result<String,
     }
 }
 
+const SERVICE_OUTPUT_LIMIT: usize = 2 * 1024 * 1024;
+
+fn read_service_output(mut source: impl std::io::Read, limit: usize) -> std::io::Result<(Vec<u8>, bool)> {
+    use std::io::Read;
+
+    let mut output = Vec::new();
+    source.by_ref().take(limit as u64).read_to_end(&mut output)?;
+    let mut extra = [0];
+    let exceeded = source.read(&mut extra)? != 0;
+    if exceeded {
+        // Drain excess bytes so the subprocess can finish without blocking on a full pipe.
+        std::io::copy(&mut source, &mut std::io::sink())?;
+    }
+    Ok((output, exceeded))
+}
+
 fn run_command(mut command: Command, password: Option<&str>) -> Result<String, String> {
     use std::io::Write;
     command
@@ -63,12 +79,20 @@ fn run_command(mut command: Command, password: Option<&str>) -> Result<String, S
             let _ = writeln!(stdin, "{}", password);
         }
     }
-    checked_output(
-        child
-            .wait_with_output()
-            .map_err(|error| error.to_string())?,
-        "Service command",
-    )
+    let stdout = child.stdout.take().expect("piped service stdout");
+    let stderr = child.stderr.take().expect("piped service stderr");
+    let (stdout, stderr) = std::thread::scope(|scope| {
+        let stdout = scope.spawn(move || read_service_output(stdout, SERVICE_OUTPUT_LIMIT));
+        let stderr = read_service_output(stderr, SERVICE_OUTPUT_LIMIT);
+        (stdout.join().expect("service output reader"), stderr)
+    });
+    let status = child.wait().map_err(|error| error.to_string())?;
+    let (stdout, stdout_exceeded) = stdout.map_err(|error| error.to_string())?;
+    let (stderr, stderr_exceeded) = stderr.map_err(|error| error.to_string())?;
+    if stdout_exceeded || stderr_exceeded {
+        return Err("Service command output exceeded the 2 MiB limit.".into());
+    }
+    checked_output(std::process::Output { status, stdout, stderr }, "Service command")
 }
 
 pub(crate) fn run_local(
@@ -1108,6 +1132,15 @@ pub fn get_remote_unit_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn service_output_drains_bytes_beyond_the_limit() {
+        let mut source = std::io::Cursor::new(b"abcd");
+        assert_eq!(read_service_output(&mut source, 4).unwrap(), (b"abcd".to_vec(), false));
+        source.set_position(0);
+        assert_eq!(read_service_output(&mut source, 2).unwrap(), (b"ab".to_vec(), true));
+        assert_eq!(source.position(), 4);
+    }
 
     #[test]
     fn authentication_errors_do_not_hide_configuration_failures() {

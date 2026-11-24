@@ -104,3 +104,5 @@ SSH Servers now shares each completed listener scan as an immutable snapshot. Se
 Local server logs now reuse a single active-view snapshot and cache matching row indexes until the log or filter changes. Display and retained log limits are unchanged. Runtime CPU and memory impact remain unmeasured.
 
 The saved Commands list caches category counts by host and matching row indexes by host, category, and query. Imports, saves, and deletions invalidate the cached catalog view. Runtime impact remains unmeasured.
+
+Systemd journal and dependency commands now cap captured output at 2 MiB per stream. Oversized output is drained without retaining the excess and returns a clear error instead of caching incomplete content.

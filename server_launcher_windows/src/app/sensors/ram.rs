@@ -23,192 +23,102 @@ impl LauncherApp {
 
                 let total_ram_str = if memory_available { format!("{:.1} GB", total_ram_gb) } else { "Unavailable".to_string() };
                 let used_gb_val = used_ram_gb;
-                let avail_gb_val = available_ram_gb;
                 let cached_gb_val = cache_gb;
                 let used_pct = if memory_available { snap.mem_usage_pct.clamp(0.0, 100.0) } else { f32::NAN };
                 let avail_pct = memory_available.then(|| (snap.mem_available_bytes as f32 / snap.mem_total_bytes as f32 * 100.0).clamp(0.0, 100.0));
 
-                let (slot_label, topol_label, mem_type_str, ram_mod_str) = if let Some(ref hw) = snap.memory_hw {
-                    let slot = if host_id.is_some() { "REMOTE : ACTIVE".to_string() } else { if hw.slot_summary.is_empty() { "SLOTS UNAVAILABLE".into() } else { hw.slot_summary.clone() } };
-                    let topol = if host_id.is_some() { "HOST MEMORY POOL".to_string() } else { if hw.topology.is_empty() { "TOPOLOGY UNAVAILABLE".into() } else { hw.topology.clone() } };
-                    let mtype = format!("{} {} {}", total_ram_str, hw.memory_type, hw.form_factor).trim().to_string();
-                    let mspec = hw.module_spec.clone();
-                    (slot, topol, mtype, mspec)
-                } else {
-                    let slot = if host_id.is_some() { "REMOTE : ACTIVE".to_string() } else { "SLOTS UNAVAILABLE".to_string() };
-                    let topol = if host_id.is_some() { "HOST MEMORY POOL".to_string() } else { "TOPOLOGY UNAVAILABLE".to_string() };
-                    let mtype = total_ram_str.clone();
-                    let mspec = if host_id.is_some() { "Module details unavailable".to_string() } else { "Module details unavailable".to_string() };
-                    (slot, topol, mtype, mspec)
-                };
-
-                // 1. Top Header Card
                 Frame::none()
                     .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
-                    .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                    .rounding(Rounding::same(12.0))
+                    .inner_margin(egui::Margin::symmetric(18.0, 14.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        ui.vertical(|ui| {
-                            // Row 1: Overline
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 8.0;
-                                Frame::none()
-                                    .fill(p.bg_subtle)
-                                    .rounding(Rounding::same(4.0))
-                                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                    .show(ui, |ui| {
-                                        ui.label(RichText::new(&slot_label).size(9.0).monospace().strong().color(p.text_primary));
-                                    });
-                                ui.label(RichText::new(&topol_label).size(9.0).monospace().color(p.text_muted));
-                            });
-
-                            ui.add_space(3.0);
-
-                            ui.label(RichText::new("System Memory (RAM) & Swap").size(16.0).strong().color(p.text_primary));
-                            ui.add_space(3.0);
-
-                            // Row 3: Subtitle spanning the full card width underneath Row 2
-                            ui.horizontal_wrapped(|ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(&mem_type_str).size(10.0).monospace().color(p.text_muted));
-                                ui.label(RichText::new("•").size(9.0).color(p.text_muted));
-                                ui.label(RichText::new(&ram_mod_str).size(10.0).monospace().color(p.text_muted));
-                                ui.label(RichText::new("•").size(9.0).color(p.text_muted));
-                                ui.label(RichText::new("Memory telemetry").size(10.0).monospace().color(p.text_muted));
-                                ui.label(RichText::new("•").size(9.0).color(p.text_muted));
-                                ui.label(RichText::new("Voltage unavailable").size(10.0).monospace().color(p.text_secondary));
-                            });
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(crate::lucide::RAM).size(15.0).color(accent));
+                            ui.label(RichText::new("MEMORY").size(10.5).monospace().strong().color(p.text_muted));
                         });
+                        ui.add_space(4.0);
+                        ui.label(RichText::new("System memory & swap").size(18.0).strong().color(p.text_primary));
+                        ui.add_space(6.0);
+                        let capacity = format!("{total_ram_str} usable");
+                        let swap = (snap.swap_total_bytes > 0).then(|| format!("{} swap", crate::sensors::format_bytes(snap.swap_total_bytes)));
+                        ui.horizontal_wrapped(|ui| {
+                            for label in std::iter::once(capacity.as_str())
+                                .chain(swap.as_deref())
+                                .chain(snap.memory_hw.iter().flat_map(|hw| [hw.memory_type.as_str(), hw.form_factor.as_str(), hw.slot_summary.as_str(), hw.topology.as_str()]))
+                                .filter(|label| !label.is_empty() && !label.to_ascii_lowercase().contains("unavailable"))
+                            {
+                                Frame::none()
+                                    .fill(p.bg_button)
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(label).size(10.5).monospace().color(p.text_secondary));
+                                    });
+                            }
+                        });
+                        let modules = snap.memory_hw.as_ref().map(|hw| hw.module_spec.as_str())
+                            .filter(|spec| !spec.is_empty()).unwrap_or("Module details unavailable");
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(modules).size(10.5).monospace().color(p.text_muted));
                     });
 
                 ui.add_space(8.0);
 
-                // 2. Row of 4 Big Metric Cards (matching Overview page architecture)
-                let ram_slice: Vec<f32> = self.ram_history.iter().map(|(r, _)| *r).collect();
-                let swap_slice: Vec<f32> = self.ram_history.iter().map(|(_, s)| *s).collect();
-                let ram_avg = (!self.ram_history.is_empty()).then(|| self.ram_history.iter().map(|(r, _)| *r).sum::<f32>() / self.ram_history.len() as f32);
-                let ram_peak = self.ram_history.iter().map(|(r, _)| *r).reduce(f32::max);
-                let swap_values: Vec<f32> = self.ram_history.iter().map(|(_, s)| *s).filter(|value| value.is_finite()).collect();
-                let swap_avg = if swap_values.is_empty() { reported_swap_usage(snap.swap_total_bytes, snap.swap_usage_pct) } else { Some(swap_values.iter().sum::<f32>() / swap_values.len() as f32) };
-                let swap_peak = swap_values.iter().copied().reduce(f32::max).or_else(|| reported_swap_usage(snap.swap_total_bytes, snap.swap_usage_pct));
-
-                sensor_card_columns(ui, 4, |ui, column| match column {
-                    0 => {
-                    // Card 1: MEMORY IN USE
-                    render_big_stat_card(
-                        ui,
-                        crate::lucide::RAM,
-                        "MEMORY IN USE",
-                        &reported_sensor_value(memory_available.then_some(used_gb_val as f32), 1),
-                        "GB",
-                        &if memory_available { format!("Allocation {:.1}% of total", used_pct) } else { "Memory telemetry unavailable".to_string() },
-                        &format!("AVG {}%", reported_sensor_value(ram_avg, 0)),
-                        &format!("PEAK {}%", reported_sensor_value(ram_peak, 0)),
-                        &ram_slice,
-                        100.0,
-                        None,
-                        accent,
-                        p.bg_card,
-                        p.text_muted,
-                    );
-
-                    },
-                    1 => {
-                    // Card 2: AVAILABLE MEMORY
-                    let avail_slice: Vec<f32> = ram_slice.iter().map(|&u| (100.0 - u).max(0.0)).collect();
-                    render_big_stat_card(
-                        ui,
-                        crate::lucide::CHECK,
-                        "AVAILABLE MEMORY",
-                        &reported_sensor_value(memory_available.then_some(avail_gb_val as f32), 1),
-                        "GB",
-                        &format!("Available {}%", reported_sensor_value(avail_pct, 1)),
-                        &format!("TOTAL {}", total_ram_str),
-                        "",
-                        &avail_slice,
-                        100.0,
-                        None,
-                        accent,
-                        p.bg_card,
-                        p.text_muted,
-                    );
-
-                    },
-                    2 => {
-                    // Card 3: CACHED & BUFFERS
-                    let cache_slice: Vec<f32> = Vec::new();
-                    render_big_stat_card(
-                        ui,
-                        crate::lucide::FILE_TEXT,
-                        "RECLAIMABLE ESTIMATE",
-                        &cached_gb_val.map_or_else(|| "—".into(), |value| format!("{value:.1}")),
-                        "GB",
-                        "Available − free",
-                        &cache_bytes.map_or_else(|| "FREE MEMORY UNAVAILABLE".into(), |value| format!("EST. {} MB", value / (1024 * 1024))),
-                        "ESTIMATE",
-                        &cache_slice,
-                        (cached_gb_val.unwrap_or(0.0) as f32 * 1.5).max(4.0),
-                        None,
-                        accent,
-                        p.bg_card,
-                        p.text_muted,
-                    );
-
-                    },
-                    3 => {
-                    // Card 4: SWAP ALLOCATION
-                    let swap_usage = reported_swap_usage(snap.swap_total_bytes, snap.swap_usage_pct);
-                    let swap_value = reported_sensor_value(swap_usage, 1);
-                    let swap_subtitle = if swap_usage.is_some() { format!("{} / {}", crate::sensors::format_bytes(snap.swap_used_bytes), crate::sensors::format_bytes(snap.swap_total_bytes)) } else { "No swap configured".to_string() };
-                    let swap_avg_label = format!("AVG {}{}", reported_sensor_value(swap_avg, 1), if swap_avg.is_some() { "%" } else { "" });
-                    let swap_peak_label = format!("PEAK {}{}", reported_sensor_value(swap_peak, 1), if swap_peak.is_some() { "%" } else { "" });
-                    render_big_stat_card(
-                        ui,
-                        crate::lucide::REFRESH_CW,
-                        "SWAP ALLOCATION",
-                        &swap_value,
-                        if swap_usage.is_some() { "%" } else { "" },
-                        &swap_subtitle,
-                        &swap_avg_label,
-                        &swap_peak_label,
-                        &swap_slice,
-                        100.0,
-                        None,
-                        accent,
-                        p.bg_card,
-                        p.text_muted,
-                    );
-                    },
-                    _ => unreachable!(),
+                let used = memory_available.then_some(used_ram_gb as f32);
+                let available = memory_available.then_some(available_ram_gb as f32);
+                let reclaimable = cached_gb_val.map(|value| value as f32);
+                let swap = reported_swap_usage(snap.swap_total_bytes, snap.swap_usage_pct);
+                let used_detail = used.map_or_else(|| "Memory telemetry unavailable".into(), |_| format!("{used_pct:.1}% of {total_ram_str}"));
+                let available_detail = avail_pct.map_or_else(|| "Memory telemetry unavailable".into(), |pct| format!("{pct:.1}% of {total_ram_str}"));
+                let swap_detail = swap.map_or_else(|| "Swap telemetry unavailable".into(), |_| {
+                    format!("{} / {}", crate::sensors::format_bytes(snap.swap_used_bytes), crate::sensors::format_bytes(snap.swap_total_bytes))
+                });
+                let swap_detail = if snap.swap_total_bytes == 0 { "No swap reported" } else { &swap_detail };
+                let cards = [
+                    (crate::lucide::RAM, "MEMORY IN USE", used, "GB", used_detail.as_str()),
+                    (crate::lucide::CHECK, "AVAILABLE MEMORY", available, "GB", available_detail.as_str()),
+                    (crate::lucide::FILE_TEXT, "RECLAIMABLE ESTIMATE", reclaimable, "GB", "Available − free"),
+                    (crate::lucide::REFRESH_CW, "SWAP ALLOCATION", swap, "%", swap_detail),
+                ];
+                sensor_card_columns(ui, cards.len(), |ui, column| {
+                    let (icon, title, value, unit, detail) = cards[column];
+                    let history = if column == 3 {
+                        self.ram_history.iter().map(|(_, swap)| *swap).collect()
+                    } else {
+                        sensor_metric_history(ui, host_id, title, snap.timestamp, value)
+                    };
+                    let scale = if column == 3 { 100.0 } else { (total_ram_gb as f32).max(1.0) };
+                    super::overview::overview_metric(ui, &p, accent, icon, title, value, unit, detail, &history, scale);
                 });
 
                 ui.add_space(8.0);
 
-                // 3. Real-Time Allocation Waveform Card (60 SECONDS HISTORY)
                 Frame::none()
                     .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
-                    .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                    .rounding(Rounding::same(12.0))
+                    .inner_margin(egui::Margin::symmetric(18.0, 14.0))
                     .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 6.0;
-                            let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                            ui.painter().circle_filled(d_rect.center(), 2.8, accent);
-                            ui.label(RichText::new("Memory Usage History").size(12.5).strong().color(p.text_primary));
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(RichText::new("RAM in use · Swap allocation").size(9.0).monospace().color(p.text_muted));
-                            });
+                            ui.label(RichText::new(crate::lucide::ACTIVITY).size(15.0).color(accent));
+                            ui.label(RichText::new("Memory usage history").size(14.0).strong().color(p.text_primary));
                         });
-
-                        ui.add_space(8.0);
-                        draw_ram_waveform(ui, 120.0, &self.ram_history, &total_ram_str, accent);
-
                         ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("Earlier").size(9.5).monospace().color(p.text_muted));
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(RichText::new(format!("Latest ({}%)", reported_sensor_value(memory_available.then_some(used_pct), 0))).size(9.5).monospace().strong().color(p.text_primary));
+                        ui.horizontal_wrapped(|ui| {
+                            let ram = if memory_available { format!("RAM {used_pct:.1}%") } else { "RAM —".into() };
+                            let swap = swap.map_or_else(|| "Swap —".into(), |value| format!("Swap {value:.1}%"));
+                            ui.label(RichText::new(format!("━━ {ram}")).size(11.0).monospace().strong().color(accent));
+                            ui.label(RichText::new(format!("┄┄ {swap}")).size(11.0).monospace().color(Color32::from_rgb(96, 165, 250)));
+                            ui.label(RichText::new(format!("{} samples", self.ram_history.len())).size(10.5).monospace().color(p.text_muted));
+                        });
+                        ui.add_space(10.0);
+                        draw_ram_waveform(ui, 120.0, &self.ram_history, &total_ram_str, accent);
+                        ui.add_space(4.0);
+                        ui.columns(2, |cols| {
+                            cols[0].label(RichText::new("Older samples").size(10.0).monospace().color(p.text_muted));
+                            cols[1].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(RichText::new("Latest sample").size(10.0).monospace().color(p.text_muted));
                             });
                         });
                     });

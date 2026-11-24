@@ -179,42 +179,6 @@ impl LauncherApp {
 
                 ui.add_space(4.0);
 
-                // 5. Reported System Context
-                Frame::none()
-                    .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
-                    .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 6.0;
-                            ui.label(RichText::new(crate::lucide::SYSTEMD).size(11.0).color(accent));
-                            ui.label(RichText::new("SYSTEM CONTEXT").size(10.5).monospace().strong().color(p.text_muted));
-                        });
-
-                        ui.add_space(8.0);
-
-                        let process_count = snap.process_count.map(|count| count.to_string()).unwrap_or_else(|| "—".to_string());
-                        let os_name = if snap.os_name.is_empty() { "—" } else { &snap.os_name };
-                        let os_version = if snap.os_version.is_empty() { "Version unavailable" } else { &snap.os_version };
-                        let uptime = if snap.uptime_secs > 0 { format_uptime(snap.uptime_secs) } else { "—".to_string() };
-                        let values = [
-                            ("PROCESSES", process_count.as_str(), "Visible processes"),
-                            ("OPERATING SYSTEM", os_name, os_version),
-                            ("UPTIME", uptime.as_str(), "Since last boot"),
-                        ];
-                        ui.columns(values.len(), |cols| {
-                            for (column, (title, value, detail)) in cols.iter_mut().zip(values) {
-                                column.vertical(|ui| {
-                                    ui.label(RichText::new(title).size(9.5).monospace().strong().color(p.text_muted));
-                                    ui.add_space(2.0);
-                                    ui.label(RichText::new(value).size(15.0).strong().color(p.text_primary));
-                                    ui.add_space(1.0);
-                                    ui.label(RichText::new(detail).size(9.5).monospace().color(p.text_muted));
-                                });
-                            }
-                        });
-                    });
-
                 ui.add_space(10.0);
             });
     }

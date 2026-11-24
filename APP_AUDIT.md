@@ -130,3 +130,5 @@ SSH Stop and Kill schedule a listener refresh after the signaling request finish
 SSH Start and Restart also use the completion-based port refresh. A rejected submission, failed local spawn, timeout, or cancellation does not add a follow-up scan.
 
 The SSH Servers terminal now logs unsuccessful command exit statuses, including when the command produces no output. Existing stderr and completion-triggered port refreshes are preserved.
+
+SSH host deletion now revokes a per-host lifetime token and removes its remote Sensors, Bluetooth, listener, connection, Systemd service, journal, unit-file and dependency caches. Sensor, Bluetooth, service, unit-file and dependency workers, SSH connection/scan workers, process-signal refreshes and queued Systemd results check that token before publishing. Editing a host also invalidates the previous lifetime. Cleanup also clears host-bound editor and confirmation state while preserving unrelated host records. A regression test covers deletion and reuse of the same host ID; the required `cargo check --tests` command compiles but does not execute it.

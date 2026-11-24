@@ -186,8 +186,37 @@ struct SystemdActionResult {
     key: String,
     action: Option<PendingSudoAction>,
     host_id: Option<String>,
+    host_lifetime: Option<Arc<()>>,
     from_popup: bool,
     result: Result<SystemdActionValue, String>,
+}
+
+fn remote_host_lifetime_matches(active: &HashMap<String, Arc<()>>, id: &str, lifetime: &Arc<()>) -> bool {
+    active.get(id).is_some_and(|current| Arc::ptr_eq(current, lifetime))
+}
+
+fn remote_host_cache_key_matches(id: &str, key: &str) -> bool {
+    key.split_once(':').is_some_and(|(key_id, _)| key_id == id)
+}
+
+#[cfg(test)]
+mod remote_host_lifetime_tests {
+    use super::*;
+
+    #[test]
+    fn late_completion_cannot_publish_after_host_id_reuse() {
+        let mut active = HashMap::new();
+        let old = Arc::new(());
+        active.insert("host".to_owned(), old.clone());
+        assert!(remote_host_lifetime_matches(&active, "host", &old));
+        active.remove("host");
+        let replacement = Arc::new(());
+        active.insert("host".to_owned(), replacement.clone());
+        assert!(!remote_host_lifetime_matches(&active, "host", &old));
+        assert!(remote_host_lifetime_matches(&active, "host", &replacement));
+        assert!(remote_host_cache_key_matches("host", "host:unit:system"));
+        assert!(!remote_host_cache_key_matches("host", "host2:unit:system"));
+    }
 }
 
 /// State for the sudo-password popup dialog.
@@ -392,6 +421,7 @@ pub struct LauncherApp {
     // Navigation & Remote SSH machines
     selected_machine: String, // "local" or host.id
     ssh_hosts: Vec<SshRemoteHost>,
+    remote_host_lifetimes: Arc<Mutex<HashMap<String, Arc<()>>>>,
     saved_ssh_refs: BTreeSet<String>,
     ssh_host_modal: SshHostModalState,
     remote_listeners: Arc<Mutex<HashMap<String, RemoteListenerSnapshot>>>,
@@ -921,6 +951,7 @@ impl LauncherApp {
             inline_terminal_inputs: HashMap::new(),
             selected_machine,
             ssh_hosts,
+            remote_host_lifetimes: Arc::new(Mutex::new(HashMap::new())),
             saved_ssh_refs,
             ssh_host_modal,
             remote_listeners,
@@ -1186,6 +1217,7 @@ impl LauncherApp {
     }
 
     pub fn trigger_remote_sensors_query(&self, host: SshRemoteHost) {
+        let Some(lifetime) = self.remote_host_lifetime(&host) else { return };
         let hid = host.id.clone();
         {
             let mut in_flight = self.remote_sensors_in_flight.lock().unwrap();
@@ -1208,9 +1240,13 @@ impl LauncherApp {
         let in_flight_arc = self.remote_sensors_in_flight.clone();
         let last_fetch_arc = self.remote_sensors_last_fetch.clone();
         let errors_arc = self.remote_sensors_errors.clone();
+        let lifetimes_arc = self.remote_host_lifetimes.clone();
 
         std::thread::spawn(move || {
-            match crate::sensors::query_remote_sensors(&host, include_processes, include_process_network, include_network_details, include_gpu_engines, include_ram_modules, include_network_rates, include_cpu_cores, include_disk_rates, include_thermals) {
+            let result = crate::sensors::query_remote_sensors(&host, include_processes, include_process_network, include_network_details, include_gpu_engines, include_ram_modules, include_network_rates, include_cpu_cores, include_disk_rates, include_thermals);
+            let lifetimes = lifetimes_arc.lock().unwrap();
+            if !remote_host_lifetime_matches(&lifetimes, &hid, &lifetime) { return; }
+            match result {
                 Ok(snap) => {
                     snapshots_arc.lock().unwrap().insert(hid.clone(), Arc::new(snap));
                     last_fetch_arc.lock().unwrap().insert(hid.clone(), Instant::now());
@@ -1226,6 +1262,7 @@ impl LauncherApp {
     }
 
     fn trigger_remote_bluetooth_query(&self, host: SshRemoteHost, windows_host: bool) {
+        let Some(lifetime) = self.remote_host_lifetime(&host) else { return };
         let hid = host.id.clone();
         {
             let mut in_flight = self.remote_bluetooth_in_flight.lock().unwrap();
@@ -1234,6 +1271,7 @@ impl LauncherApp {
         let snapshots = self.remote_bluetooth_snapshots.clone();
         let in_flight = self.remote_bluetooth_in_flight.clone();
         let last_fetch = self.remote_bluetooth_last_fetch.clone();
+        let lifetimes = self.remote_host_lifetimes.clone();
         std::thread::spawn(move || {
             let result = if windows_host {
                 crate::bluetooth::query_remote_windows_bluetooth_status(&host)
@@ -1245,6 +1283,8 @@ impl LauncherApp {
                 snapshot.status_msg = Some((error, false, Instant::now()));
                 snapshot
             });
+            let lifetimes = lifetimes.lock().unwrap();
+            if !remote_host_lifetime_matches(&lifetimes, &hid, &lifetime) { return; }
             snapshots.lock().unwrap().insert(hid.clone(), snapshot);
             last_fetch.lock().unwrap().insert(hid.clone(), Instant::now());
             in_flight.lock().unwrap().remove(&hid);
@@ -2151,6 +2191,7 @@ impl LauncherApp {
 
 
     fn trigger_remote_services_list(&self, host: &SshRemoteHost, user_mode: bool) {
+        let Some(lifetime) = self.remote_host_lifetime(host) else { return };
         let key = format!("{}:{}", host.id, if user_mode { "user" } else { "system" });
         {
             let mut in_flight = self.remote_services_in_flight.lock().unwrap();
@@ -2165,9 +2206,13 @@ impl LauncherApp {
         let services_arc = self.remote_services.clone();
         let in_flight_arc = self.remote_services_in_flight.clone();
         let errors_arc = self.remote_services_errors.clone();
+        let lifetimes_arc = self.remote_host_lifetimes.clone();
 
         std::thread::spawn(move || {
-            match list_remote_services(&host_clone, user_mode) {
+            let result = list_remote_services(&host_clone, user_mode);
+            let lifetimes = lifetimes_arc.lock().unwrap();
+            if !remote_host_lifetime_matches(&lifetimes, &host_clone.id, &lifetime) { return; }
+            match result {
                 Ok(services) => {
                     if let Ok(mut map) = services_arc.lock() {
                         map.insert(key_clone.clone(), services);
@@ -2211,7 +2256,7 @@ impl LauncherApp {
         std::thread::spawn(move || {
             match list_local_services(user_mode) {
                 Ok(services) => { cache_arc.lock().unwrap().insert(user_mode, services); }
-                Err(error) => { results.lock().unwrap().push_back(SystemdActionResult { key: String::new(), action: None, host_id: None, from_popup: false, result: Err(error) }); }
+                Err(error) => { results.lock().unwrap().push_back(SystemdActionResult { key: String::new(), action: None, host_id: None, host_lifetime: None, from_popup: false, result: Err(error) }); }
             }
             if let Ok(mut in_flight) = in_flight_arc.lock() {
                 in_flight.remove(&user_mode);
@@ -2224,6 +2269,8 @@ impl LauncherApp {
     }
 
     pub fn trigger_systemd_unit_files_fetch(&self, unit: &str, user_mode: bool, host_opt: Option<&SshRemoteHost>) {
+        let host_lifetime = host_opt.and_then(|host| self.remote_host_lifetime(host));
+        if host_opt.is_some() && host_lifetime.is_none() { return; }
         let cache_key = format!("{}:{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), unit, user_mode);
         {
             let mut in_flight = self.systemd_files_in_flight.lock().unwrap();
@@ -2238,6 +2285,7 @@ impl LauncherApp {
         let cache_key_clone = cache_key.clone();
         let files_arc = self.systemd_files_cache.clone();
         let in_flight_arc = self.systemd_files_in_flight.clone();
+        let lifetimes_arc = self.remote_host_lifetimes.clone();
 
         let results = self.systemd_action_results.clone();
         std::thread::spawn(move || {
@@ -2249,10 +2297,12 @@ impl LauncherApp {
             let info = match info {
                 Ok(value) => value,
                 Err(error) => {
-                    results.lock().unwrap().push_back(SystemdActionResult { key: String::new(), action: None, host_id: host_clone.as_ref().map(|host| host.id.clone()), from_popup: false, result: Err(error) });
+                    results.lock().unwrap().push_back(SystemdActionResult { key: String::new(), action: None, host_id: host_clone.as_ref().map(|host| host.id.clone()), host_lifetime: host_lifetime.clone(), from_popup: false, result: Err(error) });
                     Default::default()
                 }
             };
+            let lifetimes = lifetimes_arc.lock().unwrap();
+            if host_clone.as_ref().is_some_and(|host| !lifetimes.get(&host.id).is_some_and(|current| host_lifetime.as_ref().is_some_and(|token| Arc::ptr_eq(current, token)))) { return; }
             if let Ok(mut map) = files_arc.lock() {
                 map.insert(cache_key_clone.clone(), (info, Instant::now()));
             }
@@ -2267,6 +2317,8 @@ impl LauncherApp {
     }
 
     pub fn trigger_systemd_unit_dependencies_fetch(&self, unit: &str, user_mode: bool, host_opt: Option<&SshRemoteHost>) {
+        let host_lifetime = host_opt.and_then(|host| self.remote_host_lifetime(host));
+        if host_opt.is_some() && host_lifetime.is_none() { return; }
         let cache_key = format!("{}:{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), unit, user_mode);
         {
             let mut in_flight = self.systemd_deps_in_flight.lock().unwrap();
@@ -2281,6 +2333,7 @@ impl LauncherApp {
         let cache_key_clone = cache_key.clone();
         let deps_arc = self.systemd_deps_cache.clone();
         let in_flight_arc = self.systemd_deps_in_flight.clone();
+        let lifetimes_arc = self.remote_host_lifetimes.clone();
 
         let results = self.systemd_action_results.clone();
         std::thread::spawn(move || {
@@ -2292,10 +2345,12 @@ impl LauncherApp {
             let deps = match deps {
                 Ok(value) => value,
                 Err(error) => {
-                    results.lock().unwrap().push_back(SystemdActionResult { key: String::new(), action: None, host_id: host_clone.as_ref().map(|host| host.id.clone()), from_popup: false, result: Err(error) });
+                    results.lock().unwrap().push_back(SystemdActionResult { key: String::new(), action: None, host_id: host_clone.as_ref().map(|host| host.id.clone()), host_lifetime: host_lifetime.clone(), from_popup: false, result: Err(error) });
                     Default::default()
                 }
             };
+            let lifetimes = lifetimes_arc.lock().unwrap();
+            if host_clone.as_ref().is_some_and(|host| !lifetimes.get(&host.id).is_some_and(|current| host_lifetime.as_ref().is_some_and(|token| Arc::ptr_eq(current, token)))) { return; }
             if let Ok(mut map) = deps_arc.lock() {
                 map.insert(cache_key_clone.clone(), (deps, Instant::now()));
             }
@@ -3305,12 +3360,15 @@ impl eframe::App for LauncherApp {
                 if let Some(old) = old_id {
                     if let Some(pos) = self.ssh_hosts.iter().position(|h| h.id == old) {
                         let previous = &self.ssh_hosts[pos];
+                        let host_changed = new_host != *previous;
                         if new_host.password == previous.password
                             && crate::ssh_credentials::binding(&new_host) == crate::ssh_credentials::binding(previous)
                         {
                             new_host.credential_ref.clone_from(&previous.credential_ref);
                         }
+                        if host_changed { self.invalidate_remote_host(&old); }
                         self.ssh_hosts[pos] = new_host.clone();
+                        self.remote_host_lifetime(&new_host);
                     }
                     if self.selected_machine == old {
                         self.selected_machine = new_host.id.clone();
@@ -5814,6 +5872,8 @@ impl LauncherApp {
 
 
     fn queue_systemd_action(&self, action: PendingSudoAction, host: Option<&SshRemoteHost>, password: Option<String>) {
+        let host_lifetime = host.and_then(|host| self.remote_host_lifetime(host));
+        if host.is_some() && host_lifetime.is_none() { return; }
         let key = action.key(host.map(|host| host.id.as_str()));
         if password.is_none() && self.sudo_popup.open && self.sudo_popup.pending.as_ref().is_some_and(|pending| pending.key(self.sudo_popup.host_id.as_deref()) == key) { return; }
         if password.is_none() && matches!(action, PendingSudoAction::InspectUnit { .. } | PendingSudoAction::QueryEnabled { .. })
@@ -5873,7 +5933,7 @@ impl LauncherApp {
                 }
             };
             if let Ok(mut results) = results.lock() {
-                results.push_back(SystemdActionResult { key, action: Some(action), host_id: host.map(|host| host.id), from_popup, result });
+                results.push_back(SystemdActionResult { key, action: Some(action), host_id: host.map(|host| host.id), host_lifetime, from_popup, result });
             }
         });
     }
@@ -5881,6 +5941,7 @@ impl LauncherApp {
     fn apply_systemd_results(&mut self) {
         let results: Vec<_> = self.systemd_action_results.lock().unwrap().drain(..).collect();
         for result in results {
+            if result.host_id.as_ref().is_some_and(|id| !self.remote_host_lifetimes.lock().unwrap().get(id).is_some_and(|current| result.host_lifetime.as_ref().is_some_and(|token| Arc::ptr_eq(current, token)))) { continue; }
             self.systemd_actions_in_flight.lock().unwrap().remove(&result.key);
             let host = result.host_id.as_ref().and_then(|id| self.ssh_hosts.iter().find(|host| &host.id == id)).cloned();
             let host_key = result.host_id.as_deref().unwrap_or("local");

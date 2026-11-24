@@ -720,12 +720,14 @@ impl LauncherApp {
     pub(in crate::app) fn execute_proc_signal(&mut self, pid: u32, sig: &str, action_desc: &str, host_id: Option<&str>, expected_start: Option<u64>, ctx: &egui::Context) {
         if let Some(hid) = host_id {
             if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                let Some(lifetime) = self.remote_host_lifetime(&host) else { return };
                 let host_name = host.name.clone();
                 let hid_clone = hid.to_string();
                 let sig_str = sig.to_string();
                 let snapshots_arc = self.remote_sensors_snapshots.clone();
                 let last_fetch_arc = self.remote_sensors_last_fetch.clone();
                 let errors_arc = self.remote_sensors_errors.clone();
+                let lifetimes_arc = self.remote_host_lifetimes.clone();
                 let results = self.remote_process_results.clone();
                 let ctx = ctx.clone();
 
@@ -736,10 +738,15 @@ impl LauncherApp {
                         Ok(()) => (format!("Sent SIG{} to remote process PID {} on {}", sig_str, pid, host_name), false),
                         Err(error) => (format!("Failed to signal PID {} on {}: {}", pid, host_name, if error.trim().is_empty() { "remote command failed" } else { error.trim() }), true),
                     };
+                    let lifetimes = lifetimes_arc.lock().unwrap();
+                    if !remote_host_lifetime_matches(&lifetimes, &hid_clone, &lifetime) { return; }
                     results.lock().unwrap().push_back(message);
                     ctx.request_repaint();
+                    drop(lifetimes);
                     std::thread::sleep(std::time::Duration::from_millis(400));
                     if let Ok(snap) = crate::sensors::query_remote_sensors(&host, true, true, false, false, false, false, false, false, false) {
+                        let lifetimes = lifetimes_arc.lock().unwrap();
+                        if !remote_host_lifetime_matches(&lifetimes, &hid_clone, &lifetime) { return; }
                         snapshots_arc.lock().unwrap().insert(hid_clone.clone(), Arc::new(snap));
                         last_fetch_arc.lock().unwrap().insert(hid_clone.clone(), Instant::now());
                         errors_arc.lock().unwrap().remove(&hid_clone);

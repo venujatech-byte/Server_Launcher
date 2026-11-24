@@ -258,7 +258,7 @@ impl LauncherApp {
                                             .rounding(Rounding::same(6.0))
                                             .inner_margin(egui::Margin::symmetric(12.0, 8.0))
                                             .show(ui, |ui| {
-                                                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                ui.horizontal(|ui| {
                                                     ui.vertical(|ui| {
                                                         ui.spacing_mut().item_spacing.y = 1.0;
                                                         ui.label(RichText::new("RADIO STATE").size(9.0).monospace().strong().color(p.text_muted));
@@ -406,7 +406,7 @@ impl LauncherApp {
                             });
                         });
                 } else {
-                    sensor_card_columns(ui, bt_snap.devices.len(), |ui, i| {
+                    let render_card = |ui: &mut Ui, i: usize| {
                             let dev = &bt_snap.devices[i];
                             let card_bg = if dev.connected { p.bg_card_active } else { p.bg_card };
                             Frame::none()
@@ -562,7 +562,17 @@ impl LauncherApp {
                                         }
                                     });
                             });
-                    });
+                    };
+                    let count = bt_snap.devices.len();
+                    if count <= 4 && sensor_grid_columns(ui.available_width(), ui.spacing().item_spacing.x, count) == count {
+                        ui.columns(count, |columns| {
+                            for (index, column) in columns.iter_mut().enumerate() {
+                                render_card(column, index);
+                            }
+                        });
+                    } else {
+                        sensor_card_columns(ui, count, render_card);
+                    }
                 }
 
                 // 4. Discovered Nearby Devices (if any found during scan)

@@ -128,7 +128,7 @@ impl LauncherApp {
                     ("BOARD SENSOR", vrm_temp, sensor_limit(SensorCategory::System, vrm_temp), "", p.text_secondary),
                 ];
 
-                sensor_card_columns(ui, sensor_cards.len(), |ui, i| {
+                let render_card = |ui: &mut Ui, i: usize| {
                     let (name, val, limit, _delta, accent) = &sensor_cards[i];
                         Frame::none()
                             .fill(p.bg_card)
@@ -144,18 +144,27 @@ impl LauncherApp {
 
                                 });
                                 ui.add_space(6.0);
-                                // Small progress line
-                                let pct = if val.is_finite() && limit.is_finite() { (val / limit).clamp(0.0, 1.0) } else { 0.0 };
-                                let (bar_rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 3.5), egui::Sense::hover());
-                                ui.painter().rect_filled(bar_rect, Rounding::same(2.0), p.bg_button);
-                                let mut filled_rect = bar_rect;
-                                filled_rect.set_width(bar_rect.width() * pct);
-                                ui.painter().rect_filled(filled_rect, Rounding::same(2.0), *accent);
-
-                                ui.add_space(4.0);
+                                if val.is_finite() && limit.is_finite() && *limit > 0.0 {
+                                    let pct = (val / limit).clamp(0.0, 1.0);
+                                    let (bar_rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 3.5), egui::Sense::hover());
+                                    ui.painter().rect_filled(bar_rect, Rounding::same(2.0), p.bg_button);
+                                    let mut filled_rect = bar_rect;
+                                    filled_rect.set_width(bar_rect.width() * pct);
+                                    ui.painter().rect_filled(filled_rect, Rounding::same(2.0), *accent);
+                                }
                                 ui.label(RichText::new(if limit.is_finite() { format!("LIMIT: {limit:.1}°C") } else { "Limit unavailable".to_string() }).size(8.5).monospace().color(p.text_muted));
                             });
-                });
+                };
+                let count = sensor_cards.len();
+                if count <= 5 && sensor_grid_columns(ui.available_width(), ui.spacing().item_spacing.x, count) == count {
+                    ui.columns(count, |columns| {
+                        for (index, column) in columns.iter_mut().enumerate() {
+                            render_card(column, index);
+                        }
+                    });
+                } else {
+                    sensor_card_columns(ui, count, render_card);
+                }
 
                 ui.add_space(8.0);
 

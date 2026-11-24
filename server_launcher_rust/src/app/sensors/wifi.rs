@@ -78,10 +78,6 @@ impl LauncherApp {
 
                             ui.add_space(3.0);
 
-                            // Row 2: Title & Status Badge on Left, Action / Badges on Right
-                            let avail_w = ui.available_width();
-                            let is_narrow = avail_w < 700.0;
-
                             let title = match is_wireless {
                                 Some(false) if is_remote => "Network Subsystem & Host Interface",
                                 None if is_remote => "Network Interface",
@@ -124,128 +120,62 @@ impl LauncherApp {
                                 });
                             };
 
-                            if is_narrow {
-                                render_title_and_status(ui);
-                                ui.add_space(6.0);
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 6.0;
-                                    if !is_remote {
-                                        // Re-Scan Button (borderless tonal pill)
-                                        let (rescan_rect, rescan_resp) = ui.allocate_exact_size(egui::vec2(86.0, 26.0), egui::Sense::click());
-                                        let bg = if rescan_resp.hovered() { accent_with_alpha(accent, 32) } else { accent_with_alpha(accent, 18) };
-                                        ui.painter().rect_filled(rescan_rect, Rounding::same(6.0), bg);
-                                        ui.painter().rect_stroke(rescan_rect, Rounding::same(6.0), Stroke::new(1.0_f32, accent_with_alpha(accent, 40)));
-                                        ui.painter().text(rescan_rect.center(), egui::Align2::CENTER_CENTER, format!("{} Re-Scan", crate::lucide::REFRESH_CW), egui::FontId::monospace(9.0), p.text_primary);
-                                        if rescan_resp.clicked() && !wifi_snap.interface.is_empty() {
-                                            self.queue_wifi_action(Some(wifi_snap.interface.clone()), ui.ctx().clone());
-                                        }
+                            render_title_and_status(ui);
+                            ui.add_space(6.0);
+                            ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                if !is_remote {
+                                    // Re-Scan Button (borderless tonal pill)
+                                    let (rescan_rect, rescan_resp) = ui.allocate_exact_size(egui::vec2(86.0, 26.0), egui::Sense::click());
+                                    let bg = if rescan_resp.hovered() { accent_with_alpha(accent, 32) } else { accent_with_alpha(accent, 18) };
+                                    ui.painter().rect_filled(rescan_rect, Rounding::same(6.0), bg);
+                                    ui.painter().rect_stroke(rescan_rect, Rounding::same(6.0), Stroke::new(1.0_f32, accent_with_alpha(accent, 40)));
+                                    ui.painter().text(rescan_rect.center(), egui::Align2::CENTER_CENTER, format!("{} Rescan", crate::lucide::REFRESH_CW), egui::FontId::monospace(9.0), p.text_primary);
+                                    if rescan_resp.clicked() && !wifi_snap.interface.is_empty() {
+                                        self.queue_wifi_action(Some(wifi_snap.interface.clone()), ui.ctx().clone());
+                                    }
 
-                                        // Badges
-                                        if !wifi_snap.security.is_empty() {
-                                            Frame::none()
-                                                .fill(p.bg_input)
-                                                .stroke(Stroke::NONE)
-                                                .rounding(Rounding::same(4.0))
-                                                .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                                                .show(ui, |ui| {
-                                                    ui.label(RichText::new(&wifi_snap.security).size(9.0).monospace().color(p.text_secondary));
-                                                });
-                                        }
-
-                                        let ch_text = wifi_channel_label(wifi_snap.channel, wifi_snap.frequency_mhz);
+                                    // Badges
+                                    if !wifi_snap.security.is_empty() {
                                         Frame::none()
                                             .fill(p.bg_input)
                                             .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                             .show(ui, |ui| {
-                                                ui.label(RichText::new(ch_text).size(9.0).monospace().strong().color(p.text_secondary));
-                                            });
-                                    } else {
-                                        Frame::none()
-                                            .fill(p.bg_input)
-                                            .stroke(Stroke::NONE)
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new(format!("NIC: {}", iface_name)).size(9.0).monospace().strong().color(p.text_secondary));
-                                            });
-
-                                        Frame::none()
-                                            .fill(p.bg_input)
-                                            .stroke(Stroke::NONE)
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new(if snap.socket_stats_available { format!("Sockets: {}", snap.socket_total) } else { "Sockets: —".to_string() }).size(9.0).monospace().color(p.text_secondary));
+                                                ui.label(RichText::new(&wifi_snap.security).size(9.0).monospace().color(p.text_secondary));
                                             });
                                     }
-                                });
-                            } else {
-                                ui.horizontal(|ui| {
-                                    let right_est = 310.0_f32;
-                                    let left_w = (avail_w - right_est - 16.0).max(100.0);
-                                    ui.allocate_ui_with_layout(egui::vec2(left_w, 26.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                        render_title_and_status(ui);
-                                    });
 
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.spacing_mut().item_spacing.x = 6.0;
-                                        if !is_remote {
-                                            // Re-Scan Button (borderless tonal pill)
-                                            let (rescan_rect, rescan_resp) = ui.allocate_exact_size(egui::vec2(86.0, 26.0), egui::Sense::click());
-                                            let bg = if rescan_resp.hovered() { accent_with_alpha(accent, 32) } else { accent_with_alpha(accent, 18) };
-                                            ui.painter().rect_filled(rescan_rect, Rounding::same(6.0), bg);
-                                            ui.painter().rect_stroke(rescan_rect, Rounding::same(6.0), Stroke::new(1.0_f32, accent_with_alpha(accent, 40)));
-                                            ui.painter().text(rescan_rect.center(), egui::Align2::CENTER_CENTER, format!("{} Re-Scan", crate::lucide::REFRESH_CW), egui::FontId::monospace(9.0), p.text_primary);
-                                            if rescan_resp.clicked() && !wifi_snap.interface.is_empty() {
-                                                self.queue_wifi_action(Some(wifi_snap.interface.clone()), ui.ctx().clone());
-                                            }
+                                    let ch_text = wifi_channel_label(wifi_snap.channel, wifi_snap.frequency_mhz);
+                                    Frame::none()
+                                        .fill(p.bg_input)
+                                        .stroke(Stroke::NONE)
+                                        .rounding(Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new(ch_text).size(9.0).monospace().strong().color(p.text_secondary));
+                                        });
+                                } else {
+                                    Frame::none()
+                                        .fill(p.bg_input)
+                                        .stroke(Stroke::NONE)
+                                        .rounding(Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new(format!("NIC: {}", iface_name)).size(9.0).monospace().strong().color(p.text_secondary));
+                                        });
 
-                                            // Security Badge
-                                            if !wifi_snap.security.is_empty() {
-                                                Frame::none()
-                                                    .fill(p.bg_input)
-                                                    .stroke(Stroke::NONE)
-                                                    .rounding(Rounding::same(4.0))
-                                                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                                                    .show(ui, |ui| {
-                                                        ui.label(RichText::new(&wifi_snap.security).size(9.0).monospace().color(p.text_secondary));
-                                                    });
-                                            }
-
-                                            // Channel Badge
-                                            let ch_text = wifi_channel_label(wifi_snap.channel, wifi_snap.frequency_mhz);
-                                            Frame::none()
-                                                .fill(p.bg_input)
-                                                .stroke(Stroke::NONE)
-                                                .rounding(Rounding::same(4.0))
-                                                .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                                                .show(ui, |ui| {
-                                                    ui.label(RichText::new(ch_text).size(9.0).monospace().strong().color(p.text_secondary));
-                                                });
-                                        } else {
-                                            Frame::none()
-                                                .fill(p.bg_input)
-                                                .stroke(Stroke::NONE)
-                                                .rounding(Rounding::same(4.0))
-                                                .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                                                .show(ui, |ui| {
-                                                    ui.label(RichText::new(format!("NIC: {}", iface_name)).size(9.0).monospace().strong().color(p.text_secondary));
-                                                });
-
-                                            Frame::none()
-                                                .fill(p.bg_input)
-                                                .stroke(Stroke::NONE)
-                                                .rounding(Rounding::same(4.0))
-                                                .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                                                .show(ui, |ui| {
-                                                    ui.label(RichText::new(if snap.socket_stats_available { format!("Sockets: {}", snap.socket_total) } else { "Sockets: —".to_string() }).size(9.0).monospace().color(p.text_secondary));
-                                                });
-                                        }
-                                    });
-                                });
-                            }
+                                    Frame::none()
+                                        .fill(p.bg_input)
+                                        .stroke(Stroke::NONE)
+                                        .rounding(Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new(if snap.socket_stats_available { format!("Sockets: {}", snap.socket_total) } else { "Sockets: —".to_string() }).size(9.0).monospace().color(p.text_secondary));
+                                        });
+                                }
+                            });
 
                             ui.add_space(4.0);
 
@@ -253,8 +183,6 @@ impl LauncherApp {
                             ui.horizontal_wrapped(|ui| {
                                 if is_remote {
                                     ui.label(RichText::new(format!("SSH link to host '{}'", self.host_display_name(host_id))).size(10.0).color(p.text_muted));
-                                } else {
-                                    ui.label(RichText::new("Wireless interface telemetry").size(10.0).color(p.text_muted));
                                 }
                             });
 

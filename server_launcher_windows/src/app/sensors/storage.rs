@@ -726,12 +726,12 @@ impl LauncherApp {
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(12.0))
-                    .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                    .inner_margin(egui::Margin::symmetric(18.0, 14.0))
                     .show(ui, |ui| {
                         ui.horizontal_wrapped(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
                             ui.label(RichText::new(crate::lucide::STORAGE).size(12.0).color(accent));
-                            ui.label(RichText::new("Partition map").size(12.5).strong().color(p.text_primary));
+                            ui.label(RichText::new("Partition map").size(14.0).strong().color(p.text_primary));
                             if let Some(disk) = d1_phys {
                                 ui.label(RichText::new(format!("{} • /dev/{}", disk.model, disk.name)).size(9.5).monospace().color(p.text_muted));
                             }
@@ -740,7 +740,7 @@ impl LauncherApp {
                         ui.add_space(8.0);
 
                         // Visual Partition Bar (24px tall)
-                        let (part_res, part_p) = ui.allocate_painter(egui::vec2(ui.available_width(), 24.0), egui::Sense::hover());
+                        let (part_res, part_p) = ui.allocate_painter(egui::vec2(ui.available_width(), 28.0), egui::Sense::hover());
                         let pr = part_res.rect;
                         part_p.rect_filled(pr, Rounding::same(4.0), p.bg_input);
 
@@ -748,18 +748,18 @@ impl LauncherApp {
                         if let Some(primary) = d1_phys {
                             if !primary.partitions.is_empty() {
                                 let total_part_bytes: u64 = primary.partitions.iter().map(|p| p.size_bytes).sum::<u64>().max(1);
-                                let gap = 2.0_f32;
+                                let gap = 2.0_f32.min(pr.width() / (2.0 * primary.partitions.len() as f32));
                                 let n = primary.partitions.len();
                                 let total_gaps = gap * (n.saturating_sub(1) as f32);
-                                let usable_w = (pr.width() - total_gaps).max(10.0);
+                                let usable_w = (pr.width() - total_gaps).max(0.0);
 
                                 let mut cur_x = pr.min.x;
                                 for (idx, part) in primary.partitions.iter().enumerate() {
-                                    let fraction = (part.size_bytes as f32 / total_part_bytes as f32).max(0.01);
+                                    let fraction = part.size_bytes as f32 / total_part_bytes as f32;
                                     let rem_x = (pr.max.x - cur_x).max(0.0);
                                     let w = if idx == n - 1 { rem_x } else { (fraction * usable_w).min(rem_x) };
 
-                                    let seg_r = egui::Rect::from_min_size(egui::pos2(cur_x, pr.min.y), egui::vec2(w.max(6.0), pr.height()));
+                                    let seg_r = egui::Rect::from_min_size(egui::pos2(cur_x, pr.min.y), egui::vec2(w, pr.height()));
 
                                     // Determine partition role styling
                                     let (fill_col, text_col, label) = (
@@ -770,8 +770,11 @@ impl LauncherApp {
 
                                     part_p.rect_filled(seg_r, Rounding::same(3.0), fill_col);
 
+                                    ui.interact(seg_r, part_res.id.with(idx), egui::Sense::hover())
+                                        .on_hover_text(format!("{label} · {}", crate::sensors::format_bytes(part.size_bytes)));
+
                                     // Render label if wide enough
-                                    if w > 65.0 {
+                                    if w > 105.0 {
                                         let gb = part.size_bytes as f64 / 1e9;
                                         part_p.text(seg_r.center(), egui::Align2::CENTER_CENTER, format!("{} ({:.1} GB)", label, gb), egui::FontId::monospace(8.5), text_col);
                                     } else if w > 24.0 {
@@ -791,27 +794,28 @@ impl LauncherApp {
 
                         ui.add_space(8.0);
 
-                        ui.columns(4, |cols| {
-                            let mut mounts = snap.disks.iter().filter(|mount| {
-                                if let Some(disk) = d1_phys {
-                                    disk_owns_mount(&disk.name, &disk.partitions, &mount.name)
-                                } else {
-                                    drives_list.get(self.selected_disk_idx).is_some_and(|disk| disk_owns_mount(&disk.0, &[], &mount.name))
-                                }
-                            });
-                            for col in cols.iter_mut() {
-                                if let Some(mount) = mounts.next() {
-                                    col.add(egui::Label::new(RichText::new(format!("MOUNT: {}", mount.mount_point)).size(9.0).monospace().color(p.text_muted)).truncate())
-                                        .on_hover_text(&mount.mount_point);
-                                    col.add_space(2.0);
-                                    col.label(RichText::new(format!("{:.1} GB {}", mount.total_bytes as f64 / 1e9, mount.fs_type)).size(13.0).strong().color(p.text_primary));
-                                    col.add(egui::Label::new(RichText::new(format!("{} • {:.1} GB used", mount.name, mount.used_bytes as f64 / 1e9)).size(9.0).monospace().color(p.text_muted)).truncate())
-                                        .on_hover_text(format!("{} • {:.1} GB used", mount.name, mount.used_bytes as f64 / 1e9));
-                                } else {
-                                    col.label(RichText::new("—").size(13.0).color(p.text_muted));
-                                    col.label(RichText::new("No mount reported").size(9.0).color(p.text_muted));
-                                }
+                        ui.label(RichText::new("Mounted volumes").size(12.0).strong().color(p.text_secondary));
+                        let mounts: Vec<_> = snap.disks.iter().filter(|mount| {
+                            if let Some(disk) = d1_phys {
+                                disk_owns_mount(&disk.name, &disk.partitions, &mount.name)
+                            } else {
+                                drives_list.get(self.selected_disk_idx).is_some_and(|disk| disk_owns_mount(&disk.0, &[], &mount.name))
                             }
+                        }).collect();
+                        if mounts.is_empty() {
+                            ui.label(RichText::new("No mounted volumes reported").size(11.0).color(p.text_muted));
+                        }
+                        sensor_card_columns(ui, mounts.len(), |ui, index| {
+                            let mount = mounts[index];
+                            Frame::none().fill(p.bg_input).rounding(Rounding::same(8.0))
+                                .inner_margin(egui::Margin::same(10.0)).show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.add(egui::Label::new(RichText::new(&mount.mount_point).size(12.0).strong().color(p.text_primary)).truncate())
+                                        .on_hover_text(&mount.mount_point);
+                                    ui.label(RichText::new(format!("{} / {} used", crate::sensors::format_bytes(mount.used_bytes), crate::sensors::format_bytes(mount.total_bytes))).size(11.0).color(p.text_secondary));
+                                    let device = format!("{} · {}", mount.name, mount.fs_type);
+                                    ui.add(egui::Label::new(RichText::new(&device).size(10.0).monospace().color(p.text_muted)).truncate()).on_hover_text(&device);
+                                });
                         });
                     });
 

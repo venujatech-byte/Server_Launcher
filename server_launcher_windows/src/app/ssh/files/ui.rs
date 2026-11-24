@@ -346,7 +346,7 @@ fn menu(
     action: &mut Option<Action>,
     p: &ThemePalette,
 ) {
-    ui.set_min_width(178.0);
+    ui.set_width(178.0);
     ui.spacing_mut().item_spacing.y = 2.0;
     ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
     ui.visuals_mut().widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;

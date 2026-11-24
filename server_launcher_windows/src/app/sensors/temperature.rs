@@ -94,24 +94,14 @@ impl LauncherApp {
 
                             ui.add_space(2.0);
 
+                            ui.label(RichText::new(&title_str).size(18.0).strong().color(p.text_primary));
+                            ui.add_space(6.0);
                             ui.horizontal_wrapped(|ui| {
-                                ui.spacing_mut().item_spacing.x = 8.0;
-                                ui.label(RichText::new(&title_str).size(18.0).strong().color(p.text_primary));
-                                Frame::none()
-                                    .fill(accent_with_alpha(accent, 25))
-                                    .rounding(Rounding::same(4.0))
-                                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                Frame::none().fill(p.bg_button).rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                     .show(ui, |ui| {
-                                        let badge = if [cpu_temp, gpu_temp, ram_temp, nvme_temp, vrm_temp].iter().any(|value| value.is_finite()) { "SENSORS" } else { "NO READINGS" };
-                                        ui.label(RichText::new(badge).size(8.5).monospace().strong().color(p.text_primary));
+                                        ui.label(RichText::new(sub_str).size(10.5).monospace().color(p.text_secondary));
                                     });
-                            });
-
-                            ui.add_space(4.0);
-
-                            // Row 3: Full-width Subtitle spanning card width underneath Row 2 (Never collides or overlaps)
-                            ui.horizontal_wrapped(|ui| {
-                                ui.label(RichText::new(sub_str).size(10.5).color(p.text_muted));
                             });
                         });
                     });

@@ -75,7 +75,7 @@ impl LauncherApp {
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(12.0))
-                    .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                    .inner_margin(egui::Margin::symmetric(18.0, 14.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.vertical(|ui| {
@@ -88,51 +88,13 @@ impl LauncherApp {
                                 } else {
                                     format!("GPU ENGINE #{}", active_gpu_idx + 1)
                                 };
-                                ui.label(RichText::new(overline).size(9.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new(overline).size(10.5).monospace().strong().color(p.text_muted));
                             });
 
                             ui.add_space(2.0);
 
-                            // Row 2: Title & Spec on Left, Mode Buttons on Right
-                            ui.horizontal(|ui| {
-                                let row_w = ui.available_width();
-                                let right_w = 220.0_f32;
-                                let left_w = (row_w - right_w - 8.0).max(80.0);
-
-                                ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                    ui.spacing_mut().item_spacing.x = 8.0;
-                                    ui.label(RichText::new(format!("GPU {}: {}", active_gpu_idx + 1, gpu_name)).size(18.0).strong().color(p.text_primary));
-                                    Frame::none()
-                                        .fill(accent_with_alpha(accent, 25))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                        .show(ui, |ui| {
-                                            ui.label(RichText::new(gpu_spec_label).size(9.0).monospace().strong().color(p.text_primary));
-                                        });
-                                });
-
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 6.0;
-
-                                        if ui.add(egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(p.text_muted))
-                                            .fill(p.bg_subtle)
-                                            .stroke(Stroke::NONE)
-                                            .rounding(Rounding::same(4.0))).clicked() {
-                                            if let Some(hid) = host_id {
-                                                if let Some(host) = self.ssh_hosts.iter().find(|host| host.id == hid).cloned() {
-                                                    self.trigger_remote_sensors_query(host);
-                                                }
-                                            } else {
-                                                self.trigger_local_sensors_query(false, Some(ui.ctx().clone()));
-                                            }
-                                        }
-
-                                    });
-                                });
-                            });
-
-                            ui.add_space(3.0);
+                            ui.label(RichText::new(gpu_name).size(18.0).strong().color(p.text_primary));
+                            ui.add_space(6.0);
 
                             // Row 3: Subtitle spanning the full card width underneath Row 2
                             let driver_str = gpu_spec_label;
@@ -149,11 +111,25 @@ impl LauncherApp {
 
                             ui.horizontal_wrapped(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(format!("Driver: {}", driver_str)).size(9.5).monospace().color(p.text_muted));
-                                ui.label(RichText::new("•").size(9.0).color(p.text_muted));
-                                ui.label(RichText::new(date_or_link).size(9.5).monospace().color(p.text_muted));
-                                ui.label(RichText::new("•").size(9.0).color(p.text_muted));
-                                ui.label(RichText::new(topology).size(9.5).monospace().color(p.text_muted));
+                                for detail in [driver_str, date_or_link, topology.as_str()] {
+                                    Frame::none().fill(p.bg_button).rounding(Rounding::same(6.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new(detail).size(10.5).monospace().color(p.text_secondary));
+                                        });
+                                }
+                                if ui.add(egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(p.text_muted))
+                                    .fill(p.bg_subtle)
+                                    .stroke(Stroke::NONE)
+                                    .rounding(Rounding::same(4.0))).on_hover_text("Refresh GPU telemetry").clicked() {
+                                    if let Some(hid) = host_id {
+                                        if let Some(host) = self.ssh_hosts.iter().find(|host| host.id == hid).cloned() {
+                                            self.trigger_remote_sensors_query(host);
+                                        }
+                                    } else {
+                                        self.trigger_local_sensors_query(false, Some(ui.ctx().clone()));
+                                    }
+                                }
                             });
                         });
                     });

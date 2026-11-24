@@ -24,21 +24,28 @@ impl LauncherApp {
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(12.0))
-                    .inner_margin(egui::Margin::symmetric(16.0, 14.0))
+                    .inner_margin(egui::Margin::symmetric(18.0, 14.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.horizontal_wrapped(|ui| {
                             ui.label(RichText::new(crate::lucide::ACTIVITY).size(15.0).color(accent));
                             ui.label(RichText::new("NETWORK").size(10.5).monospace().strong().color(p.text_muted));
-                            ui.label(RichText::new(if snap.network_stats_available { format!("{} interfaces", interfaces.len()) } else { "Interface counters unavailable".to_string() }).size(10.5).color(p.text_secondary));
                         });
                         ui.add_space(4.0);
                         ui.label(RichText::new("Network data usage").size(18.0).strong().color(p.text_primary));
-                        ui.label(
-                            RichText::new(if host_id.is_some() { "Remote counters · all interfaces, including loopback and virtual" } else { "Local counters · all interfaces, including loopback and virtual" })
-                                .size(10.5)
-                                .color(p.text_muted),
-                        );
+                        ui.add_space(6.0);
+                        ui.horizontal_wrapped(|ui| {
+                            Frame::none().fill(p.bg_button).rounding(Rounding::same(6.0))
+                                .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new(if snap.network_stats_available { format!("{} interfaces", interfaces.len()) } else { "Interface counters unavailable".to_string() }).size(10.5).monospace().color(p.text_secondary));
+                                });
+                            Frame::none().fill(p.bg_button).rounding(Rounding::same(6.0))
+                                .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new(if host_id.is_some() { "Remote counters · all interfaces, including loopback and virtual" } else { "Local counters · all interfaces, including loopback and virtual" }).size(10.5).monospace().color(p.text_secondary));
+                                });
+                        });
                         ui.add_space(4.0);
                         ui.label(RichText::new("VPN traffic may also appear under its underlying interface.").size(10.5).color(p.text_muted));
                     });

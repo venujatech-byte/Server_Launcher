@@ -83,46 +83,31 @@ impl LauncherApp {
                                 None if is_remote => "Network Interface",
                                 _ => "Wi-Fi",
                             };
-                            let (status_text, dot_col) = if is_remote {
+                            let status_text = if is_remote {
                                 match remote_wifi_state {
-                                    Some(state) if state.eq_ignore_ascii_case("connected") => ("CONNECTED", accent),
-                                    Some(state) if state.eq_ignore_ascii_case("disconnected") => ("DISCONNECTED", p.text_muted),
-                                    _ if primary_net.is_some() => ("INTERFACE FOUND", accent),
-                                    _ => ("UNAVAILABLE", p.text_muted),
+                                    Some(state) if state.eq_ignore_ascii_case("connected") => "CONNECTED",
+                                    Some(state) if state.eq_ignore_ascii_case("disconnected") => "DISCONNECTED",
+                                    _ if primary_net.is_some() => "INTERFACE FOUND",
+                                    _ => "UNAVAILABLE",
                                 }
                             } else if wifi_snap.interface.is_empty() {
-                                ("UNAVAILABLE", p.text_muted)
+                                "UNAVAILABLE"
                             } else if is_connected {
-                                ("CONNECTED", accent)
+                                "CONNECTED"
                             } else if wifi_snap.state == "DISCONNECTED" {
-                                ("DISCONNECTED", p.text_muted)
+                                "DISCONNECTED"
                             } else {
-                                ("STATE UNKNOWN", p.text_muted)
-                            };
-                            let status_text_col = if is_connected { p.text_primary } else { p.text_muted };
-
-                            let render_title_and_status = |ui: &mut Ui| {
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 8.0;
-                                    ui.label(RichText::new(title).size(18.0).strong().color(p.text_primary));
-                                    Frame::none()
-                                        .fill(dot_col.gamma_multiply(0.14))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(6.0, 2.5))
-                                        .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
-                                                ui.spacing_mut().item_spacing.x = 4.0;
-                                                let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                                ui.painter().circle_filled(d_rect.center(), 2.8, dot_col);
-                                                ui.label(RichText::new(status_text).size(8.5).monospace().strong().color(status_text_col));
-                                            });
-                                        });
-                                });
+                                "STATE UNKNOWN"
                             };
 
-                            render_title_and_status(ui);
+                            ui.label(RichText::new(title).size(18.0).strong().color(p.text_primary));
                             ui.add_space(6.0);
                             ui.horizontal_wrapped(|ui| {
+                                Frame::none().fill(p.bg_button).rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(status_text).size(10.5).monospace().color(p.text_secondary));
+                                    });
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 if !is_remote {
                                     // Re-Scan Button (borderless tonal pill)
@@ -138,53 +123,50 @@ impl LauncherApp {
                                     // Badges
                                     if !wifi_snap.security.is_empty() {
                                         Frame::none()
-                                            .fill(p.bg_input)
+                                            .fill(p.bg_button)
                                             .stroke(Stroke::NONE)
-                                            .rounding(Rounding::same(4.0))
+                                            .rounding(Rounding::same(6.0))
                                             .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                             .show(ui, |ui| {
-                                                ui.label(RichText::new(&wifi_snap.security).size(9.0).monospace().color(p.text_secondary));
+                                                ui.label(RichText::new(&wifi_snap.security).size(10.5).monospace().color(p.text_secondary));
                                             });
                                     }
 
                                     let ch_text = wifi_channel_label(wifi_snap.channel, wifi_snap.frequency_mhz);
                                     Frame::none()
-                                        .fill(p.bg_input)
+                                        .fill(p.bg_button)
                                         .stroke(Stroke::NONE)
-                                        .rounding(Rounding::same(4.0))
+                                        .rounding(Rounding::same(6.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                         .show(ui, |ui| {
-                                            ui.label(RichText::new(ch_text).size(9.0).monospace().strong().color(p.text_secondary));
+                                            ui.label(RichText::new(ch_text).size(10.5).monospace().strong().color(p.text_secondary));
                                         });
                                 } else {
                                     Frame::none()
-                                        .fill(p.bg_input)
+                                        .fill(p.bg_button)
                                         .stroke(Stroke::NONE)
-                                        .rounding(Rounding::same(4.0))
+                                        .rounding(Rounding::same(6.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                         .show(ui, |ui| {
-                                            ui.label(RichText::new(format!("NIC: {}", iface_name)).size(9.0).monospace().strong().color(p.text_secondary));
+                                            ui.label(RichText::new(format!("NIC: {}", iface_name)).size(10.5).monospace().strong().color(p.text_secondary));
                                         });
 
                                     Frame::none()
-                                        .fill(p.bg_input)
+                                        .fill(p.bg_button)
                                         .stroke(Stroke::NONE)
-                                        .rounding(Rounding::same(4.0))
+                                        .rounding(Rounding::same(6.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                         .show(ui, |ui| {
-                                            ui.label(RichText::new(if snap.socket_stats_available { format!("Sockets: {}", snap.socket_total) } else { "Sockets: —".to_string() }).size(9.0).monospace().color(p.text_secondary));
+                                            ui.label(RichText::new(if snap.socket_stats_available { format!("Sockets: {}", snap.socket_total) } else { "Sockets: —".to_string() }).size(10.5).monospace().color(p.text_secondary));
                                         });
                                 }
                             });
 
                             ui.add_space(4.0);
 
-                            // Row 3: Subtitle spanning the full card width underneath (wrapped, never overlaps)
-                            ui.horizontal_wrapped(|ui| {
-                                if is_remote {
-                                    ui.label(RichText::new(format!("SSH link to host '{}'", self.host_display_name(host_id))).size(10.0).color(p.text_muted));
-                                }
-                            });
+                            if is_remote {
+                                ui.label(RichText::new(format!("SSH link to host '{}'", self.host_display_name(host_id))).size(10.0).color(p.text_muted));
+                            }
 
                             if is_remote && snap.networks.iter().filter(|interface| interface.name != "lo").count() > 1 {
                                 let current = iface_name.to_string();

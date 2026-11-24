@@ -61,8 +61,6 @@ impl LauncherApp {
                 let status_str = if has_battery { reported_status.to_string() } else {
                     match snap.power.ac_online { Some(true) => "External power connected", Some(false) => "External power disconnected", None => "Power-source status unavailable" }.to_string()
                 };
-                let status_col = p.text_secondary;
-                let status_bg = p.bg_button;
                 let est_time_str = if reported_status.eq_ignore_ascii_case("full") || reported_status.eq_ignore_ascii_case("fully charged") { "Fully charged" } else { "Unavailable" };
 
                 // 1. Top Header Banner
@@ -83,59 +81,13 @@ impl LauncherApp {
 
                             ui.add_space(2.0);
 
-                            // Row 2: Title and Status Badge
-                            let avail_w = ui.available_width();
-                            let is_narrow = avail_w < 680.0;
-
-                            let title_str = if is_remote {
-                                format!("Power & Thermal • Host '{}'", self.host_display_name(host_id))
+                            let title = if is_remote {
+                                format!("Power & Battery · {}", self.host_display_name(host_id))
                             } else {
                                 "Power & Battery".to_string()
                             };
-
-                            if is_narrow {
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.label(RichText::new(title_str).size(18.0).strong().color(p.text_primary));
-                                });
-                                ui.add_space(4.0);
-                                Frame::none()
-                                    .fill(status_bg)
-                                    .rounding(Rounding::same(4.0))
-                                    .inner_margin(egui::Margin::symmetric(8.0, 3.5))
-                                    .show(ui, |ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = 5.0;
-                                            let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                            ui.painter().circle_filled(d_rect.center(), 2.8, status_col);
-                                            ui.label(RichText::new(&status_str).size(9.0).monospace().strong().color(p.text_primary));
-                                        });
-                                    });
-                            } else {
-                                ui.horizontal(|ui| {
-                                    let right_pill_est = 340.0_f32;
-                                    let left_w = (avail_w - right_pill_est - 16.0).max(100.0);
-                                    ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new(title_str).size(18.0).strong().color(p.text_primary));
-                                    });
-
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        Frame::none()
-                                            .fill(status_bg)
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(8.0, 3.5))
-                                            .show(ui, |ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 5.0;
-                                                    let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                                    ui.painter().circle_filled(d_rect.center(), 2.8, status_col);
-                                                    ui.label(RichText::new(&status_str).size(9.0).monospace().strong().color(p.text_primary));
-                                                });
-                                            });
-                                    });
-                                });
-                            }
-
-                            ui.add_space(4.0);
+                            ui.label(RichText::new(title).size(18.0).strong().color(p.text_primary));
+                            ui.add_space(6.0);
 
                             // Row 3: Subtitle spanning the full card width underneath
                             ui.horizontal_wrapped(|ui| {
@@ -148,7 +100,16 @@ impl LauncherApp {
                                 } else {
                                     format!("ACPI battery health & power telemetry • Remaining: {}", est_time_str)
                                 };
-                                ui.label(RichText::new(sub_str).size(10.0).color(p.text_muted));
+                                Frame::none().fill(p.bg_button).rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(&status_str).size(10.5).monospace().color(p.text_secondary));
+                                    });
+                                Frame::none().fill(p.bg_button).rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(sub_str).size(10.5).monospace().color(p.text_secondary));
+                                    });
                             });
                         });
                     });

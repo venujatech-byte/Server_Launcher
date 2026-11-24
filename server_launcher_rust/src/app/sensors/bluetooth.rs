@@ -125,130 +125,31 @@ impl LauncherApp {
 
                             ui.add_space(2.0);
 
-                            // Row 2: Title & Status Badge on Left, Radio State Card on Right
-                            let avail_w = ui.available_width();
-                            let right_card_w = 210.0_f32;
-                            let is_narrow = avail_w < 680.0;
-
-                            let (status_text, status_col) = if !bt_snap.available {
-                                ("UNAVAILABLE", p.text_muted)
-                            } else if self.bt_radio_on {
-                                ("RADIO ON", accent)
-                            } else {
-                                ("RADIO OFF", p.text_muted)
-                            };
-
-                            if is_narrow {
-                                // Narrow viewport: Title row with badge, then dedicated row for radio card
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 8.0;
-                                    ui.label(RichText::new("Bluetooth devices").size(18.0).strong().color(p.text_primary));
-                                    Frame::none()
-                                        .fill(status_col.gamma_multiply(0.14))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(6.0, 2.5))
-                                        .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
-                                                ui.spacing_mut().item_spacing.x = 4.0;
-                                                let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                                ui.painter().circle_filled(d_rect.center(), 2.8, status_col);
-                                                ui.label(RichText::new(status_text).size(8.5).monospace().strong().color(p.text_primary));
-                                            });
-                                        });
-                                });
-
-                                ui.add_space(6.0);
-
-                                Frame::none()
-                                    .fill(p.bg_input)
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(12.0, 8.0))
-                                    .show(ui, |ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.vertical(|ui| {
-                                                ui.spacing_mut().item_spacing.y = 1.0;
-                                                ui.label(RichText::new("RADIO STATE").size(9.0).monospace().strong().color(p.text_muted));
-                                                ui.label(RichText::new("Hardware RF Transceiver").size(8.5).color(p.text_muted));
-                                            });
-                                            ui.add_space(10.0);
-                                            let mut power_toggle = self.bt_radio_on;
-                                            if ui.add_enabled_ui(bt_snap.available, |ui| render_custom_toggle_switch(ui, &mut power_toggle, accent)).inner {
-                                                let snap_arc = Arc::clone(&self.bluetooth_snapshot);
-                                                let ctx_clone = ui.ctx().clone();
-                                                std::thread::spawn(move || {
-                                                    let result = crate::bluetooth::set_radio_power(power_toggle);
-                                                    let mut updated = crate::bluetooth::query_bluetooth_status();
-                                                    updated.status_msg = Some(match result { Ok(()) => ("Bluetooth radio updated".into(), false, Instant::now()), Err(error) => (format!("Radio update failed: {error}"), true, Instant::now()) });
-                                                    if let Ok(mut lock) = snap_arc.lock() {
-                                                        *lock = updated;
-                                                    }
-                                                    ctx_clone.request_repaint();
-                                                });
-                                            }
-                                        });
-                                    });
-                            } else {
-                                // Wide viewport: Title on Left, Radio State Card on Right
-                                ui.horizontal(|ui| {
-                                    let left_w = (avail_w - right_card_w - 16.0).max(100.0);
-                                    ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                        ui.spacing_mut().item_spacing.x = 8.0;
-                                        ui.label(RichText::new("Bluetooth devices").size(18.0).strong().color(p.text_primary));
-                                        Frame::none()
-                                            .fill(status_col.gamma_multiply(0.14))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(6.0, 2.5))
-                                            .show(ui, |ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 4.0;
-                                                    let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                                    ui.painter().circle_filled(d_rect.center(), 2.8, status_col);
-                                                    ui.label(RichText::new(status_text).size(8.5).monospace().strong().color(p.text_primary));
-                                                });
-                                            });
-                                    });
-
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        Frame::none()
-                                            .fill(p.bg_input)
-                                            .rounding(Rounding::same(6.0))
-                                            .inner_margin(egui::Margin::symmetric(12.0, 8.0))
-                                            .show(ui, |ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.vertical(|ui| {
-                                                        ui.spacing_mut().item_spacing.y = 1.0;
-                                                        ui.label(RichText::new("RADIO STATE").size(9.0).monospace().strong().color(p.text_muted));
-                                                        ui.label(RichText::new("Hardware RF Transceiver").size(8.5).color(p.text_muted));
-                                                    });
-                                                    ui.add_space(10.0);
-                                                    let mut power_toggle = self.bt_radio_on;
-                                                    if ui.add_enabled_ui(bt_snap.available, |ui| render_custom_toggle_switch(ui, &mut power_toggle, accent)).inner {
-                                                        let snap_arc = Arc::clone(&self.bluetooth_snapshot);
-                                                        let ctx_clone = ui.ctx().clone();
-                                                        std::thread::spawn(move || {
-                                                            let result = crate::bluetooth::set_radio_power(power_toggle);
-                                                            let mut updated = crate::bluetooth::query_bluetooth_status();
-                                                            updated.status_msg = Some(match result { Ok(()) => ("Bluetooth radio updated".into(), false, Instant::now()), Err(error) => (format!("Radio update failed: {error}"), true, Instant::now()) });
-                                                            if let Ok(mut lock) = snap_arc.lock() {
-                                                                *lock = updated;
-                                                            }
-                                                            ctx_clone.request_repaint();
-                                                        });
-                                                    }
-                                                });
-                                            });
-                                    });
-                                });
-                            }
-
-                            ui.add_space(4.0);
-
-                            // Row 3: Subtitle spanning the full card width underneath (Never collides or overlaps)
+                            ui.label(RichText::new("Bluetooth devices").size(18.0).strong().color(p.text_primary));
+                            ui.add_space(6.0);
                             ui.horizontal_wrapped(|ui| {
-                                ui.label(RichText::new("Bluetooth controller and device status reported by BlueZ").size(10.0).color(p.text_muted));
+                                let radio_state = if !bt_snap.available { "Radio unavailable" }
+                                    else if self.bt_radio_on { "Radio on" } else { "Radio off" };
+                                Frame::none().fill(p.bg_button).rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(radio_state).size(10.5).monospace().color(p.text_secondary));
+                                    });
+                                let mut power_toggle = self.bt_radio_on;
+                                if ui.add_enabled_ui(bt_snap.available, |ui| render_custom_toggle_switch(ui, &mut power_toggle, accent)).inner {
+                                    let snap_arc = Arc::clone(&self.bluetooth_snapshot);
+                                    let ctx_clone = ui.ctx().clone();
+                                    std::thread::spawn(move || {
+                                        let result = crate::bluetooth::set_radio_power(power_toggle);
+                                        let mut updated = crate::bluetooth::query_bluetooth_status();
+                                        updated.status_msg = Some(match result { Ok(()) => ("Bluetooth radio updated".into(), false, Instant::now()), Err(error) => (format!("Radio update failed: {error}"), true, Instant::now()) });
+                                        if let Ok(mut lock) = snap_arc.lock() {
+                                            *lock = updated;
+                                        }
+                                        ctx_clone.request_repaint();
+                                    });
+                                }
                             });
-
-                            ui.add_space(2.0);
 
                             // Row 4: Controller desc spanning the full card width underneath (Never collides or overlaps)
                             ui.horizontal_wrapped(|ui| {

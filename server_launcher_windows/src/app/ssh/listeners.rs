@@ -448,7 +448,6 @@ impl LauncherApp {
     pub(in crate::app) fn dispatch_remote_listener_stop(&self, host: &SshRemoteHost, l: &crate::remote::RemoteListener, force: bool, ctx: &Context) {
         let (Some(pid), Some(marker)) = (l.pid, l.start_marker) else { return };
         let host_id = host.id.clone();
-        self.schedule_remote_scan(host, 1500, ctx.clone());
         let host = host.clone();
         let listener = l.clone();
         let stopped = self.remote_stopped_servers.clone();
@@ -479,6 +478,10 @@ impl LauncherApp {
                 }
                 Err(error) => crate::service::push_log_line(&format!("[ssh] Listener action failed: {error}"), &logs, 1000, crate::service::LogKind::Error),
             }
+            repaint.data_mut(|data| {
+                data.get_temp_mut_or_default::<BTreeSet<String>>(egui::Id::new(REMOTE_LISTENER_REFRESH))
+                    .insert(host_id);
+            });
             repaint.request_repaint();
         });
     }

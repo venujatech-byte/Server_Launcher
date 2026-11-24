@@ -307,6 +307,8 @@ impl SettingsTab {
     }
 }
 
+const REMOTE_LISTENER_REFRESH: &str = "remote_listener_action_refresh";
+
 #[derive(Clone, Default)]
 struct RemoteListenerSnapshot {
     rows: Arc<Vec<RemoteListener>>,
@@ -2503,6 +2505,12 @@ fn read_proc_cmd_and_cwd(pid: u32) -> (Option<String>, Option<String>) {
 
 impl eframe::App for LauncherApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        let refresh_hosts = ctx.data_mut(|data| data.remove_temp::<BTreeSet<String>>(egui::Id::new(REMOTE_LISTENER_REFRESH)));
+        if let Some(refresh_hosts) = refresh_hosts {
+            for host in self.ssh_hosts.iter().filter(|host| refresh_hosts.contains(&host.id)) {
+                self.schedule_remote_scan(host, 1500, ctx.clone());
+            }
+        }
         self.apply_systemd_results();
         // Sync background sensors snapshot if newly available
         if let Ok(shared) = self.sensors_shared_snapshot.try_lock() {

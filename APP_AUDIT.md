@@ -124,3 +124,5 @@ The SSH Servers page now shows port-scan failures with diagnostic details on hov
 SSH Servers output readers request a repaint after publishing rows, including final partial output. A short repaint delay lets output bursts coalesce without requiring a periodic repaint while the command is quiet.
 
 A refresh requested during an SSH port scan queues one follow-up for that host. Repeated requests coalesce, and the follow-up respects the latest requested delay.
+
+SSH Stop and Kill schedule a listener refresh after the signaling request finishes, with a short settling delay. The launcher only queues that refresh if the host is still configured.

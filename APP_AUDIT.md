@@ -102,3 +102,5 @@ SSH terminal output now lays out selectable labels only for visible rows. Explic
 SSH Servers now shares each completed listener scan as an immutable snapshot. Search borrows rows, and successful scans prune stopped entries by port. The renderer still hides a stopped entry while the same port appears in its current listener snapshot.
 
 Local server logs now reuse a single active-view snapshot and cache matching row indexes until the log or filter changes. Display and retained log limits are unchanged. Runtime CPU and memory impact remain unmeasured.
+
+The saved Commands list caches category counts by host and matching row indexes by host, category, and query. Imports, saves, and deletions invalidate the cached catalog view. Runtime impact remains unmeasured.

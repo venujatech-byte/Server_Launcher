@@ -1,5 +1,12 @@
 use super::*;
 
+pub(super) struct CommandCatalogView {
+    host_id: Option<String>,
+    categories: Arc<Vec<(String, usize)>>,
+    filter: Option<(String, String)>,
+    indices: Arc<Vec<usize>>,
+}
+
 impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
     // COMMANDS TAB: Saved Snippets Library & Interactive Terminal
@@ -80,21 +87,24 @@ impl LauncherApp {
 
             ui.add_space(6.0);
 
-            // Category Filter Row: single-pass O(N) counting across saved commands
-            let mut cat_counts: BTreeMap<&str, usize> = BTreeMap::new();
-            let mut total_for_host = 0usize;
-            for c in &self.saved_commands {
-                if c.host_id.as_deref() == host_id {
-                    total_for_host += 1;
-                    *cat_counts.entry(c.category.as_str()).or_insert(0) += 1;
+            if self.command_catalog_view.as_ref().is_none_or(|view| view.host_id.as_deref() != host_id) {
+                let mut counts = BTreeMap::new();
+                let mut total = 0;
+                for command in self.saved_commands.iter().filter(|command| command.host_id.as_deref() == host_id) {
+                    *counts.entry(command.category.as_str()).or_insert(0) += 1;
+                    total += 1;
                 }
+                let categories = std::iter::once(("All".into(), total))
+                    .chain(counts.into_iter().map(|(name, count)| (name.to_owned(), count)))
+                    .collect();
+                self.command_catalog_view = Some(CommandCatalogView {
+                    host_id: host_id.map(str::to_owned),
+                    categories: Arc::new(categories),
+                    filter: None,
+                    indices: Arc::default(),
+                });
             }
-
-            let mut categories: Vec<(String, usize)> = Vec::with_capacity(cat_counts.len() + 1);
-            categories.push(("All".to_string(), total_for_host));
-            for (cat, count) in cat_counts {
-                categories.push((cat.to_string(), count));
-            }
+            let categories = self.command_catalog_view.as_ref().unwrap().categories.clone();
 
             if !categories.iter().any(|(cat, _)| cat == &self.saved_command_category) {
                 self.saved_command_category = "All".to_string();
@@ -124,7 +134,7 @@ impl LauncherApp {
                         ui.visuals_mut().selection.bg_fill = p.accent_subtle;
                         ui.visuals_mut().selection.stroke = Stroke::new(1.0_f32, p.accent);
                         ui.visuals_mut().widgets.hovered.weak_bg_fill = p.bg_button_hover;
-                        for (cat, cat_count) in &categories {
+                        for (cat, cat_count) in categories.iter() {
                             let label = format!("{} ({})", cat, cat_count);
                             let selected = self.saved_command_category == *cat;
                             ui.selectable_value(&mut self.saved_command_category, cat.clone(),
@@ -143,7 +153,7 @@ impl LauncherApp {
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
-                        for (cat, _) in &categories {
+                        for (cat, _) in categories.iter() {
                             let is_active = self.saved_command_category == *cat;
                             let bg = if is_active { p.accent_subtle } else { p.bg_subtle };
                             let fg = if is_active { p.accent } else { p.text_secondary };
@@ -163,28 +173,34 @@ impl LauncherApp {
             let cat_filter = &self.saved_command_category;
             let q_empty = q.is_empty();
 
-            let filtered_indices: Vec<usize> = self
-                .saved_commands
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, c)| {
-                    if c.host_id.as_deref() != host_id {
-                        return None;
-                    }
-                    if cat_filter != "All" && &c.category != cat_filter {
-                        return None;
-                    }
-                    if !q_empty {
-                        let matches = c.name.to_lowercase().contains(&q)
-                            || c.command.to_lowercase().contains(&q)
-                            || c.description.to_lowercase().contains(&q);
-                        if !matches {
+            let view = self.command_catalog_view.as_mut().unwrap();
+            if view.filter.as_ref().is_none_or(|(query, category)| query != &q || category != cat_filter) {
+                let indices = self
+                    .saved_commands
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, c)| {
+                        if c.host_id.as_deref() != host_id {
                             return None;
                         }
-                    }
-                    Some(idx)
-                })
-                .collect();
+                        if cat_filter != "All" && &c.category != cat_filter {
+                            return None;
+                        }
+                        if !q_empty {
+                            let matches = c.name.to_lowercase().contains(&q)
+                                || c.command.to_lowercase().contains(&q)
+                                || c.description.to_lowercase().contains(&q);
+                            if !matches {
+                                return None;
+                            }
+                        }
+                        Some(idx)
+                    })
+                    .collect();
+                view.indices = Arc::new(indices);
+                view.filter = Some((q, cat_filter.clone()));
+            }
+            let filtered_indices = view.indices.clone();
 
             if filtered_indices.is_empty() {
                 ui.add_space(20.0);
@@ -304,6 +320,7 @@ impl LauncherApp {
 
                     if let Some(id) = to_delete {
                         self.saved_commands.retain(|c| c.id != id);
+                        self.command_catalog_view = None;
                         self.persist_config();
                     }
 

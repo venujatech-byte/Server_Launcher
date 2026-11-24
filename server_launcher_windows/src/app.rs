@@ -312,6 +312,7 @@ pub struct LauncherApp {
     pub active_sidebar_tab: SidebarTab,
     pub scripts: Vec<CustomScript>,
     pub saved_commands: Vec<SavedCommand>,
+    command_catalog_view: Option<commands::CommandCatalogView>,
     config_path: PathBuf,
     services: Vec<Service>,
     active_tab: String, // "overview" or service.key
@@ -765,6 +766,7 @@ impl LauncherApp {
             active_sidebar_tab: SidebarTab::Servers,
             scripts,
             saved_commands,
+            command_catalog_view: None,
             config_path,
             services,
             active_tab: "overview".to_string(),
@@ -1463,6 +1465,9 @@ impl LauncherApp {
             }
         }
 
+        if imported_count + updated_count > 0 {
+            self.command_catalog_view = None;
+        }
         Ok((imported_count, updated_count))
     }
 
@@ -1517,6 +1522,7 @@ impl LauncherApp {
                 for cmd in cfg.saved_commands {
                     if !self.saved_commands.iter().any(|existing| existing.id == cmd.id) {
                         self.saved_commands.push(cmd);
+                        self.command_catalog_view = None;
                     }
                 }
                 return Ok((imported, updated));
@@ -3132,6 +3138,7 @@ impl eframe::App for LauncherApp {
             } else {
                 self.saved_commands.push(cmd.clone());
             }
+            self.command_catalog_view = None;
             self.persist_config();
         }
 

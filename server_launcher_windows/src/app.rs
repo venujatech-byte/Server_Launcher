@@ -30,7 +30,7 @@ use crate::systemd::{
 use crate::remote::{
     build_remote_restart_cmd, build_remote_start_cmd,
     build_ssh_command,
-    clean_service_name, fetch_remote_listeners, guess_remote_start_cmd,
+    fetch_remote_listeners, guess_remote_start_cmd,
     import_from_ssh_config, launch_external_ssh_terminal, test_ssh_connection,
     RemoteListener, RemoteStoppedServer,
 };
@@ -3152,11 +3152,7 @@ impl eframe::App for LauncherApp {
         if let Some(req) = render_remote_start_server_modal(ctx, &mut self.remote_start_server_modal, &p) {
             self.remote_start_server_modal.open = false;
             if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == req.host_id).cloned() {
-                let full_cmd = if !req.cwd.is_empty() {
-                    format!("cd \"{}\" 2>/dev/null || true; nohup {} >/dev/null 2>&1 & echo '[launcher] Started {}: {}'", req.cwd, req.command, req.name, req.command)
-                } else {
-                    format!("nohup {} >/dev/null 2>&1 & echo '[launcher] Started {}: {}'", req.command, req.name, req.command)
-                };
+                let full_cmd = build_remote_start_cmd(&req.name, req.port.unwrap_or_default(), Some(&req.command), &req.cwd);
                 if let Some(port) = req.port {
                     if let Ok(mut map) = self.remote_stopped_servers.lock() {
                         let list = map.entry(host.id.clone()).or_default();
@@ -3168,6 +3164,7 @@ impl eframe::App for LauncherApp {
                                 last_pid: None,
                                 cmd: req.command.clone(),
                                 start_cmd: req.command.clone(),
+                                cwd: req.cwd.clone(),
                             });
                         }
                     }

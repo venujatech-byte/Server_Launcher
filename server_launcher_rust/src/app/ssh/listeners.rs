@@ -310,7 +310,7 @@ impl LauncherApp {
                                         .fill(p.bg_button)
                                         .rounding(Rounding::same(8.0));
                                         if ui.add(start_btn).on_hover_text("Start this remote server").clicked() {
-                                            let start_cmd = build_remote_start_cmd(&s.name, s.port, if s.start_cmd.is_empty() { None } else { Some(&s.start_cmd) });
+                                            let start_cmd = build_remote_start_cmd(&s.name, s.port, if s.start_cmd.is_empty() { None } else { Some(&s.start_cmd) }, &s.cwd);
                                             self.run_remote_ssh_command(host, &start_cmd, Some(ui.ctx().clone()));
                                             self.schedule_remote_scan(host, 1500, ui.ctx().clone());
                                         }
@@ -322,7 +322,7 @@ impl LauncherApp {
                                         .fill(p.accent_subtle)
                                         .rounding(Rounding::same(8.0));
                                         if ui.add(restart_btn).on_hover_text("Attempt to restart this remote server").clicked() {
-                                            let start_cmd = build_remote_start_cmd(&s.name, s.port, if s.start_cmd.is_empty() { None } else { Some(&s.start_cmd) });
+                                            let start_cmd = build_remote_start_cmd(&s.name, s.port, if s.start_cmd.is_empty() { None } else { Some(&s.start_cmd) }, &s.cwd);
                                             self.run_remote_ssh_command(host, &start_cmd, Some(ui.ctx().clone()));
                                             self.schedule_remote_scan(host, 1500, ui.ctx().clone());
                                         }
@@ -344,7 +344,10 @@ impl LauncherApp {
                                         .fill(p.bg_button)
                                         .rounding(Rounding::same(8.0));
                                         if ui.add(info_btn).on_hover_text("Inspect status on remote host").clicked() {
-                                            let info_cmd = format!("lsof -i :{} 2>/dev/null || systemctl status {} 2>/dev/null", s.port, clean_service_name(&s.name));
+                                            let mut info_cmd = format!("lsof -i :{} 2>/dev/null", s.port);
+                                            if let Some(unit) = crate::remote::remote_service_operand(&s.name) {
+                                                info_cmd.push_str(&format!(" || systemctl status -- {unit}"));
+                                            }
                                             self.run_remote_ssh_command(host, &info_cmd, Some(ui.ctx().clone()));
                                         }
                                     });
@@ -452,6 +455,7 @@ impl LauncherApp {
                                     last_pid: Some(pid),
                                     cmd: listener.cmd,
                                     start_cmd: guess_remote_start_cmd(&listener.name, listener.port),
+                                    cwd: String::new(),
                                 });
                             }
                         }

@@ -25,6 +25,8 @@ pub struct RemoteStoppedServer {
     pub last_pid: Option<u32>,
     pub cmd: String,
     pub start_cmd: String,
+    #[serde(default)]
+    pub cwd: String,
 }
 
 pub fn clean_service_name(name: &str) -> String {
@@ -55,9 +57,8 @@ pub fn clean_service_name(name: &str) -> String {
 }
 
 pub fn guess_remote_start_cmd(name: &str, port: u16) -> String {
-    let clean_svc = clean_service_name(name);
-    if !clean_svc.is_empty() {
-        format!("sudo systemctl start {} 2>/dev/null || sudo service {} start", clean_svc, clean_svc)
+    if let Some(unit) = remote_service_operand(name) {
+        format!("sudo -n -- systemctl start -- {unit} || sudo -n -- service {unit} start")
     } else {
         match port {
             80 | 8080 => "sudo systemctl start nginx 2>/dev/null || sudo systemctl start apache2 2>/dev/null".to_string(),
@@ -78,13 +79,7 @@ pub fn build_remote_restart_cmd(listener: &RemoteListener, ssh_port: u16) -> Opt
     {
         return None;
     }
-    let unit = clean_service_name(&listener.name);
-    if unit.is_empty() || unit.starts_with('-')
-        || !unit.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"_.@-".contains(&byte))
-    {
-        return None;
-    }
-    let unit = shell_quote(&unit);
+    let unit = remote_service_operand(&listener.name)?;
     Some(format!(r#"set -f
 if [ "$(systemctl show --property=MainPID --value -- {unit})" != "{pid}" ]; then
     echo '[launcher] Restart requires a systemd service whose main process owns this listener.' >&2
@@ -101,25 +96,39 @@ fi
 sudo -n -- systemctl restart -- {unit}"#))
 }
 
-pub fn build_remote_start_cmd(name: &str, port: u16, custom_cmd: Option<&str>) -> String {
-    let clean_svc = clean_service_name(name);
-    if let Some(cmd) = custom_cmd {
-        if !cmd.trim().is_empty() {
-            return format!(
-r#"echo "[launcher] Starting {name} ({cmd})..."; \
-nohup {cmd} >/dev/null 2>&1 & \
-echo "[launcher] Started {name} in background.""#
-            );
-        }
+pub fn remote_service_operand(name: &str) -> Option<String> {
+    let unit = clean_service_name(name);
+    if unit.is_empty() || unit.starts_with('-')
+        || !unit.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"_.@-".contains(&byte))
+    {
+        return None;
     }
-    format!(
-r#"echo "[launcher] Starting {name} on port {port}..."; \
-if [ -n "{clean_svc}" ]; then \
-    sudo systemctl start "{clean_svc}" 2>/dev/null && echo "[launcher] {clean_svc} started via systemd." || echo "[launcher] Failed to start {clean_svc}."; \
-else \
-    echo "[launcher] No start command configured for port {port}."; \
-fi"#
-    )
+    Some(shell_quote(&unit))
+}
+
+pub fn build_remote_start_cmd(name: &str, port: u16, custom_cmd: Option<&str>, cwd: &str) -> String {
+    if let Some(command) = custom_cmd.filter(|command| !command.trim().is_empty()) {
+        let command = shell_quote(command);
+        let message = shell_quote(&format!("[launcher] Launch requested for {name}."));
+        let change_dir = match cwd {
+            "" => String::new(),
+            "~" => "cd -- \"$HOME\" || exit 1; ".into(),
+            path => {
+                let path = match path.strip_prefix("~/") {
+                    Some(relative) => format!("\"$HOME\"/{}", shell_quote(relative)),
+                    None if path.starts_with('/') => shell_quote(path),
+                    None => shell_quote(&format!("./{path}")),
+                };
+                format!("cd -- {path} || exit 1; ")
+            }
+        };
+        return format!("{change_dir}nohup sh -c {command} </dev/null >/dev/null 2>&1 & printf '%s\\n' {message}");
+    }
+    if let Some(unit) = remote_service_operand(name) {
+        return format!("sudo -n -- systemctl start -- {unit}");
+    }
+    let message = shell_quote(&format!("[launcher] No start command configured for port {port}."));
+    format!("printf '%s\\n' {message} >&2; exit 1")
 }
 
 pub fn is_sshpass_available() -> bool {
@@ -666,11 +675,14 @@ tcp    LISTEN  0       128            0.0.0.0:3000        0.0.0.0:*      users:(
         assert_eq!(clean_service_name("sshd"), "sshd");
         assert_eq!(clean_service_name("port_8080"), "");
 
-        let start_cmd = build_remote_start_cmd("nginx", 80, None);
-        assert!(start_cmd.contains("systemctl start \"nginx\""));
+        let start_cmd = build_remote_start_cmd("nginx", 80, None, "");
+        assert!(start_cmd.contains("systemctl start -- 'nginx'"));
 
-        let start_custom = build_remote_start_cmd("app", 3000, Some("python3 main.py"));
-        assert!(start_custom.contains("nohup python3 main.py"));
+        let start_custom = build_remote_start_cmd("app", 3000, Some("python3 main.py"), "~/a b");
+        assert!(start_custom.starts_with("cd -- \"$HOME\"/'a b' || exit 1; "));
+        assert!(start_custom.contains("nohup sh -c 'python3 main.py'"));
+        assert!(remote_service_operand("-option").is_none());
+        assert!(remote_service_operand("app;id").is_none());
 
     }
 

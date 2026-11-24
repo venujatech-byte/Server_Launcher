@@ -92,3 +92,5 @@ SSH Servers Stop and Kill now use the existing guarded process signaling backend
 SSH launch and retry now share one command builder. Service operands are validated, labels and working paths are quoted as data, and retries retain the configured working directory. A failed explicit directory change aborts the launch. Background process startup remains asynchronous.
 
 Both SSH host deletion entry points now share cleanup for connection status, listener scans, saved stopped rows, terminal state, search and cached sudo input. Delayed and immediate scans share one per-host gate, and an in-flight listener scan or connection test cannot publish after deletion. Other remote workers and SSH subprocess lifetimes still need review.
+
+SSH connection probes and port scans now have 10-second and 20-second subprocess deadlines after spawn. Expired probes release their worker slots, and Unix cleanup also terminates the local SSH wrapper process group. Interactive SSH commands retain their existing lifecycle.

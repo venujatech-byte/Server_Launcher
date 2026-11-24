@@ -159,6 +159,58 @@ fn ssh_policy_args(host: &SshRemoteHost) -> Vec<&'static str> {
     args
 }
 
+// OpenSSH's ConnectTimeout covers the handshake, not the remote command.
+fn ssh_probe_output(mut command: Command, timeout: std::time::Duration) -> std::io::Result<std::process::Output> {
+    use std::io::{Read, Seek, SeekFrom};
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    // Files avoid pipe backpressure and can be read even if a descendant inherited a handle.
+    let mut stdout = tempfile::tempfile()?;
+    let mut stderr = tempfile::tempfile()?;
+    command.stdin(Stdio::null())
+        .stdout(stdout.try_clone()?)
+        .stderr(stderr.try_clone()?);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+
+    let mut child = command.spawn()?;
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
+            result => {
+                #[cfg(unix)]
+                unsafe {
+                    // The unreaped child owns the process-group ID, including when wrapped by sshpass.
+                    libc::kill(-(child.id() as i32), libc::SIGKILL);
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(result.err().unwrap_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::TimedOut, "SSH probe exceeded its deadline")
+                }));
+            }
+        }
+    };
+
+    const MAX_OUTPUT: u64 = 4 * 1024 * 1024;
+    let read_output = |file: &mut std::fs::File| -> std::io::Result<Vec<u8>> {
+        file.seek(SeekFrom::Start(0))?;
+        let mut bytes = Vec::new();
+        file.take(MAX_OUTPUT + 1).read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > MAX_OUTPUT {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "SSH probe output exceeded 4 MiB"));
+        }
+        Ok(bytes)
+    };
+    Ok(std::process::Output { status, stdout: read_output(&mut stdout)?, stderr: read_output(&mut stderr)? })
+}
+
 /// Test connection to remote SSH host with timeout
 pub fn test_ssh_connection(host: &SshRemoteHost) -> Result<String, String> {
     let has_password = !host.password.trim().is_empty();
@@ -185,7 +237,7 @@ pub fn test_ssh_connection(host: &SshRemoteHost) -> Result<String, String> {
     let target = format!("{}@{}", host.user.trim(), host.host.trim());
     cmd.arg("--").arg(&target).arg("echo __LAUNCHER_SSH_OK__ && uname -s -r -m");
 
-    match cmd.output() {
+    match ssh_probe_output(cmd, std::time::Duration::from_secs(10)) {
         Ok(out) => {
             if out.status.success() {
                 let stdout = String::from_utf8_lossy(&out.stdout);
@@ -278,8 +330,8 @@ echo "---PS_METRICS---"
 printf '%s\n' "$metrics"
 "#;
 
-    let mut cmd = build_ssh_command(host, remote_script);
-    let out = cmd.output().map_err(|e| format!("SSH error: {}", e))?;
+    let cmd = build_ssh_command(host, remote_script);
+    let out = ssh_probe_output(cmd, std::time::Duration::from_secs(20)).map_err(|e| format!("SSH error: {}", e))?;
 
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
@@ -598,6 +650,15 @@ fn run_remote_power_action(host: &SshRemoteHost, password: &str, action: &str) -
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[cfg(unix)]
+    #[test]
+    fn stalled_ssh_probe_times_out() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 30"]);
+        let error = ssh_probe_output(command, std::time::Duration::from_millis(50)).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    }
 
     #[test]
     fn test_parse_ssh_config_str() {

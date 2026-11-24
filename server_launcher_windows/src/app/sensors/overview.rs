@@ -32,7 +32,7 @@ impl LauncherApp {
                     storage.push(("MOUNTED STORAGE".to_owned(), "No volumes reported".to_owned(), 0, 0));
                 }
 
-                sensor_card_columns(ui, 3 + storage.len(), |ui, column| match column {
+                sensor_card_columns(ui, 4 + storage.len(), |ui, column| match column {
                     0 => {
                         let mut details = Vec::new();
                         if snap.cpu_cores_physical > 0 {
@@ -57,13 +57,25 @@ impl LauncherApp {
                         overview_metric(ui, &p, accent, crate::lucide::RAM, "RAM", load, "%", &detail, &history, 100.0);
                     }
                     2 => {
+                        let temperature = snap.temp_sensors.iter().map(|sensor| sensor.temp)
+                            .chain([snap.cpu_temp, snap.ram_temp, snap.storage_temp].into_iter().flatten())
+                            .chain(snap.gpus.iter().filter_map(|gpu| gpu.temp))
+                            .filter(|value| value.is_finite()).reduce(f32::max);
+                        let history = sensor_metric_history(ui, host_id, "overview:temperature", snap.timestamp, temperature);
+                        let width = ui.available_width().min(220.0);
+                        ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                            ui.set_width(width);
+                            overview_metric(ui, &p, accent, crate::lucide::THERMOMETER, "TEMPERATURE", temperature, "°C", "Hottest reported sensor", &history, 120.0);
+                        });
+                    }
+                    3 => {
                         let gpu = snap.gpus.get(self.selected_gpu_idx).or_else(|| snap.gpus.first());
                         let (load, engine_peak) = gpu_display_load(gpu);
                         let history = sensor_metric_history(ui, host_id, &format!("overview:gpu:{gpu_index}:{device}:{engine_peak}", gpu_index = self.selected_gpu_idx, device = gpu.map_or("", |gpu| if gpu.device_path.is_empty() { &gpu.name } else { &gpu.device_path })), snap.hardware_history_timestamp(), load);
                         overview_metric(ui, &p, accent, crate::lucide::GPU, "GPU", load, "%", gpu.map_or("Adapter unavailable", |gpu| gpu.name.as_str()), &history, 100.0);
                     }
                     index => {
-                        let (title, detail, total, used) = &storage[index - 3];
+                        let (title, detail, total, used) = &storage[index - 4];
                         let usage = (*total > 0).then(|| (*used as f64 / *total as f64 * 100.0) as f32);
                         let history = sensor_metric_history(ui, host_id, &format!("overview:storage:{title}:{detail}"), snap.timestamp, usage);
                         let capacity = if *total > 0 {
@@ -76,46 +88,27 @@ impl LauncherApp {
                 });
 
                 ui.add_space(10.0);
-                sensor_card_columns(ui, 3, |ui, column| match column {
-                    0 => {
-                        let battery = snap.power.total_power_watts.filter(|watts| watts.is_finite() && *watts >= 0.0);
-                        let (power, source) = if battery.is_some() {
-                            (battery, "Battery power")
-                        } else {
-                            (snap.cpu_power_watts.filter(|watts| watts.is_finite() && *watts >= 0.0), "CPU package power")
-                        };
-                        let history = sensor_metric_history(ui, host_id, source, snap.timestamp, power);
-                        let scale = history.iter().copied().fold(1.0_f32, f32::max);
-                        overview_metric(ui, &p, accent, crate::lucide::ZAP, "POWER", power, "W", source, &history, scale);
-                    }
-                    1 => {
-                        let temperature = snap.temp_sensors.iter().map(|sensor| sensor.temp)
-                            .chain([snap.cpu_temp, snap.ram_temp, snap.storage_temp].into_iter().flatten())
-                            .chain(snap.gpus.iter().filter_map(|gpu| gpu.temp))
-                            .filter(|value| value.is_finite()).reduce(f32::max);
-                        let history = sensor_metric_history(ui, host_id, "overview:temperature", snap.timestamp, temperature);
-                        overview_metric(ui, &p, accent, crate::lucide::THERMOMETER, "OVERALL TEMPERATURE", temperature, "°C", "Hottest reported sensor", &history, 120.0);
-                    }
-                    _ => {
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(12.0))
-                            .inner_margin(egui::Margin::symmetric(18.0, 15.0))
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.label(RichText::new("NETWORK SPEED").size(11.0).monospace().strong().color(p.text_muted));
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.label(format!("↑ {} up", sensor_network_rate(snap, snap.total_tx_rate_bps)));
-                                    ui.label(format!("↓ {} down", sensor_network_rate(snap, snap.total_rx_rate_bps)));
-                                });
-                                ui.add_space(6.0);
-                                draw_dual_network_chart(ui, 74.0, &self.net_tx_history, &self.net_rx_history, self.net_peak_mb, accent);
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.label(RichText::new(format!("{} sent", sensor_network_bytes(snap, snap.total_tx_bytes))).size(10.0).color(p.text_muted));
-                                    ui.label(RichText::new(format!("{} received", sensor_network_bytes(snap, snap.total_rx_bytes))).size(10.0).color(p.text_muted));
-                                });
+                let network_width = ui.available_width().min(320.0);
+                ui.allocate_ui_with_layout(egui::vec2(network_width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(network_width);
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(12.0))
+                        .inner_margin(egui::Margin::symmetric(18.0, 15.0))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.label(RichText::new("NETWORK SPEED").size(11.0).monospace().strong().color(p.text_muted));
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(format!("↑ {} up", sensor_network_rate(snap, snap.total_tx_rate_bps)));
+                                ui.label(format!("↓ {} down", sensor_network_rate(snap, snap.total_rx_rate_bps)));
                             });
-                    }
+                            ui.add_space(6.0);
+                            draw_dual_network_chart(ui, 74.0, &self.net_tx_history, &self.net_rx_history, self.net_peak_mb, accent);
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new(format!("{} sent", sensor_network_bytes(snap, snap.total_tx_bytes))).size(10.0).color(p.text_muted));
+                                ui.label(RichText::new(format!("{} received", sensor_network_bytes(snap, snap.total_rx_bytes))).size(10.0).color(p.text_muted));
+                            });
+                        });
                 });
                 ui.add_space(10.0);
             });

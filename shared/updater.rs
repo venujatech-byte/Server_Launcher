@@ -36,12 +36,10 @@ enum State {
     Idle,
     Checking,
     Current,
-    Available(Manifest),
+    Available(Manifest, Option<Package>),
     Downloading,
     Ready(Package, tempfile::TempDir, PathBuf),
-    Applying,
-    InstallerOpened,
-    RestartRequired,
+    Closing,
     Failed(String),
 }
 
@@ -231,41 +229,105 @@ fn store_install() -> bool {
     false
 }
 
-fn packages() -> &'static [Package] {
+fn package_for_install() -> Option<Package> {
     if !cfg!(target_arch = "x86_64") {
-        return &[];
+        return None;
     }
-    if cfg!(target_os = "windows") {
-        return &[
-            Package {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let exe = std::env::current_exe().ok()?;
+        let folder = exe.parent()?;
+        if folder.join("uninstall.exe").is_file() {
+            return Some(Package {
                 key: "windows-x64-exe",
-                name: "EXE",
+                name: "Windows EXE",
                 filename: "server-launcher-setup.exe",
-            },
-            Package {
-                key: "windows-x64-msi",
-                name: "MSI",
-                filename: "server-launcher.msi",
-            },
-        ];
+            });
+        }
+        let result = Command::new("powershell.exe")
+            .creation_flags(0x08000000)
+            .env("SL_INSTALL_DIR", folder)
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                r#"
+                $keys = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+                        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
+                Get-ItemProperty $keys -ErrorAction SilentlyContinue |
+                    Where-Object { $_.WindowsInstaller -eq 1 -and
+                        $_.DisplayName -like 'Server Launcher*' -and $_.InstallLocation -and
+                        $_.InstallLocation.TrimEnd('\') -eq $env:SL_INSTALL_DIR.TrimEnd('\') } |
+                    Select-Object -First 1 -ExpandProperty WindowsInstaller
+            "#,
+            ])
+            .output()
+            .ok()?;
+        return (String::from_utf8_lossy(&result.stdout).trim() == "1").then_some(Package {
+            key: "windows-x64-msi",
+            name: "Windows MSI",
+            filename: "server-launcher.msi",
+        });
     }
-    &[
-        Package {
-            key: "linux-x64-deb",
-            name: "DEB",
-            filename: "server-launcher.deb",
-        },
-        Package {
-            key: "linux-x64-rpm",
-            name: "RPM",
-            filename: "server-launcher.rpm",
-        },
-        Package {
-            key: "linux-x64-appimage",
-            name: "AppImage",
-            filename: "Server-Launcher.AppImage",
-        },
-    ]
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var_os("APPIMAGE").is_some() {
+            return Some(Package {
+                key: "linux-x64-appimage",
+                name: "AppImage",
+                filename: "Server-Launcher.AppImage",
+            });
+        }
+        let release = std::fs::read_to_string("/etc/os-release")
+            .or_else(|_| std::fs::read_to_string("/usr/lib/os-release"))
+            .ok()?;
+        return linux_package(&release).filter(|package| {
+            Path::new("/usr/bin/pkexec").is_file() && linux_installer(package.key).is_some()
+        });
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn linux_package(release: &str) -> Option<Package> {
+    for field in ["ID=", "ID_LIKE="] {
+        let Some(value) = release.lines().find_map(|line| line.strip_prefix(field)) else {
+            continue;
+        };
+        for id in value
+            .trim_matches(|c| c == '"' || c == char::from(39))
+            .split_whitespace()
+        {
+            match id {
+                "fedora"
+                | "rhel"
+                | "centos"
+                | "rocky"
+                | "almalinux"
+                | "suse"
+                | "opensuse"
+                | "opensuse-leap"
+                | "opensuse-tumbleweed" => {
+                    return Some(Package {
+                        key: "linux-x64-rpm",
+                        name: "RPM",
+                        filename: "server-launcher.rpm",
+                    })
+                }
+                "debian" | "ubuntu" | "linuxmint" | "pop" => {
+                    return Some(Package {
+                        key: "linux-x64-deb",
+                        name: "DEB",
+                        filename: "server-launcher.deb",
+                    })
+                }
+                _ => {}
+            }
+        }
+    }
+    None
 }
 
 fn download(package: Package, asset: &Asset) -> Result<State, String> {
@@ -326,179 +388,261 @@ fn replace_appimage(download: &Path) -> io::Result<bool> {
     Ok(true)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 fn replace_appimage(_: &Path) -> io::Result<bool> {
     Ok(false)
 }
 
-fn launch(package: Package, path: &Path) -> io::Result<()> {
-    let mut command = match package.key {
-        "windows-x64-msi" => {
-            let mut cmd = Command::new("msiexec.exe");
-            cmd.arg("/i").arg(path);
-            cmd
-        }
-        "windows-x64-exe" => Command::new(path),
-        "linux-x64-appimage" => {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
-            }
-            Command::new(path)
-        }
-        _ => {
-            let mut cmd = Command::new("xdg-open");
-            let status = cmd.arg(path).status()?;
-            if !status.success() {
-                return Err(io::Error::other(format!(
-                    "The system package opener exited with {status}"
-                )));
-            }
-            return Ok(());
-        }
+type Staged = (Package, tempfile::TempDir, PathBuf);
+static PENDING: Mutex<Option<Staged>> = Mutex::new(None);
+const STATE_ID: &str = "server_launcher_update_state";
+
+pub(crate) fn close_for_update(ctx: &egui::Context) {
+    let Some(state) = ctx.data(|data| data.get_temp::<Arc<Mutex<State>>>(egui::Id::new(STATE_ID)))
+    else {
+        return;
     };
-    command.spawn()?;
+    let mut state = state.lock().unwrap();
+    if matches!(*state, State::Ready(..)) {
+        if let State::Ready(package, folder, path) = std::mem::replace(&mut *state, State::Closing)
+        {
+            *PENDING.lock().unwrap() = Some((package, folder, path));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+}
+
+pub(crate) fn cancel_install(ctx: &egui::Context) {
+    if PENDING.lock().unwrap().take().is_some() {
+        if let Some(state) =
+            ctx.data(|data| data.get_temp::<Arc<Mutex<State>>>(egui::Id::new(STATE_ID)))
+        {
+            *state.lock().unwrap() = State::Idle;
+        }
+    }
+}
+
+pub(crate) fn install_pending() {
+    let Some((package, folder, path)) = PENDING.lock().unwrap().take() else {
+        return;
+    };
+    if let Err(error) = install(package, folder, &path) {
+        eprintln!("Server Launcher update failed: {error}");
+    }
+}
+
+#[cfg(windows)]
+fn install(package: Package, folder: tempfile::TempDir, path: &Path) -> io::Result<()> {
+    use std::os::windows::process::CommandExt;
+    // Wait for the old process to release its executable before starting setup.
+    Command::new("powershell.exe")
+        .creation_flags(0x08000000)
+        .env("SL_UPDATE_PID", std::process::id().to_string())
+        .env("SL_UPDATE_PATH", path)
+        .env("SL_UPDATE_DIR", folder.path())
+        .env("SL_UPDATE_FORMAT", package.key)
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            r#"
+            Wait-Process -Id $env:SL_UPDATE_PID -ErrorAction SilentlyContinue
+            if ($env:SL_UPDATE_FORMAT -eq 'windows-x64-msi') {
+                $arguments = '/i "' + $env:SL_UPDATE_PATH + '"'
+                Start-Process msiexec.exe -ArgumentList $arguments -Wait
+            } else {
+                Start-Process -FilePath $env:SL_UPDATE_PATH -Wait
+            }
+            Remove-Item -LiteralPath $env:SL_UPDATE_DIR -Recurse -Force
+        "#,
+        ])
+        .spawn()?;
+    let _ = folder.keep();
     Ok(())
 }
 
-pub(crate) fn render(ui: &mut egui::Ui) {
-    let storage_id = egui::Id::new("server_launcher_update_state");
+#[cfg(not(windows))]
+fn linux_installer(key: &str) -> Option<&'static str> {
+    let candidates: &[&str] = match key {
+        "linux-x64-deb" => &["/usr/bin/apt-get"],
+        "linux-x64-rpm" => &["/usr/bin/dnf", "/usr/bin/zypper", "/usr/bin/yum"],
+        _ => &[],
+    };
+    candidates
+        .iter()
+        .copied()
+        .find(|path| Path::new(path).is_file())
+}
+
+#[cfg(not(windows))]
+fn install(package: Package, folder: tempfile::TempDir, path: &Path) -> io::Result<()> {
+    if package.key == "linux-x64-appimage" {
+        if !replace_appimage(path)? {
+            return Err(io::Error::other("Running AppImage path is unavailable"));
+        }
+        let image = std::env::var_os("APPIMAGE").unwrap();
+        Command::new(image)
+            .env_remove("APPIMAGE")
+            .env_remove("APPDIR")
+            .spawn()?;
+        return Ok(());
+    }
+    let manager = linux_installer(package.key)
+        .ok_or_else(|| io::Error::other("No supported package manager is installed"))?;
+    let installed_launcher = Path::new("/usr/bin/server_launcher");
+    let mut cmd = Command::new("/usr/bin/pkexec");
+    cmd.arg(manager);
+    if manager.ends_with("/zypper") {
+        cmd.args(["--non-interactive", "install"]);
+    } else {
+        cmd.args(["-y", "install"]);
+    }
+    let status = cmd.arg(path).status()?;
+    drop(folder);
+    if !status.success() {
+        return Err(io::Error::other(format!("Installer exited with {status}")));
+    }
+    Command::new(installed_launcher).spawn()?;
+    Ok(())
+}
+
+pub(crate) fn render(ui: &mut egui::Ui, palette: &crate::theme::ThemePalette) {
     let state = ui.ctx().data_mut(|data| {
-        data.get_temp_mut_or_default::<Arc<Mutex<State>>>(storage_id)
+        data.get_temp_mut_or_default::<Arc<Mutex<State>>>(egui::Id::new(STATE_ID))
             .clone()
     });
-    ui.heading("App updates");
-    if store_install() {
-        ui.label(format!("Installed version {VERSION}"));
-        ui.hyperlink_to(
-            "Check for updates in Microsoft Store",
-            "ms-windows-store://downloadsandupdates",
-        );
-        return;
-    }
-    ui.horizontal_wrapped(|ui| {
-        ui.label(format!("Installed version {VERSION}"));
-        let busy = matches!(
-            *state.lock().unwrap(),
-            State::Checking | State::Downloading | State::Applying
-        );
-        if ui
-            .add_enabled(!busy, egui::Button::new("Check for updates"))
-            .clicked()
-        {
-            *state.lock().unwrap() = State::Checking;
-            let state = Arc::clone(&state);
-            let ctx = ui.ctx().clone();
-            std::thread::spawn(move || {
-                let result = match fetch_update() {
-                    Ok(Some(manifest)) => State::Available(manifest),
-                    Ok(None) => State::Current,
-                    Err(error) => State::Failed(error),
-                };
-                *state.lock().unwrap() = result;
-                ctx.request_repaint();
-            });
-        }
-    });
-    let mut requested_download = None;
-    let mut install = false;
-    let mut current = state.lock().unwrap();
-    match &*current {
-        State::Idle => {}
-        State::Checking => {
-            ui.label("Checking GitHub…");
-        }
-        State::Current => {
-            ui.label("You’re up to date.");
-        }
-        State::Available(manifest) => {
-            ui.label(format!("Version {} is available.", manifest.version));
-            let running_appimage =
-                cfg!(target_os = "linux") && std::env::var_os("APPIMAGE").is_some();
-            if !running_appimage {
-                ui.label("Choose the same package type you originally installed.");
+    egui::Frame::none()
+        .fill(palette.bg_subtle)
+        .rounding(12.0)
+        .inner_margin(16.0)
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.label(
+                egui::RichText::new("App updates")
+                    .size(14.0)
+                    .strong()
+                    .color(palette.text_primary),
+            );
+            ui.label(
+                egui::RichText::new(format!("Installed version {VERSION}"))
+                    .size(11.5)
+                    .color(palette.text_muted),
+            );
+            if store_install() {
+                ui.hyperlink_to(
+                    "Check for updates in Microsoft Store",
+                    "ms-windows-store://downloadsandupdates",
+                );
+                return;
             }
-            ui.horizontal_wrapped(|ui| {
-                for &package in packages() {
-                    if running_appimage && package.key != "linux-x64-appimage" {
-                        continue;
-                    }
-                    if let Some(asset) = manifest.platforms.get(package.key) {
-                        if ui.button(format!("Download {}", package.name)).clicked() {
-                            requested_download = Some((package, asset.clone()));
-                        }
-                    }
-                }
-                ui.hyperlink_to("Release downloads", RELEASES);
-            });
-        }
-        State::Downloading => {
-            ui.label("Downloading and verifying the package…");
-        }
-        State::Ready(package, _, _) => {
-            ui.label(format!("{} package downloaded and verified.", package.name));
-            if package.key == "linux-x64-appimage" {
-                ui.label(if std::env::var_os("APPIMAGE").is_some() {
-                    "This replaces the current AppImage. Restart Server Launcher to use the update."
-                } else {
-                    "This opens the new AppImage. Keep the downloaded file to use it again."
+            let mut current = state.lock().unwrap();
+            let busy = matches!(
+                *current,
+                State::Checking | State::Downloading | State::Ready(..) | State::Closing
+            );
+            if ui
+                .add_enabled(
+                    !busy,
+                    egui::Button::new(egui::RichText::new("Check for updates").size(11.5))
+                        .fill(palette.bg_button)
+                        .stroke(egui::Stroke::NONE)
+                        .rounding(8.0),
+                )
+                .clicked()
+            {
+                *current = State::Checking;
+                let state = Arc::clone(&state);
+                let ctx = ui.ctx().clone();
+                std::thread::spawn(move || {
+                    let result = match fetch_update() {
+                        Ok(Some(manifest)) => State::Available(manifest, package_for_install()),
+                        Ok(None) => State::Current,
+                        Err(error) => State::Failed(error),
+                    };
+                    *state.lock().unwrap() = result;
+                    ctx.request_repaint();
                 });
             }
-            install = ui.button("Open verified update").clicked();
-        }
-        State::Applying => {
-            ui.label("Opening the installer or applying the update…");
-        }
-        State::RestartRequired => {
-            ui.label("AppImage updated. Restart Server Launcher to finish.");
-        }
-        State::InstallerOpened => {
-            ui.label("Update opened. Follow the installer prompts.");
-        }
-        State::Failed(error) => {
-            ui.label(error);
-            ui.hyperlink_to("Release downloads", RELEASES);
-        }
-    };
-    if let Some((package, asset)) = requested_download {
-        *current = State::Downloading;
-        let state = Arc::clone(&state);
-        let ctx = ui.ctx().clone();
-        std::thread::spawn(move || {
-            *state.lock().unwrap() = download(package, &asset).unwrap_or_else(State::Failed);
-            ctx.request_repaint();
-        });
-    }
-    if install {
-        if let State::Ready(package, folder, path) = std::mem::take(&mut *current) {
-            *current = State::Applying;
-            let state = Arc::clone(&state);
-            let ctx = ui.ctx().clone();
-            std::thread::spawn(move || {
-                let result = if package.key == "linux-x64-appimage" {
-                    replace_appimage(&path)
-                } else {
-                    Ok(false)
-                };
-                let next = match result.and_then(|replaced| {
-                    if replaced {
-                        Ok(true)
+            let mut request = None;
+            match &*current {
+                State::Idle => {}
+                State::Checking => {
+                    ui.spinner();
+                    ui.label("Checking GitHub…");
+                }
+                State::Current => {
+                    ui.label("You’re up to date.");
+                }
+                State::Available(manifest, package) => {
+                    ui.label(
+                        egui::RichText::new(format!("Version {} is available", manifest.version))
+                            .strong(),
+                    );
+                    if let Some((package, asset)) =
+                        package.and_then(|p| manifest.platforms.get(p.key).map(|a| (p, a)))
+                    {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} update · Server Launcher closes before installation",
+                                package.name
+                            ))
+                            .size(11.5)
+                            .color(palette.text_muted),
+                        );
+                        let install = egui::Button::new(
+                            egui::RichText::new("Install update")
+                                .size(11.5)
+                                .color(palette.accent_text),
+                        )
+                        .fill(palette.accent)
+                        .stroke(egui::Stroke::NONE)
+                        .rounding(8.0);
+                        if ui.add(install).clicked() {
+                            request = Some((package, asset.clone()));
+                        }
                     } else {
-                        launch(package, &path).map(|()| false)
+                        ui.label("No matching installer was found for this installation.");
+                        ui.hyperlink_to("Release downloads", RELEASES);
                     }
-                }) {
-                    Ok(true) => State::RestartRequired,
-                    Ok(false) => {
-                        // The installer may still need the package after Server Launcher closes.
-                        let _ = folder.keep();
-                        State::InstallerOpened
-                    }
-                    Err(error) => State::Failed(format!("Could not open the update: {error}")),
-                };
-                *state.lock().unwrap() = next;
-                ctx.request_repaint();
-            });
-        }
+                }
+                State::Downloading => {
+                    ui.spinner();
+                    ui.label("Downloading and verifying…");
+                }
+                State::Ready(..) | State::Closing => {
+                    ui.label("Update verified. Closing Server Launcher…");
+                }
+                State::Failed(error) => {
+                    ui.label(egui::RichText::new(error).color(palette.danger));
+                    ui.hyperlink_to("Release downloads", RELEASES);
+                }
+            }
+            if let Some((package, asset)) = request {
+                *current = State::Downloading;
+                let state = Arc::clone(&state);
+                let ctx = ui.ctx().clone();
+                std::thread::spawn(move || {
+                    *state.lock().unwrap() =
+                        download(package, &asset).unwrap_or_else(State::Failed);
+                    ctx.request_repaint();
+                });
+            }
+        });
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::linux_package;
+
+    #[test]
+    fn selects_distro_package_without_guessing_for_unknown_distros() {
+        assert_eq!(linux_package("ID=fedora\n").unwrap().key, "linux-x64-rpm");
+        assert_eq!(
+            linux_package("ID=custom\nID_LIKE=\"ubuntu debian\"\n")
+                .unwrap()
+                .key,
+            "linux-x64-deb"
+        );
+        assert!(linux_package("ID=arch\n").is_none());
     }
 }

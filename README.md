@@ -305,13 +305,14 @@ In either Rust app, open **Settings → About → Check for updates**. GitHub bu
 publish a versioned update manifest with package sizes and SHA-256 digests.
 For older releases without a manifest, About uses GitHub-provided SHA-256
 digests for recognized installers.
-Choose your current installer type, download it, then open it from About after
-verification. Windows EXE/MSI updates use their regular installer prompts. On
-Linux, DEB and RPM files open in the system's associated package installer
-when one is installed. Close the launcher normally if the installer asks for
-it. An AppImage launched from its original file can replace that file if its
-directory is writable. Restart the launcher afterward. Microsoft Store
-installations use the Store's update page. The updater uses the system `curl`
+About selects the compatible package for your platform and installation.
+Fedora and other supported RPM distributions use RPM, and Debian and Ubuntu
+use DEB. Windows uses the detected installer type, and Microsoft Store
+installations use the Store’s update page. Choose **Install update** to
+download and verify the installer, then close the launcher through its
+normal exit confirmation. Canceling that confirmation also cancels the
+update. Linux package updates use the system package manager via Polkit.
+AppImage updates replace the original file if its directory is writable. The updater uses the system `curl`
 command, which the DEB and RPM declare as a dependency. AppImage and portable
 Linux users need `curl` installed on the host.
 

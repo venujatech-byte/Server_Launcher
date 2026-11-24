@@ -241,7 +241,9 @@ fn main() -> eframe::Result<()> {
 
             Ok(Box::new(LauncherApp::new(cc)))
         }),
-    )
+    )?;
+    updater::install_pending();
+    Ok(())
 }
 
 #[cfg(test)]

@@ -3726,6 +3726,8 @@ impl eframe::App for LauncherApp {
             }
         }
 
+        crate::updater::close_for_update(ctx);
+
         // ── Close Confirmation ──────────────────────────────────────────────
         let any_running = self.services.iter().any(|s| {
             s.state == ServiceState::Running || s.state == ServiceState::Starting || s.restart_at.is_some()
@@ -3734,7 +3736,7 @@ impl eframe::App for LauncherApp {
         if ctx.input(|i| i.viewport().close_requested()) {
             if self.close_confirmed {
                 // User already approved exit - let egui close
-            } else if any_running && !self.close_confirm_open {
+            } else if any_running || self.close_confirm_open {
                 // Block close and show dialog
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.close_confirm_open = true;
@@ -3754,15 +3756,14 @@ impl eframe::App for LauncherApp {
                     self.close_confirm_open = false;
                     self.stop_all();
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    std::process::exit(0);
                 }
                 CloseConfirmChoice::KeepRunningAndExit => {
                     self.close_confirmed = true;
                     self.close_confirm_open = false;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    std::process::exit(0);
                 }
                 CloseConfirmChoice::Cancel => {
+                    crate::updater::cancel_install(ctx);
                     self.close_confirm_open = false;
                 }
                 CloseConfirmChoice::None => {}
@@ -10097,7 +10098,7 @@ impl LauncherApp {
                                     });
                             }
                             SettingsTab::About => {
-                                crate::updater::render(ui);
+                                crate::updater::render(ui, palette);
                                 ui.add_space(12.0);
                                 // DIAGNOSTICS & SYSTEM INFO
                                 Frame::none()
@@ -10106,6 +10107,7 @@ impl LauncherApp {
                                     .rounding(Rounding::same(12.0))
                                     .inner_margin(egui::Margin::same(16.0))
                                     .show(ui, |ui| {
+                                        ui.set_min_width(ui.available_width());
                                         ui.label(RichText::new(format!("{} System Diagnostics", crate::lucide::INFO)).size(14.0).strong().color(palette.text_primary));
                                         ui.add_space(10.0);
 

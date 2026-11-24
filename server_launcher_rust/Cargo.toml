@@ -31,3 +31,6 @@ lto = "thin"
 codegen-units = 1
 strip = true
 panic = "abort"
+
+[target.'cfg(not(windows))'.dependencies]
+getrandom = "0.4"

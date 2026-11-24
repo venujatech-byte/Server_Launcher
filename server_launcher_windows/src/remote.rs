@@ -531,6 +531,7 @@ pub fn parse_ssh_config_str(content: &str, home: &std::path::Path) -> Vec<SshRem
                     user: user.clone(),
                     key_path: key.clone(),
                     password: String::new(),
+                    credential_ref: None,
                     remote_cwd: String::new(),
                     use_agent: true,
                     strict_host_key: false,

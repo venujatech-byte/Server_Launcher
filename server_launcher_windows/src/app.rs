@@ -372,6 +372,7 @@ pub struct LauncherApp {
     // Navigation & Remote SSH machines
     selected_machine: String, // "local" or host.id
     ssh_hosts: Vec<SshRemoteHost>,
+    saved_ssh_refs: BTreeSet<String>,
     ssh_host_modal: SshHostModalState,
     remote_listeners: Arc<Mutex<HashMap<String, Vec<RemoteListener>>>>,
     remote_scanning: Arc<Mutex<BTreeSet<String>>>,
@@ -718,7 +719,20 @@ impl LauncherApp {
         };
 
         let selected_machine = "local".to_string();
-        let ssh_hosts = config_file.ssh_hosts;
+        let mut ssh_hosts = config_file.ssh_hosts;
+        let mut credential_warning = None;
+        for host in &mut ssh_hosts {
+            if host.password.is_empty() {
+                if let Some(reference) = &host.credential_ref {
+                    match crate::ssh_credentials::load(reference, &crate::ssh_credentials::binding(host)) {
+                        Ok(password) => host.password = password,
+                        Err(error) => credential_warning = Some((format!("Could not unlock the SSH credential for {}: {error}", host.name), true, Instant::now())),
+                    }
+                }
+            }
+        }
+        let saved_ssh_refs = ssh_hosts.iter().filter_map(|host| host.credential_ref.clone()).collect();
+        let migrate_credentials = ssh_hosts.iter().any(|host| !host.password.is_empty() && host.credential_ref.is_none());
         let adb_devices = config_file.adb_devices;
         let scripts = config_file.scripts;
         let saved_commands = config_file.saved_commands;
@@ -747,7 +761,7 @@ impl LauncherApp {
 
         let cpu_tdp_profile = if cfg!(windows) { crate::power::CpuTdpProfile::default() } else { crate::power::detect_cpu_tdp_capability() };
 
-        Self {
+        let mut app = Self {
             active_sidebar_tab: SidebarTab::Servers,
             scripts,
             saved_commands,
@@ -783,6 +797,7 @@ impl LauncherApp {
             inline_terminal_inputs: HashMap::new(),
             selected_machine,
             ssh_hosts,
+            saved_ssh_refs,
             ssh_host_modal,
             remote_listeners,
             remote_scanning,
@@ -934,7 +949,7 @@ impl LauncherApp {
             sensors_cached_sort_desc: false,
             sudo_popup: SudoPopupState::default(),
             local_sudo_password: String::new(),
-            import_status_msg: None,
+            import_status_msg: credential_warning,
             settings_modal_open: false,
 
             proc_properties_modal_open: false,
@@ -1036,7 +1051,11 @@ impl LauncherApp {
             adb_call_search: String::new(),
             adb_sms_search: String::new(),
             adb_quick_call_number: String::new(),
+        };
+        if migrate_credentials {
+            app.persist_config();
         }
+        app
     }
 
     pub fn trigger_remote_sensors_query(&self, host: SshRemoteHost) {
@@ -1198,10 +1217,28 @@ impl LauncherApp {
     }
 
     fn persist_config(&mut self) {
+        let mut ssh_hosts = self.ssh_hosts.clone();
+        let mut staged_refs = Vec::new();
+        for host in &mut ssh_hosts {
+            if !host.password.is_empty() && host.credential_ref.is_none() {
+                match crate::ssh_credentials::protect(&host.password, &crate::ssh_credentials::binding(host)) {
+                    Ok(reference) => {
+                        staged_refs.push(reference.clone());
+                        host.credential_ref = Some(reference);
+                    }
+                    Err(error) => {
+                        crate::ssh_credentials::discard(staged_refs);
+                        self.import_status_msg = Some((format!("Could not protect the SSH password for {}: {error}", host.name), true, Instant::now()));
+                        return;
+                    }
+                }
+            }
+            host.password.clear();
+        }
         let cfg = ConfigFile {
             servers: self.services.iter().map(|s| s.config.clone()).collect(),
             server_tab_order: self.server_tab_order.clone(),
-            ssh_hosts: self.ssh_hosts.clone(),
+            ssh_hosts,
             adb_devices: self.adb_devices.clone(),
             scripts: self.scripts.clone(),
             saved_commands: self.saved_commands.clone(),
@@ -1211,8 +1248,17 @@ impl LauncherApp {
             journal_refresh_interval: Some(self.journal_refresh_interval),
         };
         if let Err(error) = cfg.save_to_file(&self.config_path) {
+            crate::ssh_credentials::discard(staged_refs);
             eprintln!("Configuration save failed: {error}");
             self.import_status_msg = Some((format!("Could not save settings: {error}"), true, Instant::now()));
+        } else {
+            let saved_refs = cfg.ssh_hosts.iter().filter_map(|host| host.credential_ref.clone()).collect();
+            let removed = self.saved_ssh_refs.difference(&saved_refs).cloned().collect();
+            self.saved_ssh_refs = saved_refs;
+            crate::ssh_credentials::discard(removed);
+            for (host, stored) in self.ssh_hosts.iter_mut().zip(cfg.ssh_hosts) {
+                host.credential_ref = stored.credential_ref;
+            }
         }
     }
 
@@ -3036,10 +3082,16 @@ impl eframe::App for LauncherApp {
 
         let ssh_modal_action = render_ssh_host_modal(ctx, &mut self.ssh_host_modal, &p);
         match ssh_modal_action {
-            ModalAction::SaveSshHost(new_host, old_id) => {
+            ModalAction::SaveSshHost(mut new_host, old_id) => {
                 self.ssh_host_modal.open = false;
                 if let Some(old) = old_id {
                     if let Some(pos) = self.ssh_hosts.iter().position(|h| h.id == old) {
+                        let previous = &self.ssh_hosts[pos];
+                        if new_host.password == previous.password
+                            && crate::ssh_credentials::binding(&new_host) == crate::ssh_credentials::binding(previous)
+                        {
+                            new_host.credential_ref.clone_from(&previous.credential_ref);
+                        }
                         self.ssh_hosts[pos] = new_host.clone();
                     }
                     if self.selected_machine == old {

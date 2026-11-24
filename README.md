@@ -331,3 +331,13 @@ For Microsoft Store submission, set the repository variables
 the `server_launcher-windows-store` artifact. Without those values the
 workflow uses a placeholder identity. The MSIX is unsigned for Store
 submission, so Windows requires a trusted signature for local sideloading.
+
+
+### Saved SSH credentials
+
+The desktop launcher protects saved passwords using the Linux Secret Service
+(`secret-tool` and a running keyring) or Windows DPAPI for the current user.
+On first launch after upgrading, old plaintext passwords are migrated before
+the config is replaced. If the credential store is unavailable, the old
+config stays intact. Fix or unlock the keyring and restart to retry migration.
+Backups made before migration may still contain passwords.

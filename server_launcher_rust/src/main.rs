@@ -1,5 +1,7 @@
 #[path = "../../shared/updater.rs"]
 mod updater;
+#[path = "../../shared/ssh_credentials.rs"]
+mod ssh_credentials;
 mod app;
 mod config;
 mod modals;

@@ -90,8 +90,10 @@ pub struct SshRemoteHost {
     pub user: String,
     #[serde(default)]
     pub key_path: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub password: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_ref: Option<String>,
     #[serde(default)]
     pub remote_cwd: String,
     #[serde(default = "ssh_agent_default")]
@@ -221,6 +223,9 @@ impl ConfigFile {
     }
 
     pub fn save_to_file(&self, path: &Path) -> Result<(), String> {
+        if self.ssh_hosts.iter().any(|host| !host.password.is_empty()) {
+            return Err("Cannot save an unprotected SSH password.".into());
+        }
         let content = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Serialization error: {}", e))?;
         use std::io::Write;

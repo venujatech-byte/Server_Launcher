@@ -2883,10 +2883,11 @@ impl eframe::App for LauncherApp {
         // ═════════════════════════════════════════════════════════════════════
         // TOP HEADER BAR (App Toolbar: Logo, search, action buttons)
         // ═════════════════════════════════════════════════════════════════════
+        let header_fill = if p.bg_header == p.bg_main { p.bg_card } else { p.bg_header };
         egui::TopBottomPanel::top("top_header")
             .frame(
                 Frame::none()
-                    .fill(p.bg_header)
+                    .fill(header_fill)
                     .inner_margin(egui::Margin {
                         left: 14.0,
                         right: 14.0,
@@ -2896,6 +2897,7 @@ impl eframe::App for LauncherApp {
             )
             .show(ctx, |ui| {
                 if listener_dialog_open { ui.disable(); }
+                let header_center = ui.available_rect_before_wrap().center().x;
                 let mut tabs_bounds = None;
                 let header = ui.horizontal(|ui| {
                     let remote_host_opt = if self.selected_machine != "local" {
@@ -2905,7 +2907,7 @@ impl eframe::App for LauncherApp {
                     };
 
                     // Left: App Icon + Server Launcher / Host title & status line
-                    render_app_logo(ui, 30.0, p.bg_header);
+                    render_app_logo(ui, 30.0, header_fill);
                     ui.add_space(8.0);
 
                     if let Some(ref host) = remote_host_opt {
@@ -2917,12 +2919,12 @@ impl eframe::App for LauncherApp {
 
                         ui.vertical(|ui| {
                             ui.horizontal(|ui| {
-                                ui.label(
-                                    RichText::new(&host.name)
-                                        .size(17.5)
-                                        .strong()
-                                        .color(p.text_primary),
-                                );
+                                let name = egui::Label::new(RichText::new(&host.name)
+                                    .size(16.5).strong().color(p.text_primary))
+                                    .sense(egui::Sense::click());
+                                if ui.add(name).on_hover_text("Edit SSH host").clicked() {
+                                    self.ssh_host_modal.open_edit(host);
+                                }
                                 ui.add_space(5.0);
                                 if is_connecting {
                                     Frame::none()
@@ -2986,13 +2988,22 @@ impl eframe::App for LauncherApp {
                                     String::new()
                                 }
                             );
-                            ui.horizontal(|ui| {
-                                ui.add(egui::Label::new(RichText::new(&target_desc).size(10.5).color(p.text_muted)).truncate())
-                                    .on_hover_text(&target_desc);
-                                if ui.small_button(crate::lucide::REFRESH_CW).on_hover_text("Reconnect SSH").clicked() {
-                                    self.test_remote_host(host);
-                                    self.trigger_remote_scan(host);
-                                }
+                            ui.scope(|ui| {
+                                ui.spacing_mut().interact_size.y = 0.0;
+                                ui.spacing_mut().button_padding.y = 0.0;
+                                ui.horizontal(|ui| {
+                                    if ui.add(egui::Label::new(RichText::new(&target_desc).size(11.5).color(p.text_muted)).truncate().sense(egui::Sense::click()))
+                                        .on_hover_text(format!("Edit SSH host\n{target_desc}")).clicked() {
+                                        self.ssh_host_modal.open_edit(host);
+                                    }
+                                    let reconnect = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(10.0))
+                                        .small()
+                                        .frame(false);
+                                    if ui.add(reconnect).on_hover_text("Reconnect SSH").clicked() {
+                                        self.test_remote_host(host);
+                                        self.trigger_remote_scan(host);
+                                    }
+                                });
                             });
                         });
                     } else {
@@ -3054,19 +3065,6 @@ impl eframe::App for LauncherApp {
 
                         if let Some(ref host) = remote_host_opt {
                             // REMOTE SSH PC CONTROLS (Moved up here)
-                            let btn_edit = egui::Button::new(
-                                RichText::new(format!("{} Edit", crate::lucide::SETTINGS))
-                                    .size(10.5)
-                                    .color(p.text_secondary),
-                            )
-                            .fill(p.bg_button)
-                            .stroke(Stroke::NONE)
-                            .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(52.0, 22.0));
-                            if ui.add(btn_edit).clicked() {
-                                self.ssh_host_modal.open_edit(host);
-                            }
-
                             let btn_ext = egui::Button::new(
                                 RichText::new(format!("{} Terminal", crate::lucide::EXTERNAL_LINK))
                                     .size(10.5)
@@ -3106,7 +3104,7 @@ impl eframe::App for LauncherApp {
                             .fill(p.bg_button)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(98.0, 22.0));
+                            .min_size(egui::vec2(0.0, 22.0));
                             if ui.add(btn_reboot).on_hover_text("Restart remote device (requires confirmation & sudo password)").clicked() {
                                 self.remote_reboot_modal.open_for_host(host);
                             }
@@ -3140,7 +3138,7 @@ impl eframe::App for LauncherApp {
                     let tabs_width = if remote { 417.0 } else { 348.0 };
                     if right - left >= tabs_width {
                         let rect = egui::Rect::from_min_size(
-                            egui::pos2(left + (right - left - tabs_width) * 0.5, header.response.rect.center().y - 16.0),
+                            egui::pos2((header_center - tabs_width * 0.5).clamp(left, right - tabs_width), header.response.rect.center().y - 16.0),
                             egui::vec2(tabs_width, 32.0),
                         );
                         let mut tabs = ui.new_child(egui::UiBuilder::new()

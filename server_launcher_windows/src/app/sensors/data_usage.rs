@@ -39,12 +39,11 @@ impl LauncherApp {
                                 .size(10.5)
                                 .color(p.text_muted),
                         );
+                        ui.add_space(4.0);
+                        ui.label(RichText::new("VPN traffic may also appear under its underlying interface.").size(10.5).color(p.text_muted));
                     });
 
-                ui.add_space(4.0);
-                ui.label(RichText::new("Traffic carried by both a VPN and its underlying interface can be counted twice.").size(10.0).color(p.text_muted));
-                ui.add_space(6.0);
-
+                ui.add_space(8.0);
                 let metrics = [
                     (crate::lucide::DOWNLOAD, "RECEIVED", sensor_network_bytes(snap, snap.total_rx_bytes), sensor_network_rate(snap, snap.total_rx_rate_bps)),
                     (crate::lucide::UPLOAD, "SENT", sensor_network_bytes(snap, snap.total_tx_bytes), sensor_network_rate(snap, snap.total_tx_rate_bps)),
@@ -55,6 +54,7 @@ impl LauncherApp {
                     let (icon, label, value, detail) = &metrics[index];
                     Frame::none().fill(p.bg_card).rounding(Rounding::same(12.0))
                         .inner_margin(egui::Margin::symmetric(18.0, 15.0)).show(ui, |ui| {
+                            ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(*icon).size(15.0).color(accent));
                                 ui.label(RichText::new(*label).size(11.0).monospace().strong().color(p.text_muted));

@@ -160,7 +160,7 @@ fn ssh_policy_args(host: &SshRemoteHost) -> Vec<&'static str> {
 }
 
 // OpenSSH's ConnectTimeout covers the handshake, not the remote command.
-fn ssh_probe_output(mut command: Command, timeout: std::time::Duration) -> std::io::Result<std::process::Output> {
+pub(crate) fn ssh_probe_output(mut command: Command, timeout: std::time::Duration) -> std::io::Result<std::process::Output> {
     use std::io::{Read, Seek, SeekFrom};
     use std::process::Stdio;
     use std::time::{Duration, Instant};

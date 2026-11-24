@@ -308,7 +308,7 @@ impl LauncherApp {
         });
     }
 
-    pub(in crate::app) fn render_sidebar_tabs_bar(&mut self, ui: &mut Ui) {
+    pub(in crate::app) fn render_sidebar_tabs_bar(&mut self, ui: &mut Ui, remote: bool) {
         let p = self.palette();
         Frame::none()
             .fill(p.bg_card)
@@ -317,8 +317,10 @@ impl LauncherApp {
             .inner_margin(egui::Margin::symmetric(3.0, 3.0))
             .show(ui, |ui| {
                 const TAB_GAP: f32 = 3.0;
-                let tab_width = ((ui.available_width() - 4.0 * TAB_GAP) / 5.0).clamp(0.0, 66.0);
-                let tabs_width = 5.0 * tab_width + 4.0 * TAB_GAP;
+                let count = if remote { 6.0 } else { 5.0 };
+                let gaps = (count - 1.0) * TAB_GAP;
+                let tab_width = ((ui.available_width() - gaps) / count).clamp(0.0, 66.0);
+                let tabs_width = count * tab_width + gaps;
                 ui.set_min_width(tabs_width);
                 ui.set_max_width(tabs_width);
                 ui.horizontal(|ui| {
@@ -330,9 +332,10 @@ impl LauncherApp {
                         (SidebarTab::Commands, SidebarTab::Commands.label()),
                         (SidebarTab::SystemMD, SidebarTab::SystemMD.label()),
                         (SidebarTab::Sensors, SidebarTab::Sensors.label()),
+                        (SidebarTab::Files, SidebarTab::Files.label()),
                     ];
 
-                    for (tab, label) in tabs {
+                    for (tab, label) in tabs.into_iter().take(count as usize) {
                         let is_active = self.active_sidebar_tab == tab;
                         let bg = if is_active {
                             p.accent
@@ -384,6 +387,7 @@ impl LauncherApp {
                 SidebarTab::Commands => self.render_commands_left_panel(ui, None),
                 SidebarTab::SystemMD => self.render_systemd_left_panel(ui, None),
                 SidebarTab::Sensors => self.render_sensors_left_panel(ui, None),
+                SidebarTab::Files => {},
             }
         });
     }
@@ -395,6 +399,7 @@ impl LauncherApp {
             SidebarTab::Commands => self.render_commands_right_panel(ui, None),
             SidebarTab::SystemMD => self.render_systemd_right_panel(ui, None),
             SidebarTab::Sensors => self.render_sensors_right_panel(ui, None),
+            SidebarTab::Files => {},
         }
     }
 }

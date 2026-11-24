@@ -1,6 +1,7 @@
 use super::*;
 
 mod listeners;
+mod files;
 mod terminal;
 mod connection;
 
@@ -64,6 +65,11 @@ impl LauncherApp {
             let dialog_open = ui.ctx().data(|data| data.get_temp::<(crate::remote::RemoteListener, bool)>(
                 egui::Id::new(("ssh_listener_confirmation", &host.id))
             )).is_some();
+            if self.active_sidebar_tab == SidebarTab::Files {
+                if dialog_open { ui.disable(); }
+                self.render_remote_files(ui, &host);
+                return;
+            }
             let header_rect = ui.available_rect_before_wrap();
 
             // Split layout: Sidebar + remaining content; Sensors uses a compact column.
@@ -94,6 +100,7 @@ impl LauncherApp {
                         SidebarTab::Commands => self.render_commands_left_panel(ui, Some(&host.id)),
                         SidebarTab::SystemMD => self.render_systemd_left_panel(ui, Some(&host.id)),
                         SidebarTab::Sensors => self.render_sensors_left_panel(ui, Some(&host.id)),
+                        SidebarTab::Files => unreachable!(),
                     }
                 });
 
@@ -117,6 +124,7 @@ impl LauncherApp {
                         SidebarTab::Commands => self.render_commands_right_panel(ui, Some(&host.id)),
                         SidebarTab::SystemMD => self.render_systemd_right_panel(ui, Some(&host.id)),
                         SidebarTab::Sensors => self.render_sensors_right_panel(ui, Some(&host.id)),
+                        SidebarTab::Files => unreachable!(),
                     }
                 });
             });

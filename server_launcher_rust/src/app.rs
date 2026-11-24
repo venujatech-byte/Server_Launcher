@@ -87,6 +87,7 @@ pub enum SidebarTab {
     Commands,
     SystemMD,
     Sensors,
+    Files,
 }
 
 impl SidebarTab {
@@ -96,6 +97,7 @@ impl SidebarTab {
             SidebarTab::Scripts => "\u{e2ed} Scripts",
             SidebarTab::Commands => "\u{e181} Cmds",
             SidebarTab::SystemMD => "\u{e245} SystemD",
+            SidebarTab::Files => "Files",
             SidebarTab::Sensors => "\u{e186} Sensors",
         }
     }
@@ -2984,11 +2986,14 @@ impl eframe::App for LauncherApp {
                                     String::new()
                                 }
                             );
-                            ui.label(
-                                RichText::new(target_desc)
-                                    .size(10.5)
-                                    .color(p.text_muted),
-                            );
+                            ui.horizontal(|ui| {
+                                ui.add(egui::Label::new(RichText::new(&target_desc).size(10.5).color(p.text_muted)).truncate())
+                                    .on_hover_text(&target_desc);
+                                if ui.small_button(crate::lucide::REFRESH_CW).on_hover_text("Reconnect SSH").clicked() {
+                                    self.test_remote_host(host);
+                                    self.trigger_remote_scan(host);
+                                }
+                            });
                         });
                     } else {
                         ui.vertical(|ui| {
@@ -3062,20 +3067,6 @@ impl eframe::App for LauncherApp {
                                 self.ssh_host_modal.open_edit(host);
                             }
 
-                            let btn_reconnect = egui::Button::new(
-                                RichText::new(format!("{} Reconnect", crate::lucide::REFRESH_CW))
-                                    .size(10.5)
-                                    .color(p.text_secondary),
-                            )
-                            .fill(p.bg_button)
-                            .stroke(Stroke::NONE)
-                            .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(78.0, 22.0));
-                            if ui.add(btn_reconnect).clicked() {
-                                self.test_remote_host(host);
-                                self.trigger_remote_scan(host);
-                            }
-
                             let btn_ext = egui::Button::new(
                                 RichText::new(format!("{} Terminal", crate::lucide::EXTERNAL_LINK))
                                     .size(10.5)
@@ -3107,7 +3098,7 @@ impl eframe::App for LauncherApp {
                             }
 
                             let btn_reboot = egui::Button::new(
-                                RichText::new(format!("{} Restart Device", crate::lucide::REFRESH_CW))
+                                RichText::new(format!("{} Restart", crate::lucide::REFRESH_CW))
                                     .size(10.5)
                                     .strong()
                                     .color(p.warning),
@@ -3141,29 +3132,29 @@ impl eframe::App for LauncherApp {
 
                         }
                         if remote_host_opt.is_some() || self.selected_machine == "local" {
-                            tabs_bounds = Some((left_edge, ui.cursor().right() - 8.0));
+                            tabs_bounds = Some((left_edge, ui.cursor().right() - 8.0, remote_host_opt.is_some()));
                         }
                     });
                 });
-                if let Some((left, right)) = tabs_bounds {
-                    const TABS_WIDTH: f32 = 348.0;
-                    if right - left >= TABS_WIDTH {
+                if let Some((left, right, remote)) = tabs_bounds {
+                    let tabs_width = if remote { 417.0 } else { 348.0 };
+                    if right - left >= tabs_width {
                         let rect = egui::Rect::from_min_size(
-                            egui::pos2(left, header.response.rect.center().y - 16.0),
-                            egui::vec2(TABS_WIDTH, 32.0),
+                            egui::pos2(left + (right - left - tabs_width) * 0.5, header.response.rect.center().y - 16.0),
+                            egui::vec2(tabs_width, 32.0),
                         );
                         let mut tabs = ui.new_child(egui::UiBuilder::new()
                             .id_salt("header_workspace_tabs")
                             .max_rect(rect)
                             .layout(egui::Layout::top_down(egui::Align::Min)));
-                        self.render_sidebar_tabs_bar(&mut tabs);
+                        self.render_sidebar_tabs_bar(&mut tabs, remote);
                     } else {
-                        let width = ui.available_width().min(TABS_WIDTH);
+                        let width = ui.available_width().min(tabs_width);
                         ui.horizontal(|ui| {
-                            ui.add_space(MACHINE_RAIL_WIDTH.min((ui.available_width() - width).max(0.0)));
+                            ui.add_space(((ui.available_width() - width) * 0.5).max(0.0));
                             ui.allocate_ui(egui::vec2(width, 0.0), |ui| {
                                 ui.set_max_width(width);
-                                self.render_sidebar_tabs_bar(ui);
+                                self.render_sidebar_tabs_bar(ui, remote);
                             });
                         });
                     }

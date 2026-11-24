@@ -1,6 +1,6 @@
 use crate::config::SshRemoteHost;
 use crate::remote::{build_ssh_command, shell_quote};
-#[cfg(not(windows))]
+#[cfg(any(not(windows), test))]
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -370,6 +370,7 @@ fn validate_local_unit_target(path: &str, user_mode: bool) -> Result<(PathBuf, P
     Ok((target, root))
 }
 
+#[cfg(any(not(windows), test))]
 fn validate_regular_unit_file(target: &std::path::Path) -> Result<(), String> {
     if let Ok(metadata) = fs::symlink_metadata(target) {
         if metadata.file_type().is_symlink() || !metadata.is_file() {

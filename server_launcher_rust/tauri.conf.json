@@ -29,8 +29,20 @@
     "targets": ["deb", "rpm", "appimage"],
     "icon": ["assets/icon.png"],
     "linux": {
-      "deb": { "depends": ["curl"] },
-      "rpm": { "depends": ["curl"] }
+      "deb": {
+        "depends": ["curl", "python3", "pkexec"],
+        "files": {
+          "/usr/libexec/server-launcher-sensors": "packaging/server-launcher-sensors",
+          "/usr/share/polkit-1/actions/com.serverlauncher.sensors.policy": "packaging/com.serverlauncher.sensors.policy"
+        }
+      },
+      "rpm": {
+        "depends": ["curl", "python3", "polkit"],
+        "files": {
+          "/usr/libexec/server-launcher-sensors": "packaging/server-launcher-sensors",
+          "/usr/share/polkit-1/actions/com.serverlauncher.sensors.policy": "packaging/com.serverlauncher.sensors.policy"
+        }
+      }
     }
   }
 }

@@ -1,0 +1,99 @@
+#!/usr/bin/python3 -I
+import glob, json, math, os, subprocess, sys, time
+os.environ['PATH'] = '/usr/sbin:/usr/bin:/sbin:/bin'
+if len(sys.argv) != 1:
+    sys.exit('Unexpected arguments')
+
+def read_number(path):
+    try:
+        value = float(open(path).read().strip())
+        return value if math.isfinite(value) else None
+    except (OSError, ValueError):
+        return None
+
+zones = []
+unreadable_zones = []
+# sysfs links can lead back to the class directory. Match the collector's
+# bounded controller/zone scan and count aliases of the same package once.
+name_paths = glob.glob('/sys/class/powercap/*/name') + glob.glob('/sys/class/powercap/*/*/name')
+for name_path in sorted({os.path.realpath(path) for path in name_paths}):
+    path = os.path.dirname(name_path)
+    try:
+        name = open(name_path).read().strip().lower()
+    except OSError:
+        continue
+    if not (name.startswith('package') or name.startswith('cpu package')):
+        continue
+    energy = read_number(path + '/energy_uj')
+    maximum = read_number(path + '/max_energy_range_uj')
+    if energy is not None:
+        zones.append((path, energy, maximum, time.monotonic()))
+    else:
+        unreadable_zones.append(path)
+started = time.monotonic()
+result = {'cpu_watts': None, 'gpus': [], 'memory': None, 'notes': []}
+if unreadable_zones:
+    result['notes'].append('CPU energy counters are not readable: ' + ', '.join(unreadable_zones))
+result['memory'] = []
+try:
+    output = subprocess.run(['dmidecode', '--type', '17'], capture_output=True, text=True, timeout=5)
+    if output.returncode:
+        result['notes'].append('RAM inventory: ' + output.stderr.strip())
+    else:
+        for block in output.stdout.split('Memory Device\n')[1:]:
+            fields = dict(line.strip().split(': ', 1) for line in block.splitlines() if ': ' in line)
+            size = fields.get('Size', '')
+            if not size or size in ('No Module Installed', 'Unknown', 'Not Installed'):
+                continue
+            values = {key: fields.get(source, '') for key, source in [('size', 'Size'), ('kind', 'Type'), ('speed', 'Configured Memory Speed'), ('form', 'Form Factor'), ('locator', 'Locator')]}
+            values['speed'] = values['speed'] or fields.get('Speed', '')
+            result['memory'].append(values)
+except (OSError, subprocess.TimeoutExpired) as error:
+    result['notes'].append('RAM inventory: ' + str(error))
+
+for card in sorted(glob.glob('/sys/class/drm/card[0-9]*')):
+    if '-' in os.path.basename(card):
+        continue
+    device = os.path.realpath(card + '/device')
+    driver = os.path.basename(os.path.realpath(card + '/device/driver'))
+    if driver not in ('i915', 'xe'):
+        continue
+    node = '/dev/dri/' + os.path.basename(card)
+    try:
+        output = subprocess.run(['intel_gpu_top', '-J', '-s', '250', '-n', '2', '-m', '-d', 'drm:' + node, '-o', '-'], capture_output=True, text=True, timeout=3)
+        if output.returncode:
+            result['notes'].append(node + ': ' + output.stderr.strip())
+            continue
+        samples = json.loads(output.stdout)
+        if not isinstance(samples, list):
+            raise ValueError('unexpected GPU sample format')
+        sample = next((sample for sample in reversed(samples) if isinstance(sample, dict) and isinstance(sample.get('engines'), dict)), None)
+        if sample is None:
+            raise ValueError('GPU engine readings unavailable')
+        engines = {name: values['busy'] for name, values in sample['engines'].items() if isinstance(values, dict) and isinstance(values.get('busy'), (float, int)) and math.isfinite(values['busy']) and 0 <= values['busy'] <= 100}
+        power = sample.get('power')
+        gpu_power = power.get('GPU') if isinstance(power, dict) else None
+        if not isinstance(gpu_power, (float, int)) or not math.isfinite(gpu_power) or gpu_power < 0:
+            gpu_power = None
+        if not engines and gpu_power is None:
+            raise ValueError('GPU metrics unavailable')
+        result['gpus'].append({'device': device, 'engines': engines, 'watts': gpu_power})
+    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+        result['notes'].append(node + ': ' + str(error))
+
+if time.monotonic() - started < 0.15:
+    time.sleep(0.15)
+watts = []
+for path, previous, maximum, sampled_at in zones:
+    current = read_number(path + '/energy_uj')
+    elapsed = time.monotonic() - sampled_at
+    if current is None or previous < 0 or current < 0 or elapsed <= 0:
+        continue
+    delta = current - previous
+    if delta < 0 and maximum is not None and maximum > 0 and previous <= maximum and current <= maximum:
+        delta += maximum
+    if delta >= 0:
+        watts.append(delta / 1e6 / elapsed)
+if zones and not unreadable_zones and len(watts) == len(zones):
+    result['cpu_watts'] = sum(watts)
+print(json.dumps(result, allow_nan=False))

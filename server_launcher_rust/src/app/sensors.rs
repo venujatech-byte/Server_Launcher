@@ -484,7 +484,7 @@ impl LauncherApp {
                 self.queue_systemd_action(PendingSudoAction::UnlockSensorAccess, None, None);
             }
             if busy { ui.spinner(); }
-            ui.label(RichText::new("Some CPU power, Intel GPU engine and RAM module details may require authorization and hardware support.").size(11.0).color(p.text_muted));
+            ui.label(RichText::new("Protected readings are snapshots. Refresh to take another sample.").size(11.0).color(p.text_muted));
         });
         if let Some(message) = self.service_action_msg.as_ref().filter(|message| !busy && (message.starts_with("Read-only hardware") || message.starts_with("Error: Hardware probe") || message.starts_with("Error: Could not start hardware"))) {
             if crate::systemd::needs_sudo_password(message) {

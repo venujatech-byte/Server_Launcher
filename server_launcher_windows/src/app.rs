@@ -1194,7 +1194,6 @@ impl LauncherApp {
         }
 
         let collector_arc = Arc::clone(&self.sensors_collector);
-        let sensor_password = (!self.local_sudo_password.is_empty()).then(|| self.local_sudo_password.clone());
         let include_process_network = include_top && self.sensors_subtab == SensorsSubTab::TopApps;
         let in_flight_arc = Arc::clone(&self.sensors_in_flight);
         let shared_snap_arc = Arc::clone(&self.sensors_shared_snapshot);
@@ -1202,7 +1201,7 @@ impl LauncherApp {
         std::thread::spawn(move || {
             let snap = if let Ok(mut coll) = collector_arc.lock() {
                 let mut snapshot = coll.collect_with_top_apps(include_top, include_process_network);
-                coll.refresh_protected_hardware(&mut snapshot, sensor_password.as_deref());
+                coll.apply_protected_hardware(&mut snapshot);
                 snapshot
             } else {
                 crate::sensors::SystemSensorsSnapshot::default()
@@ -5605,10 +5604,14 @@ impl LauncherApp {
         if !self.systemd_actions_in_flight.lock().unwrap().insert(key.clone()) { return; }
         let from_popup = password.is_some();
         let host = host.cloned();
-        let password = password.or_else(|| {
-            host.as_ref().and_then(|host| self.remote_sudo_passwords.get(&host.id).cloned())
-                .or_else(|| if host.is_none() { Some(self.local_sudo_password.clone()) } else { None })
-        });
+        let password = if matches!(action, PendingSudoAction::UnlockSensorAccess) {
+            None
+        } else {
+            password.or_else(|| {
+                host.as_ref().and_then(|host| self.remote_sudo_passwords.get(&host.id).cloned())
+                    .or_else(|| host.is_none().then(|| self.local_sudo_password.clone()))
+            })
+        };
         let sensor_collector = self.sensors_collector.clone();
         let results = self.systemd_action_results.clone();
         std::thread::spawn(move || {
@@ -5616,7 +5619,11 @@ impl LauncherApp {
             let result = match &action {
                 PendingSudoAction::UnlockSensorAccess => {
                     if host.is_some() { Err("Protected sensor access applies to the local host only.".into()) }
-                    else { sensor_collector.lock().unwrap().unlock_hardware_access(pass).map(SystemdActionValue::Message) }
+                    else {
+                        crate::sensors::read_protected_hardware().and_then(|data| {
+                            sensor_collector.lock().unwrap().store_protected_hardware(data)
+                        }).map(SystemdActionValue::Message)
+                    }
                 },
                 PendingSudoAction::SetChargeLimit { battery, limit } => crate::power::set_charge_limit(battery, *limit, host.as_ref(), pass).map(SystemdActionValue::Message),
                 PendingSudoAction::ServiceAction { unit, action, user_mode } => {
@@ -5702,7 +5709,7 @@ impl LauncherApp {
                     if current_host { self.systemd_file_status_msg = Some((error.clone(), true)); }
                     if result.host_id.is_some() { *self.remote_service_action_msg.lock().unwrap() = Some(format!("Error: {}", error)); }
                     else { self.service_action_msg = Some(format!("Error: {}", error)); }
-                    if crate::systemd::needs_sudo_password(&error) {
+                    if !matches!(action, PendingSudoAction::UnlockSensorAccess) && crate::systemd::needs_sudo_password(&error) {
                         if let Some(id) = &result.host_id { self.remote_sudo_passwords.remove(id); } else { self.local_sudo_password.clear(); }
                         if (!result.from_popup || matching_popup) && (!self.sudo_popup.open || matching_popup) {
                             self.sudo_popup.open = true;

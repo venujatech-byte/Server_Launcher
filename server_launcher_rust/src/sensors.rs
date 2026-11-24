@@ -468,7 +468,6 @@ pub struct SystemSensorsCollector {
     prev_cpu_energy: HashMap<String, (u64, u64)>,
     prev_cpu_energy_at: Option<Instant>,
     protected_data: Option<serde_json::Value>,
-    last_protected_poll: Instant,
     protected_sampled_at: Option<Instant>,
 }
 
@@ -510,7 +509,6 @@ impl SystemSensorsCollector {
             prev_cpu_energy: read_rapl_package_energy(),
             prev_cpu_energy_at: Some(now),
             protected_data: None,
-            last_protected_poll: now,
             protected_sampled_at: None,
         }
     }
@@ -4811,142 +4809,45 @@ mod tests {
     }
 }
 
-const PROTECTED_HARDWARE_SCRIPT: &str = r##"import glob, json, math, os, subprocess, sys, time
-os.environ['PATH'] = '/usr/sbin:/usr/bin:/sbin:/bin'
+#[cfg(target_os = "linux")]
+pub fn read_protected_hardware() -> Result<serde_json::Value, String> {
+    use std::os::unix::fs::MetadataExt;
 
-def read_number(path):
-    try:
-        value = float(open(path).read().strip())
-        return value if math.isfinite(value) else None
-    except (OSError, ValueError):
-        return None
-
-zones = []
-unreadable_zones = []
-# sysfs links can lead back to the class directory. Match the collector's
-# bounded controller/zone scan and count aliases of the same package once.
-name_paths = glob.glob('/sys/class/powercap/*/name') + glob.glob('/sys/class/powercap/*/*/name')
-for name_path in sorted({os.path.realpath(path) for path in name_paths}):
-    path = os.path.dirname(name_path)
-    try:
-        name = open(name_path).read().strip().lower()
-    except OSError:
-        continue
-    if not (name.startswith('package') or name.startswith('cpu package')):
-        continue
-    energy = read_number(path + '/energy_uj')
-    maximum = read_number(path + '/max_energy_range_uj')
-    if energy is not None:
-        zones.append((path, energy, maximum, time.monotonic()))
-    else:
-        unreadable_zones.append(path)
-started = time.monotonic()
-result = {'cpu_watts': None, 'gpus': [], 'memory': None, 'notes': []}
-if unreadable_zones:
-    result['notes'].append('CPU energy counters are not readable: ' + ', '.join(unreadable_zones))
-if len(sys.argv) > 1 and sys.argv[1] == 'inventory':
-    result['memory'] = []
-    try:
-        output = subprocess.run(['dmidecode', '--type', '17'], capture_output=True, text=True, timeout=5)
-        if output.returncode:
-            result['notes'].append('RAM inventory: ' + output.stderr.strip())
-        else:
-            for block in output.stdout.split('Memory Device\n')[1:]:
-                fields = dict(line.strip().split(': ', 1) for line in block.splitlines() if ': ' in line)
-                size = fields.get('Size', '')
-                if not size or size in ('No Module Installed', 'Unknown', 'Not Installed'):
-                    continue
-                values = {key: fields.get(source, '') for key, source in [('size', 'Size'), ('kind', 'Type'), ('speed', 'Configured Memory Speed'), ('form', 'Form Factor'), ('locator', 'Locator')]}
-                values['speed'] = values['speed'] or fields.get('Speed', '')
-                result['memory'].append(values)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        result['notes'].append('RAM inventory: ' + str(error))
-
-for card in sorted(glob.glob('/sys/class/drm/card[0-9]*')):
-    if '-' in os.path.basename(card):
-        continue
-    device = os.path.realpath(card + '/device')
-    driver = os.path.basename(os.path.realpath(card + '/device/driver'))
-    if driver not in ('i915', 'xe'):
-        continue
-    node = '/dev/dri/' + os.path.basename(card)
-    try:
-        output = subprocess.run(['intel_gpu_top', '-J', '-s', '250', '-n', '2', '-m', '-d', 'drm:' + node, '-o', '-'], capture_output=True, text=True, timeout=3)
-        if output.returncode:
-            result['notes'].append(node + ': ' + output.stderr.strip())
-            continue
-        samples = json.loads(output.stdout)
-        if not isinstance(samples, list):
-            raise ValueError('unexpected GPU sample format')
-        sample = next((sample for sample in reversed(samples) if isinstance(sample, dict) and isinstance(sample.get('engines'), dict)), None)
-        if sample is None:
-            raise ValueError('GPU engine readings unavailable')
-        engines = {name: values['busy'] for name, values in sample['engines'].items() if isinstance(values, dict) and isinstance(values.get('busy'), (float, int)) and math.isfinite(values['busy']) and 0 <= values['busy'] <= 100}
-        power = sample.get('power')
-        gpu_power = power.get('GPU') if isinstance(power, dict) else None
-        if not isinstance(gpu_power, (float, int)) or not math.isfinite(gpu_power) or gpu_power < 0:
-            gpu_power = None
-        if not engines and gpu_power is None:
-            raise ValueError('GPU metrics unavailable')
-        result['gpus'].append({'device': device, 'engines': engines, 'watts': gpu_power})
-    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
-        result['notes'].append(node + ': ' + str(error))
-
-if time.monotonic() - started < 0.15:
-    time.sleep(0.15)
-watts = []
-for path, previous, maximum, sampled_at in zones:
-    current = read_number(path + '/energy_uj')
-    elapsed = time.monotonic() - sampled_at
-    if current is None or previous < 0 or current < 0 or elapsed <= 0:
-        continue
-    delta = current - previous
-    if delta < 0 and maximum is not None and maximum > 0 and previous <= maximum and current <= maximum:
-        delta += maximum
-    if delta >= 0:
-        watts.append(delta / 1e6 / elapsed)
-if zones and not unreadable_zones and len(watts) == len(zones):
-    result['cpu_watts'] = sum(watts)
-print(json.dumps(result, allow_nan=False))
-"##;
-
-// This fixed read-only probe runs only after the user unlocks protected sensor access.
-pub fn read_protected_hardware(password: Option<&str>, inventory: bool) -> Result<serde_json::Value, String> {
-    if !cfg!(target_os = "linux") { return Err("Protected Linux sensor access is unavailable on this platform.".into()); }
-    use std::io::Write;
-    let mut command = Command::new("timeout");
-    command.args(["--kill-after=2s", "18s", "sudo"]);
-    let password = password.filter(|password| !password.is_empty());
-    if password.is_some() { command.args(["-S", "-p", ""]); } else { command.arg("-n"); }
-    command.args(["--", "python3", "-I", "-c", PROTECTED_HARDWARE_SCRIPT, if inventory { "inventory" } else { "sample" }]);
-    command.env("LC_ALL", "C").stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
-    command.stdin(if password.is_some() { std::process::Stdio::piped() } else { std::process::Stdio::null() });
-    let mut child = command.spawn().map_err(|error| format!("Could not start hardware probe: {error}"))?;
-    if let Some(password) = password {
-        if let Some(mut stdin) = child.stdin.take() { let _ = writeln!(stdin, "{password}"); }
+    const HELPER: &str = "/usr/libexec/server-launcher-sensors";
+    let installed = fs::symlink_metadata(HELPER).is_ok_and(|file| {
+        file.is_file() && file.uid() == 0 && file.mode() & 0o022 == 0 && file.mode() & 0o111 != 0
+    });
+    if !installed {
+        return Err("Hardware probe failed: install the Server Launcher RPM or DEB to enable system authentication.".into());
     }
-    let output = child.wait_with_output().map_err(|error| error.to_string())?;
-    if matches!(output.status.code(), Some(124 | 137)) {
-        return Err("Hardware probe failed: the request timed out. Try unlocking the sensors again.".into());
-    }
-    if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr);
-        if detail.to_ascii_lowercase().contains("no new privileges") {
-            return Err("Hardware probe failed: the launch sandbox blocks privilege elevation (NoNewPrivs). Restart Server Launcher directly from a desktop shortcut or host terminal; a sudo password cannot override this restriction.".into());
+    let output = Command::new("/usr/bin/timeout")
+        .args(["--kill-after=2s", "60s", "/usr/bin/pkexec", "--disable-internal-agent", HELPER])
+        .stdin(std::process::Stdio::null())
+        .env("LC_ALL", "C")
+        .output()
+        .map_err(|error| format!("Could not start hardware probe: {error}"))?;
+    match output.status.code() {
+        Some(0) => serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("Hardware probe failed: invalid helper response: {error}")),
+        Some(126) => Err("Hardware probe failed: system authentication was canceled.".into()),
+        Some(124 | 137) | None => Err("Hardware probe failed: the system authentication request timed out or was interrupted.".into()),
+        _ => {
+            let detail = String::from_utf8_lossy(&output.stderr);
+            Err(format!("Hardware probe failed: system authentication or sensor collection failed ({}). {}", output.status, detail.trim()))
         }
-        let detail = detail.trim();
-        return Err(if detail.is_empty() {
-            format!("Hardware probe failed: the request ended without a result ({}).", output.status)
-        } else {
-            format!("Hardware probe failed: {detail}")
-        });
     }
-    serde_json::from_slice(&output.stdout).map_err(|error| format!("Invalid hardware probe response: {error}"))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn read_protected_hardware() -> Result<serde_json::Value, String> {
+    Err("Protected Linux sensor access is unavailable on this platform.".into())
 }
 
 fn apply_protected_hardware(snapshot: &mut SystemSensorsSnapshot, data: &serde_json::Value) {
     let reported = |value: &serde_json::Value| value.as_f64().filter(|value| value.is_finite() && *value >= 0.0).map(|value| value as f32);
-    if let Some(watts) = reported(&data["cpu_watts"]) { snapshot.cpu_power_watts = Some(watts); }
+    if snapshot.cpu_power_watts.is_none() {
+        snapshot.cpu_power_watts = reported(&data["cpu_watts"]);
+    }
     if let Some(readings) = data["gpus"].as_array() {
         for reading in readings {
             let Some(device) = reading["device"].as_str() else { continue; };
@@ -4982,51 +4883,16 @@ fn protected_hardware_summary(data: &serde_json::Value) -> Result<String, String
 }
 
 impl SystemSensorsCollector {
-    pub fn unlock_hardware_access(&mut self, password: Option<&str>) -> Result<String, String> {
-        let data = read_protected_hardware(password, true)?;
+    pub fn store_protected_hardware(&mut self, data: serde_json::Value) -> Result<String, String> {
         let summary = protected_hardware_summary(&data)?;
         self.protected_data = Some(data);
-        let sampled_at = Instant::now();
-        self.last_protected_poll = sampled_at;
-        self.protected_sampled_at = Some(sampled_at);
+        self.protected_sampled_at = Some(Instant::now());
         Ok(summary)
     }
 
-    pub fn refresh_protected_hardware(&mut self, snapshot: &mut SystemSensorsSnapshot, password: Option<&str>) {
-        let Some(previous) = self.protected_data.as_ref() else { return; };
-        let authorization_expired = previous["notes"].as_array().is_some_and(|notes| {
-            notes.iter().filter_map(|note| note.as_str()).any(crate::systemd::needs_sudo_password)
-        });
-        // Retry authentication only through the explicit Unlock action after a denied sample.
-        if !authorization_expired && self.last_protected_poll.elapsed() >= Duration::from_secs(2) {
-            let sample = read_protected_hardware(None, false).or_else(|error| {
-                if let Some(password) = password.filter(|_| crate::systemd::needs_sudo_password(&error)) {
-                    read_protected_hardware(Some(password), false)
-                } else {
-                    Err(error)
-                }
-            });
-            match sample {
-                Ok(mut data) => {
-                    data["memory"] = self.protected_data.as_ref().unwrap()["memory"].clone();
-                    self.protected_data = Some(data);
-                }
-                Err(error) => {
-                    // A failed refresh must not keep an old power/GPU sample looking live.
-                    let data = self.protected_data.as_mut().unwrap();
-                    data["cpu_watts"] = serde_json::Value::Null;
-                    data["gpus"] = serde_json::json!([]);
-                    data["notes"] = serde_json::json!([error]);
-                }
-            }
-            let sampled_at = Instant::now();
-            self.last_protected_poll = sampled_at;
-            self.protected_sampled_at = Some(sampled_at);
-        }
-        let data = self.protected_data.as_ref().unwrap();
-        snapshot.hardware_access_unlocked = !data["notes"].as_array().is_some_and(|notes| {
-            notes.iter().filter_map(|note| note.as_str()).any(crate::systemd::needs_sudo_password)
-        });
+    pub fn apply_protected_hardware(&self, snapshot: &mut SystemSensorsSnapshot) {
+        let Some(data) = &self.protected_data else { return; };
+        snapshot.hardware_access_unlocked = true;
         snapshot.hardware_access_sampled_at = self.protected_sampled_at;
         snapshot.hardware_access_error = data["notes"].as_array().filter(|notes| !notes.is_empty()).map(|notes| notes.iter().filter_map(|note| note.as_str()).collect::<Vec<_>>().join("; "));
         apply_protected_hardware(snapshot, data);

@@ -27,7 +27,7 @@ pub(super) enum Outcome {
 }
 
 pub(super) enum Event {
-    Progress(String, f32),
+    Progress(transfers::Progress),
     Finished(Result<Outcome, String>),
 }
 

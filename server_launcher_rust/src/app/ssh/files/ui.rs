@@ -864,6 +864,81 @@ fn prompt(ctx: &egui::Context, id: egui::Id, files: &mut RemoteFiles, host: &Ssh
 }
 
 fn status(ui: &mut Ui, p: &ThemePalette, files: &mut RemoteFiles) {
+    if let Some(progress) = &files.progress {
+        let bytes = crate::sensors::format_bytes(progress.bytes);
+        let fraction = progress
+            .total_bytes
+            .filter(|total| *total > 0)
+            .map(|total| (progress.bytes as f32 / total as f32).clamp(0.0, 1.0));
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                RichText::new(format!("{} · {}", progress.direction, progress.name))
+                    .size(12.0)
+                    .strong()
+                    .color(p.text_primary),
+            );
+            if progress.count > 1 {
+                ui.label(
+                    RichText::new(format!(
+                        "Item {} of {}",
+                        progress.completed + 1,
+                        progress.count
+                    ))
+                    .size(11.0)
+                    .color(p.text_muted),
+                );
+            }
+        });
+        if let Some(fraction) = fraction {
+            ui.add(
+                egui::ProgressBar::new(fraction)
+                    .desired_width(ui.available_width())
+                    .show_percentage(),
+            );
+        } else {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Transfer in progress");
+            });
+        }
+        ui.horizontal_wrapped(|ui| {
+            let size = progress.total_bytes.map_or(bytes.clone(), |total| {
+                format!("{bytes} / {}", crate::sensors::format_bytes(total))
+            });
+            ui.label(RichText::new(size).size(11.0).color(p.text_secondary));
+            ui.separator();
+            let speed = progress.speed.map_or_else(
+                || "Measuring speed…".to_owned(),
+                |speed| format!("{}/s", crate::sensors::format_bytes(speed)),
+            );
+            ui.label(
+                RichText::new(speed)
+                    .size(11.0)
+                    .strong()
+                    .color(p.text_primary),
+            );
+            if let Some(next) = &progress.next {
+                ui.separator();
+                ui.label(
+                    RichText::new(format!("Next: {next}"))
+                        .size(11.0)
+                        .color(p.text_muted),
+                );
+            }
+            if progress.count > 1 {
+                ui.label(
+                    RichText::new(format!(
+                        "{} complete · {} queued",
+                        progress.completed,
+                        progress.count - progress.completed - 1
+                    ))
+                    .size(11.0)
+                    .color(p.text_muted),
+                );
+            }
+        });
+        ui.separator();
+    }
     ui.horizontal_wrapped(|ui| {
         let query = files.filter.to_lowercase();
         let items = files.listing.iter().flat_map(|listing| &listing.entries);
@@ -900,14 +975,7 @@ fn status(ui: &mut Ui, p: &ThemePalette, files: &mut RemoteFiles) {
         }
         if let Some(worker) = &files.worker {
             ui.separator();
-            if let Some((message, fraction)) = &files.progress {
-                ui.add(
-                    egui::ProgressBar::new(*fraction)
-                        .desired_width(90.0)
-                        .show_percentage(),
-                );
-                ui.label(RichText::new(message).size(11.0).color(p.text_secondary));
-            } else {
+            if files.progress.is_none() {
                 ui.spinner();
                 ui.label(
                     RichText::new(if files.transfer {

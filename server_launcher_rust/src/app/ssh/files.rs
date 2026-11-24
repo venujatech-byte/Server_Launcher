@@ -27,7 +27,7 @@ struct RemoteFiles {
     transfer: bool,
     changing: bool,
     refreshing_after_change: bool,
-    progress: Option<(String, f32)>,
+    progress: Option<transfers::Progress>,
     notice: Option<(String, bool)>,
     history: Vec<String>,
     history_index: usize,
@@ -66,7 +66,7 @@ impl RemoteFiles {
             let receiver = worker.events.lock().unwrap();
             loop {
                 match receiver.try_recv() {
-                    Ok(Event::Progress(text, ratio)) => self.progress = Some((text, ratio)),
+                    Ok(Event::Progress(progress)) => self.progress = Some(progress),
                     Ok(Event::Finished(result)) => break result,
                     Err(std::sync::mpsc::TryRecvError::Empty) => return,
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {

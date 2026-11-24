@@ -33,7 +33,7 @@ impl LauncherApp {
                         ui.label(RichText::new(brand).size(18.0).strong().color(p.text_primary));
                         ui.add_space(6.0);
                         let uptime = if snap.uptime_secs > 0 { snap.uptime_secs } else if host_id.is_none() { get_system_uptime() } else { 0 };
-                        let power = snap.cpu_power_cap_watts.map(|value| format!("Power cap {value:.1} W"));
+                        let power = snap.cpu_power_cap_watts.map(|value| format!("Long-term cap {value:.1} W"));
                         let thermal = snap.cpu_tjunction_max.map(|value| format!("Thermal limit {value:.0} °C"));
                         ui.horizontal_wrapped(|ui| {
                             let topology = format!("{phys} cores · {log} threads");
@@ -70,7 +70,7 @@ impl LauncherApp {
                     let subtitle = match column {
                         0 => format!("{} Cores / {} Threads", phys, log),
                         1 => "Reported clock".to_string(),
-                        2 => snap.cpu_power_cap_watts.map(|value| format!("Reported power cap: {:.1} W", value)).unwrap_or_else(|| "Power cap unavailable".into()),
+                        2 => snap.cpu_power_cap_watts.map(|value| format!("Long-term cap: {:.1} W", value)).unwrap_or_else(|| "Power cap unavailable".into()),
                         _ => snap.cpu_tjunction_max.map(|value| format!("Reported limit: {:.0}°C", value)).unwrap_or_else(|| "Temperature limit unavailable".into()),
                     };
                     let scale = if column == 0 { 100.0 } else { maximum.unwrap_or(1.0).max(1.0) * 1.1 };

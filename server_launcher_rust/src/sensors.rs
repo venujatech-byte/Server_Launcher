@@ -1727,6 +1727,7 @@ fn parse_package_power(label: &str, microwatts: &str) -> Option<f32> {
 #[cfg(target_os = "linux")]
 fn rapl_package_zones() -> Vec<(PathBuf, String)> {
     let mut zones = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     let Ok(controls) = fs::read_dir("/sys/class/powercap") else { return zones; };
     for control in controls.flatten() {
         let path = control.path();
@@ -1738,7 +1739,12 @@ fn rapl_package_zones() -> Vec<(PathBuf, String)> {
             let name = name.trim().to_owned();
             let lower = name.to_ascii_lowercase();
             if lower.starts_with("package") || lower.starts_with("cpu package") {
-                zones.push((path, name));
+                // A package can appear under both its controller and the class directory.
+                if let Ok(path) = path.canonicalize() {
+                    if seen.insert(path.clone()) {
+                        zones.push((path, name));
+                    }
+                }
             }
         }
     }
@@ -1762,7 +1768,14 @@ fn read_rapl_package_energy() -> HashMap<String, (u64, u64)> {
 fn read_rapl_package_power_cap() -> Option<f32> {
     let mut caps = Vec::new();
     for (path, name) in rapl_package_zones() {
-        let Ok(value) = fs::read_to_string(path.join("constraint_0_power_limit_uw")) else { return None; };
+        if fs::read_to_string(path.join("enabled")).is_ok_and(|value| value.trim() == "0") { return None; }
+        let limit = fs::read_dir(&path).ok()?.flatten().find_map(|entry| {
+            let filename = entry.file_name();
+            let index = filename.to_str()?.strip_prefix("constraint_")?.strip_suffix("_name")?;
+            let kind = fs::read_to_string(entry.path()).ok()?;
+            (kind.trim() == "long_term").then(|| path.join(format!("constraint_{index}_power_limit_uw")))
+        })?;
+        let value = fs::read_to_string(limit).ok()?;
         let Some(watts) = parse_package_power(&name, &value) else { return None; };
         caps.push(watts);
     }
@@ -3277,20 +3290,35 @@ cpu_freqs = read_cpu_frequencies()
 
 cpu_power_cap = None
 cpu_power_caps = []
-for p in glob.glob("/sys/class/powercap/*/constraint_0_power_limit_uw") + glob.glob("/sys/class/powercap/*/*/constraint_0_power_limit_uw"):
+name_paths = glob.glob("/sys/class/powercap/*/name") + glob.glob("/sys/class/powercap/*/*/name")
+for name_path in sorted({os.path.realpath(path) for path in name_paths}):
     try:
-        name = open(os.path.join(os.path.dirname(p), "name")).read().strip().lower()
-        if not (name.startswith("package") or name.startswith("cpu package")):
-            continue
-        v = int(open(p).read().strip()) / 1e6
-        if math.isfinite(v) and v >= 0.0:
-            cpu_power_caps.append(v)
-    except:
-        pass
+        name = open(name_path).read().strip().lower()
+    except OSError:
+        continue
+    if not name.startswith(("package", "cpu package")):
+        continue
+    zone = os.path.dirname(name_path)
+    try:
+        enabled_path = os.path.join(zone, "enabled")
+        if os.path.isfile(enabled_path) and open(enabled_path).read().strip() == "0":
+            raise ValueError("package power cap disabled")
+        for constraint in glob.glob(os.path.join(zone, "constraint_*_name")):
+            if open(constraint).read().strip() == "long_term":
+                value = int(open(constraint[:-5] + "_power_limit_uw").read().strip()) / 1e6
+                if not math.isfinite(value) or value < 0:
+                    raise ValueError("invalid power cap")
+                cpu_power_caps.append(value)
+                break
+        else:
+            raise ValueError("long-term power cap unavailable")
+    except (OSError, ValueError):
+        cpu_power_caps.clear()
+        break
 if cpu_power_caps:
     total_cpu_power_cap = sum(cpu_power_caps)
     if math.isfinite(total_cpu_power_cap):
-        cpu_power_cap = round(total_cpu_power_cap, 1)
+        cpu_power_cap = total_cpu_power_cap
 
 cpu_power = None
 

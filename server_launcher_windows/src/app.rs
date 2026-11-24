@@ -324,6 +324,8 @@ struct RemoteCommandActivity {
 #[allow(dead_code)]
 pub struct LauncherApp {
     pub active_sidebar_tab: SidebarTab,
+    sidebar_tab_machine: String,
+    machine_sidebar_tabs: HashMap<String, SidebarTab>,
     pub scripts: Vec<CustomScript>,
     pub saved_commands: Vec<SavedCommand>,
     command_catalog_view: Option<commands::CommandCatalogView>,
@@ -781,6 +783,8 @@ impl LauncherApp {
 
         let mut app = Self {
             active_sidebar_tab: SidebarTab::Servers,
+            sidebar_tab_machine: "local".into(),
+            machine_sidebar_tabs: HashMap::new(),
             scripts,
             saved_commands,
             command_catalog_view: None,
@@ -2931,6 +2935,15 @@ impl eframe::App for LauncherApp {
                 self.render_machines_nav_bar(ui);
             });
 
+        if self.sidebar_tab_machine != self.selected_machine {
+            let previous = std::mem::replace(&mut self.sidebar_tab_machine, self.selected_machine.clone());
+            if previous == "local" || self.ssh_hosts.iter().any(|host| host.id == previous) {
+                self.machine_sidebar_tabs.insert(previous, self.active_sidebar_tab);
+            }
+            self.active_sidebar_tab = self.machine_sidebar_tabs.get(&self.selected_machine)
+                .copied().unwrap_or(SidebarTab::Servers);
+        }
+
         if self.selected_machine == "local" {
             // ═════════════════════════════════════════════════════════════════
             // LOCAL PC VIEW: Left Sidebar + Right Main Area (Remaining)
@@ -3012,7 +3025,7 @@ impl eframe::App for LauncherApp {
                 )
                 .show(ctx, |ui| {
                     let machine_id = self.selected_machine.clone();
-                    self.render_remote_pc_dashboard(ui, &machine_id);
+                    ui.push_id(("ssh_workspace", &machine_id), |ui| self.render_remote_pc_dashboard(ui, &machine_id));
                 });
         }
 

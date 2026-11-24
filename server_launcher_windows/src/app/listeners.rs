@@ -1,5 +1,43 @@
 use super::*;
 
+const PROCESS_ROW_GAP: f32 = 6.0;
+
+// Reserve the space for offscreen cards in two batches. Unknown heights use
+// the existing per-row measurement path until the section can be indexed.
+fn process_row_window(
+    ui: &Ui,
+    rows: impl Iterator<Item = (egui::Id, ProcessRowLayout)>,
+    len: usize,
+) -> (std::ops::Range<usize>, f32, f32) {
+    let spacing = ui.spacing().item_spacing.y;
+    let offsets = ui.ctx().data(|data| {
+        let mut offsets = Vec::with_capacity(len + 1);
+        offsets.push(0.0);
+        for (id, layout) in rows {
+            let row = data.get_temp::<MeasuredProcessRow>(id)?;
+            if row.layout != layout || !row.height.is_finite() || row.height <= 0.0 {
+                return None;
+            }
+            offsets.push(offsets.last()? + row.height + spacing + PROCESS_ROW_GAP);
+        }
+        Some(offsets)
+    });
+    let Some(offsets) = offsets else { return (0..len, 0.0, 0.0); };
+
+    let viewport = ui.clip_rect().expand(80.0).translate(-ui.cursor().min.to_vec2());
+    let start = offsets[1..].partition_point(|&end| end < viewport.top());
+    let end = offsets[..len].partition_point(|&start| start <= viewport.bottom());
+    debug_assert!(start <= end && end <= len);
+    (start..end, offsets[start], offsets[len] - offsets[end])
+}
+
+fn reserve_process_rows(ui: &mut Ui, height: f32) {
+    if height > 0.0 {
+        let size = egui::vec2(ui.available_width(), (height - ui.spacing().item_spacing.y).max(0.0));
+        ui.allocate_space(size);
+    }
+}
+
 impl LauncherApp {
     pub(in crate::app) fn render_inline_terminal(
         &mut self,
@@ -206,7 +244,6 @@ impl LauncherApp {
                 let unmanaged_raw: Vec<_> = listeners
                     .iter()
                     .filter(|listener| !listener_is_managed(listener, &managed_pids, &self.sys))
-                    .cloned()
                     .collect();
 
                 let unmanaged_listeners: Vec<_> = if q.is_empty() {
@@ -304,21 +341,31 @@ impl LauncherApp {
                             );
                         });
                 } else {
-                    for listener in &unmanaged_listeners {
-                        let metrics = if self.show_other_process_metrics {
+                    let scale = ui.ctx().pixels_per_point().to_bits();
+                    let running_row = |ui: &Ui, app: &Self, listener: &crate::scanner::ListenerInfo| {
+                        let metrics = if app.show_other_process_metrics {
                             listener.pid.map(|pid| {
-                                let (cpu, mem) = self.other_metrics.get(&pid).copied().unwrap_or((0.0, 0.0));
+                                let (cpu, mem) = app.other_metrics.get(&pid).copied().unwrap_or((0.0, 0.0));
                                 (cpu.to_bits(), mem.to_bits())
                             })
                         } else { None };
                         let row_layout = ProcessRowLayout {
-                            width: ui.available_width().to_bits(), scale: ui.ctx().pixels_per_point().to_bits(),
-                            expanded: self.expanded_listeners.contains(&listener.port),
-                            console: self.open_inline_terminals.contains(&listener.port), metrics,
+                            width: ui.available_width().to_bits(), scale,
+                            expanded: app.expanded_listeners.contains(&listener.port),
+                            console: app.open_inline_terminals.contains(&listener.port), metrics,
                         };
                         let height_id = ui.make_persistent_id(("listener_measured_height", &listener.proto, listener.port, listener.pid));
+                        (height_id, row_layout)
+                    };
+                    let (running, before, after) = process_row_window(
+                        ui, unmanaged_listeners.iter().map(|listener| running_row(ui, self, listener)),
+                        unmanaged_listeners.len(),
+                    );
+                    reserve_process_rows(ui, before);
+                    for listener in &unmanaged_listeners[running] {
+                        let (height_id, row_layout) = running_row(ui, self, listener);
                         if skip_measured_process_row(ui, height_id, row_layout) {
-                            ui.add_space(6.0);
+                            ui.add_space(PROCESS_ROW_GAP);
                             continue;
                         }
                         let (cmd_opt, cwd_opt) = listener.pid
@@ -378,13 +425,13 @@ impl LauncherApp {
                                             let identified = listener.pid.is_some() && listener.start_marker.is_some();
                                             if ui.add_enabled(identified, stop).on_hover_text("Stop this process")
                                                 .on_disabled_hover_text("The scanner could not verify the process identity.").clicked() {
-                                                to_kill_pid = Some(listener.clone());
+                                                to_kill_pid = Some((*listener).clone());
                                             }
                                             let restart = egui::Button::new(RichText::new(format!("{} Restart", crate::lucide::REFRESH_CW)).size(10.5).color(p.accent))
                                                 .fill(p.accent_subtle).rounding(Rounding::same(6.0)).min_size(egui::vec2(76.0, 24.0));
                                             if ui.add_enabled(identified && cfg!(target_os = "linux") && !cmd_str.is_empty(), restart).on_hover_text("Restart this process")
                                                 .on_disabled_hover_text("Restart requires a verified process and its launch command.").clicked() {
-                                                to_restart_pid = Some(listener.clone());
+                                                to_restart_pid = Some((*listener).clone());
                                             }
                                         });
                                     });
@@ -502,19 +549,29 @@ impl LauncherApp {
                         ui.ctx().data_mut(|data| data.insert_temp(height_id, MeasuredProcessRow {
                             layout: row_layout, height: row.response.rect.height(),
                         }));
-                        ui.add_space(6.0);
+                        ui.add_space(PROCESS_ROW_GAP);
                     }
 
-                    // Render any stopped external processes
-                    for (port, name, cmd, cwd) in &visible_stopped {
+                    reserve_process_rows(ui, after);
+
+                    let stopped_row = |ui: &Ui, app: &Self, port: &u16| {
                         let row_layout = ProcessRowLayout {
-                            width: ui.available_width().to_bits(), scale: ui.ctx().pixels_per_point().to_bits(),
-                            expanded: self.expanded_listeners.contains(port),
-                            console: self.open_inline_terminals.contains(port), metrics: None,
+                            width: ui.available_width().to_bits(), scale,
+                            expanded: app.expanded_listeners.contains(port),
+                            console: app.open_inline_terminals.contains(port), metrics: None,
                         };
                         let height_id = ui.make_persistent_id(("stopped_measured_height", *port));
+                        (height_id, row_layout)
+                    };
+                    let (stopped, before, after) = process_row_window(
+                        ui, visible_stopped.iter().map(|(port, ..)| stopped_row(ui, self, port)),
+                        visible_stopped.len(),
+                    );
+                    reserve_process_rows(ui, before);
+                    for (port, name, cmd, cwd) in &visible_stopped[stopped] {
+                        let (height_id, row_layout) = stopped_row(ui, self, port);
                         if skip_measured_process_row(ui, height_id, row_layout) {
-                            ui.add_space(6.0);
+                            ui.add_space(PROCESS_ROW_GAP);
                             continue;
                         }
                         let row = ui.push_id(("stopped_process_card", *port), |ui| Frame::none()
@@ -674,8 +731,9 @@ impl LauncherApp {
                         ui.ctx().data_mut(|data| data.insert_temp(height_id, MeasuredProcessRow {
                             layout: row_layout, height: row.response.rect.height(),
                         }));
-                        ui.add_space(6.0);
+                        ui.add_space(PROCESS_ROW_GAP);
                     }
+                    reserve_process_rows(ui, after);
                 }
 
                 if let Some((name, pid, port, cmd, cwd)) = to_launch_external_terminal {

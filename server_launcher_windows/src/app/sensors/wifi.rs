@@ -59,7 +59,7 @@ impl LauncherApp {
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(12.0))
-                    .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                    .inner_margin(egui::Margin::symmetric(18.0, 14.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
 
@@ -73,7 +73,7 @@ impl LauncherApp {
                                 } else {
                                     format!("WI-FI & NETWORK • {}", wifi_snap.interface.to_uppercase())
                                 };
-                                ui.label(RichText::new(overline).size(9.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new(overline).size(10.5).monospace().strong().color(p.text_muted));
                             });
 
                             ui.add_space(3.0);
@@ -85,7 +85,7 @@ impl LauncherApp {
                             let title = match is_wireless {
                                 Some(false) if is_remote => "Network Subsystem & Host Interface",
                                 None if is_remote => "Network Interface",
-                                _ => "Wireless Network & Wi-Fi",
+                                _ => "Wi-Fi",
                             };
                             let (status_text, dot_col) = if is_remote {
                                 match remote_wifi_state {
@@ -414,7 +414,7 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     ui.vertical(|ui| {
                                         let remote_wifi = is_remote && is_wireless == Some(true);
-                                        let r_title = if is_remote && !remote_wifi { "TOPOLOGY" } else { "ACCESS POINT" };
+                                        let r_title = if is_remote && !remote_wifi { "Network interface" } else { "Access point" };
                                         let r_sub = if is_remote && !remote_wifi { "Host NIC" } else { "Connected AP" };
                                         ui.label(RichText::new(r_title).size(14.0).strong().color(p.text_primary));
                                         ui.label(RichText::new(r_sub).size(9.0).monospace().color(p.text_muted));
@@ -733,7 +733,7 @@ impl LauncherApp {
 
                                         ui.vertical(|ui| {
                                             ui.horizontal(|ui| {
-                                                ui.label(RichText::new("IP Config").size(13.5).strong().color(p.text_primary));
+                                                ui.label(RichText::new("IP configuration").size(13.5).strong().color(p.text_primary));
                                                 let badge_txt = "NETWORK";
                                                 Frame::none()
                                                     .fill(accent_with_alpha(accent, 20))

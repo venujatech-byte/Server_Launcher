@@ -155,7 +155,7 @@ impl LauncherApp {
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(12.0))
-                    .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                    .inner_margin(egui::Margin::symmetric(18.0, 14.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
 
@@ -163,8 +163,8 @@ impl LauncherApp {
                             // Row 1: Overline / Subsystem Tag
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                ui.label(RichText::new("●").size(7.0).color(accent));
-                                ui.label(RichText::new("BLUETOOTH").size(9.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new(crate::lucide::BLUETOOTH).size(15.0).color(accent));
+                                ui.label(RichText::new("BLUETOOTH").size(10.5).monospace().strong().color(p.text_muted));
                             });
 
                             ui.add_space(2.0);
@@ -459,7 +459,7 @@ impl LauncherApp {
 
                                     ui.add_space(4.0);
                                     let clean_name = crate::bluetooth::clean_device_name(&dev.name);
-                                    ui.label(RichText::new(&clean_name).size(12.5).strong().color(p.text_primary));
+                                    ui.add(egui::Label::new(RichText::new(&clean_name).size(14.0).strong().color(p.text_primary)).truncate()).on_hover_text(&clean_name);
                                     ui.label(RichText::new(&dev.mac).size(8.5).monospace().color(p.text_muted));
 
                                     ui.add_space(8.0);
@@ -487,7 +487,7 @@ impl LauncherApp {
 
                                     // Action buttons (Connect / Disconnect + Unpair)
                                     ui.horizontal(|ui| {
-                                        let btn_w = ui.available_width() - 32.0;
+                                        let btn_w = (ui.available_width() - 26.0 - ui.spacing().item_spacing.x).max(0.0);
                                         if dev.connected {
                                             let (dis_rect, dis_resp) = ui.allocate_exact_size(egui::vec2(btn_w, 26.0), egui::Sense::click());
                                             let dis_bg = if dis_resp.hovered() { p.bg_button_hover } else { p.bg_subtle };

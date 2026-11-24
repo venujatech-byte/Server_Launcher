@@ -26,19 +26,19 @@ impl LauncherApp {
                     .rounding(Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(16.0, 14.0))
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.vertical(|ui| {
-                                ui.label(RichText::new("Network data usage").size(18.0).strong().color(p.text_primary));
-                                ui.label(
-                                    RichText::new(if host_id.is_some() { "Remote counters · all interfaces, including loopback and virtual" } else if cfg!(windows) { "Reported interfaces · some disconnected or virtual interfaces may be omitted" } else { "Local counters · all interfaces, including loopback and virtual" })
-                                        .size(10.5)
-                                        .color(p.text_muted),
-                                );
-                            });
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(RichText::new(if snap.network_stats_available { format!("{} interfaces", interfaces.len()) } else { "Interface counters unavailable".to_string() }).size(10.5).color(p.text_secondary));
-                            });
+                        ui.set_width(ui.available_width());
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new(crate::lucide::ACTIVITY).size(15.0).color(accent));
+                            ui.label(RichText::new("NETWORK").size(10.5).monospace().strong().color(p.text_muted));
+                            ui.label(RichText::new(if snap.network_stats_available { format!("{} interfaces", interfaces.len()) } else { "Interface counters unavailable".to_string() }).size(10.5).color(p.text_secondary));
                         });
+                        ui.add_space(4.0);
+                        ui.label(RichText::new("Network data usage").size(18.0).strong().color(p.text_primary));
+                        ui.label(
+                            RichText::new(if host_id.is_some() { "Remote counters · all interfaces, including loopback and virtual" } else if cfg!(windows) { "Reported interfaces · some disconnected or virtual interfaces may be omitted" } else { "Local counters · all interfaces, including loopback and virtual" })
+                                .size(10.5)
+                                .color(p.text_muted),
+                        );
                     });
 
                 ui.add_space(4.0);

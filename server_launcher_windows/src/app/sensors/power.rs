@@ -109,7 +109,7 @@ impl LauncherApp {
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(12.0))
-                    .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                    .inner_margin(egui::Margin::symmetric(18.0, 14.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
 
@@ -118,7 +118,7 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
                                 ui.label(RichText::new("●").size(7.0).color(accent));
-                                ui.label(RichText::new("POWER & BATTERY").size(9.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new("POWER & BATTERY").size(10.5).monospace().strong().color(p.text_muted));
                             });
 
                             ui.add_space(2.0);
@@ -251,7 +251,7 @@ impl LauncherApp {
                                         let bat_name = bat.map(|b| b.name.as_str()).unwrap_or("Battery");
                                         let bat_mfg = bat.map(|b| b.manufacturer.trim()).filter(|s| !s.is_empty()).unwrap_or("Unknown manufacturer");
                                         let bat_model = bat.map(|b| b.model_name.trim()).filter(|s| !s.is_empty()).unwrap_or("Unknown model");
-                                        let bat_hdr = format!("CELL TELEMETRY // {} ({} {})", bat_name, bat_mfg, bat_model);
+                                        let bat_hdr = format!("Battery · {} ({} {})", bat_name, bat_mfg, bat_model);
                                         ui.label(RichText::new(bat_hdr).size(10.0).monospace().strong().color(p.text_muted));
 
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -311,7 +311,7 @@ impl LauncherApp {
                                                 ui.add_space(4.0);
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 2.0;
-                                                    ui.label(RichText::new(format!("{}", reported_sensor_value(Some(bat_pct), 0))).size(24.0).strong().color(p.text_primary));
+                                                    ui.label(RichText::new(format!("{}", reported_sensor_value(Some(bat_pct), 0))).size(28.0).strong().color(p.text_primary));
                                                     if bat_pct.is_finite() { ui.label(RichText::new("%").size(12.0).color(p.text_muted)); }
                                                 });
                                                 ui.add_space(8.0);
@@ -355,7 +355,7 @@ impl LauncherApp {
                                                 ui.add_space(4.0);
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 2.0;
-                                                    ui.label(RichText::new(format!("{}", reported_sensor_value(Some(remaining_wh), 1))).size(24.0).strong().color(p.text_primary));
+                                                    ui.label(RichText::new(format!("{}", reported_sensor_value(Some(remaining_wh), 1))).size(28.0).strong().color(p.text_primary));
                                                     ui.label(RichText::new(format!("/ {} Wh", reported_sensor_value(Some(full_wh), 1))).size(11.0).color(p.text_muted));
                                                 });
                                                 ui.add_space(8.0);
@@ -398,10 +398,10 @@ impl LauncherApp {
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 2.0;
                                                     if let Some(cycles) = bat.and_then(|battery| battery.cycle_count) {
-                                                        ui.label(RichText::new(format!("{}", cycles)).size(24.0).strong().color(p.text_primary));
+                                                        ui.label(RichText::new(format!("{}", cycles)).size(28.0).strong().color(p.text_primary));
                                                         ui.label(RichText::new("cycles").size(11.0).color(p.text_muted));
                                                     } else {
-                                                        ui.label(RichText::new("—").size(24.0).strong().color(p.text_primary));
+                                                        ui.label(RichText::new("—").size(28.0).strong().color(p.text_primary));
                                                         ui.label(RichText::new("unavailable").size(11.0).color(p.text_muted));
                                                     }
                                                 });
@@ -637,7 +637,7 @@ impl LauncherApp {
                                 ui.add_space(2.0);
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 3.0;
-                                    ui.label(RichText::new(format!("{:.1}", watts_val)).size(26.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new(format!("{:.1}", watts_val)).size(32.0).strong().color(p.text_primary));
                                     ui.label(RichText::new("W").size(12.0).color(p.text_muted));
                                 });
 

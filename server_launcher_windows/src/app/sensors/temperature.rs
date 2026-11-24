@@ -64,7 +64,7 @@ impl LauncherApp {
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(12.0))
-                    .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                    .inner_margin(egui::Margin::symmetric(18.0, 14.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
 
@@ -89,7 +89,7 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
                                 ui.label(RichText::new(crate::lucide::THERMOMETER).size(15.0).color(accent));
-                                ui.label(RichText::new(tag_str).size(9.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new(tag_str).size(10.5).monospace().strong().color(p.text_muted));
                             });
 
                             ui.add_space(2.0);
@@ -250,7 +250,7 @@ impl LauncherApp {
                         ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
-                                let matrix_title = if is_remote { "Thermal Sensors Matrix" } else { "Thermal Sensors Matrix" };
+                                let matrix_title = "Individual sensors";
                                 ui.label(RichText::new(matrix_title).size(14.0).strong().color(p.text_primary));
                             });
 
@@ -281,45 +281,37 @@ impl LauncherApp {
                             ui.label(RichText::new("No additional thermal sensors reported").size(11.0).color(p.text_muted));
                         }
 
-                        // 4 columns x N rows
-                        for chunk in thermistors.chunks(4) {
-                            ui.columns(4, |cols| {
-                                for (i, (name, val, max_t, sub_note, status, accent)) in chunk.iter().enumerate() {
-                                    let c = &mut cols[i];
-                                    Frame::none()
-                                        .fill(p.bg_input)
-                                        .rounding(Rounding::same(6.0))
-                                        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                                        .show(c, |ui| {
-                                            ui.set_width(ui.available_width());
-                                            ui.horizontal(|ui| {
-                                                ui.label(RichText::new(name).size(9.0).monospace().strong().color(p.text_secondary));
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new(*status).size(7.5).monospace().strong().color(p.text_secondary));
-                                                });
-                                            });
-
-                                            ui.add_space(3.0);
-                                            ui.horizontal(|ui| {
-                                                ui.label(RichText::new(temperature_text(*val)).size(16.0).strong().color(p.text_primary));
-                                                ui.label(RichText::new("°C").size(10.0).color(p.text_muted));
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new(sub_note).size(8.0).monospace().color(p.text_muted));
-                                                });
-                                            });
-
-                                            ui.add_space(4.0);
-                                            let pct = if max_t.is_finite() { (val / max_t).clamp(0.0, 1.0) } else { 0.0 };
-                                            let (b_rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 3.0), egui::Sense::hover());
-                                            ui.painter().rect_filled(b_rect, Rounding::same(1.5), p.bg_button);
-                                            let mut f_rect = b_rect;
-                                            f_rect.set_width(b_rect.width() * pct);
-                                            ui.painter().rect_filled(f_rect, Rounding::same(1.5), *accent);
+                        sensor_card_columns(ui, thermistors.len(), |ui, index| {
+                            let (name, val, max_t, sub_note, status, accent) = &thermistors[index];
+                            Frame::none()
+                                .fill(p.bg_input)
+                                .rounding(Rounding::same(8.0))
+                                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.horizontal(|ui| {
+                                        ui.add(egui::Label::new(RichText::new(name).size(10.0).monospace().strong().color(p.text_secondary)).truncate()).on_hover_text(name);
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            ui.label(RichText::new(*status).size(7.5).monospace().strong().color(p.text_secondary));
                                         });
-                                }
-                            });
-                            ui.add_space(6.0);
-                        }
+                                    });
+
+                                    ui.add_space(3.0);
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(temperature_text(*val)).size(22.0).strong().color(p.text_primary));
+                                        ui.label(RichText::new("°C").size(10.0).color(p.text_muted));
+                                    });
+
+                                    ui.label(RichText::new(sub_note).size(10.0).monospace().color(p.text_muted));
+                                    ui.add_space(4.0);
+                                    let pct = if max_t.is_finite() { (val / max_t).clamp(0.0, 1.0) } else { 0.0 };
+                                    let (b_rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 3.0), egui::Sense::hover());
+                                    ui.painter().rect_filled(b_rect, Rounding::same(1.5), p.bg_button);
+                                    let mut f_rect = b_rect;
+                                    f_rect.set_width(b_rect.width() * pct);
+                                    ui.painter().rect_filled(f_rect, Rounding::same(1.5), *accent);
+                                });
+                        });
                     });
 
                 ui.add_space(10.0);

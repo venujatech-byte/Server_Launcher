@@ -62,6 +62,16 @@ impl LauncherApp {
                     if ui.add(btn_add).on_hover_text("Start a new server or process on remote host").clicked() {
                         self.remote_start_server_modal.open_for_host(host);
                     }
+
+                    let label = if is_scanning { "Scanning…" } else { "Refresh" };
+                    let refresh = egui::Button::new(
+                        RichText::new(format!("{} {label}", crate::lucide::REFRESH_CW)).size(11.0).color(p.text_secondary),
+                    )
+                    .fill(p.bg_button)
+                    .rounding(Rounding::same(8.0));
+                    if ui.add_enabled(!is_scanning, refresh).on_hover_text("Refresh listening ports").clicked() {
+                        self.trigger_remote_scan(host);
+                    }
                 });
             });
             ui.add_space(2.0);
@@ -87,7 +97,7 @@ impl LauncherApp {
                 let status = if is_scanning {
                     "Retrying port scan…"
                 } else if listeners.is_empty() {
-                    "Port scan failed. Use Scan Ports to retry."
+                    "Port scan failed. Use Refresh to retry."
                 } else {
                     "Port scan failed. Showing the last successful results."
                 };
@@ -142,7 +152,7 @@ impl LauncherApp {
                         if is_scanning {
                             ui.label(RichText::new("Scanning remote listening ports (ss -tulpn)...").size(11.0).color(p.text_secondary));
                         } else {
-                            ui.label(RichText::new("No active listening ports detected on remote PC. Click 'Scan Ports' or '+ Start Server'.").size(11.0).color(Color32::from_rgb(120, 128, 145)));
+                            ui.label(RichText::new("No active listening ports detected on remote PC. Click 'Refresh' or '+ Start Server'.").size(11.0).color(Color32::from_rgb(120, 128, 145)));
                         }
                     });
             } else if visible_listeners.is_empty() && visible_stopped.is_empty() {

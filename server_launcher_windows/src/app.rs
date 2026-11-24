@@ -2877,11 +2877,6 @@ impl eframe::App for LauncherApp {
 
                         if let Some(ref host) = remote_host_opt {
                             // REMOTE SSH PC CONTROLS (Moved up here)
-                            let is_scanning = {
-                                let map = self.remote_scanning.lock().unwrap();
-                                map.contains_key(&host.id)
-                            };
-
                             let btn_edit = egui::Button::new(
                                 RichText::new(format!("{} Edit", crate::lucide::SETTINGS))
                                     .size(10.5)
@@ -2921,21 +2916,6 @@ impl eframe::App for LauncherApp {
                             .min_size(egui::vec2(76.0, 22.0));
                             if ui.add(btn_ext).on_hover_text("Open desktop terminal connected via SSH").clicked() {
                                 let _ = launch_external_ssh_terminal(host);
-                            }
-
-                            let scan_label = if is_scanning { "Scanning..." } else { "Scan Ports" };
-                            let btn_scan = egui::Button::new(
-                                RichText::new(scan_label)
-                                    .size(10.5)
-                                    .strong()
-                                    .color(p.accent),
-                            )
-                            .fill(p.bg_button)
-                            .stroke(Stroke::NONE)
-                            .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(70.0, 22.0));
-                            if ui.add(btn_scan).clicked() {
-                                self.trigger_remote_scan(host);
                             }
 
                             // Remote Host Controls: Shut Down & Restart Device

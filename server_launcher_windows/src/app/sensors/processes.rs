@@ -897,8 +897,10 @@ impl LauncherApp {
                 // ═════════════════════════════════════════════════════════════
                 // WINDOWS TASK MANAGER TOOLBAR (Clean, Authentic Nocturnal Command)
                 // ═════════════════════════════════════════════════════════════
+                let control_height = 32.0;
+                let search_inner_height = control_height - 8.0;
                 ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), 32.0),
+                    egui::vec2(ui.available_width(), control_height),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
                         // Left: Title + Process count badge
@@ -929,7 +931,7 @@ impl LauncherApp {
                                 )
                                 .fill(accent)
                                 .rounding(Rounding::same(999.0))
-                                .min_size(egui::vec2(0.0, 32.0))
+                                .min_size(egui::vec2(0.0, control_height))
                             } else {
                                 egui::Button::new(
                                     RichText::new(format!("{} End task", crate::lucide::X))
@@ -939,7 +941,7 @@ impl LauncherApp {
                                 .fill(p.bg_button.gamma_multiply(0.6))
                                 .stroke(Stroke::NONE)
                                 .rounding(Rounding::same(999.0))
-                                .min_size(egui::vec2(0.0, 32.0))
+                                .min_size(egui::vec2(0.0, control_height))
                             };
                             let btn_end_resp = ui.add(btn_end).on_hover_text(if has_selection {
                                 "Click to terminate the selected process"
@@ -956,11 +958,12 @@ impl LauncherApp {
                                 .rounding(Rounding::same(999.0))
                                 .inner_margin(egui::Margin::symmetric(10.0, 4.0))
                                 .show(ui, |ui| {
+                                    ui.spacing_mut().interact_size.y = search_inner_height;
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
                                         ui.label(RichText::new(crate::lucide::SEARCH).size(11.5).color(p.text_muted));
                                         ui.add_sized(
-                                            [170.0, 24.0],
+                                            [170.0, search_inner_height],
                                             egui::TextEdit::singleline(&mut self.sensors_search_query)
                                                 .hint_text("Search by name or PID...")
                                                 .vertical_align(egui::Align::Center)
@@ -972,7 +975,7 @@ impl LauncherApp {
                                                     egui::Button::new(RichText::new(crate::lucide::X).size(10.5).color(p.text_muted))
                                                         .fill(Color32::TRANSPARENT)
                                                         .stroke(Stroke::NONE)
-                                                        .min_size(egui::vec2(20.0, 24.0)),
+                                                        .min_size(egui::vec2(20.0, search_inner_height)),
                                                 )
                                                 .on_hover_text("Clear search filter")
                                                 .clicked()
@@ -992,7 +995,7 @@ impl LauncherApp {
                                 ui.visuals_mut().widgets.active.rounding = Rounding::same(999.0);
                                 ui.visuals_mut().widgets.open.rounding = Rounding::same(999.0);
                                 ui.spacing_mut().button_padding = egui::vec2(10.0, 5.0);
-                                ui.spacing_mut().interact_size.y = 32.0;
+                                ui.spacing_mut().interact_size.y = control_height;
 
                                 // Refresh Interval Pill ComboBox
                                 let interval_label = match self.sensors_refresh_interval {

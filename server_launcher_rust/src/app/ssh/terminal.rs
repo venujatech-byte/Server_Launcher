@@ -188,25 +188,24 @@ impl LauncherApp {
                     ui.spacing_mut().scroll.floating = false;
                     ui.spacing_mut().item_spacing.y = 0.0;
                     let snapshot = logs.lock().unwrap().clone();
-                    let rows: Vec<_> = snapshot.iter().flat_map(|entry| {
-                        entry.text.split('\n').map(move |line| (&entry.kind, line))
-                    }).collect();
-                    ScrollArea::both().id_salt(("remote_term_scroll", &host.id)).stick_to_bottom(true)
+                    ScrollArea::vertical().id_salt(("remote_term_output", &host.id)).stick_to_bottom(true)
                         .auto_shrink([false, false]).min_scrolled_height(output_height).max_height(output_height)
-                        .show_rows(ui, 16.0, rows.len(), |ui, visible| {
-                            for &(kind, line) in &rows[visible] {
-                                let color = match kind {
+                        .show(ui, |ui| {
+                            let width = ui.available_width();
+                            for entry in &snapshot {
+                                let color = match entry.kind {
                                     LogKind::Stdout => p.log_stdout,
                                     LogKind::Stderr | LogKind::Error => p.log_stderr,
                                     LogKind::Stdin => p.text_secondary,
                                     LogKind::Launcher => p.log_launcher,
                                     LogKind::Warning => p.log_warning,
                                 };
-                                let text = egui::text::LayoutJob::single_section(line.to_owned(), egui::TextFormat {
+                                let mut text = egui::text::LayoutJob::single_section(entry.text.to_string(), egui::TextFormat {
                                     font_id: egui::FontId::monospace(11.5), color, line_height: Some(16.0),
                                     ..Default::default()
                                 });
-                                ui.add_sized([0.0, 16.0], egui::Label::new(text).extend().selectable(true));
+                                text.wrap.max_width = width;
+                                ui.add(egui::Label::new(text).wrap().selectable(true));
                             }
                         });
                 });

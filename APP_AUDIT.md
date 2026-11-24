@@ -112,3 +112,5 @@ Command terminals now reuse the bounded stream reader used by server and SSH out
 Linux server reattachment now streams recent journal lines through the bounded terminal reader and reaps the journal reader process. The query stays within the current boot to avoid showing logs for the same numeric PID from earlier boots.
 
 The local external terminal now quotes Unix display text and directory operands and uses a uniquely named owner-only bootstrap script. On Windows the working directory is set on the child process directly, and cmd opens a new console with its default title.
+
+Unix server launch in an external console now passes the environment and working directory directly to the child, quotes its title, and uses an owner-only temporary bootstrap script. Its legacy PID marker is created without overwriting an existing file.

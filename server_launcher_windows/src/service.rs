@@ -1201,39 +1201,38 @@ fn spawn_own_console(
 
     #[cfg(not(target_os = "windows"))]
     {
-        let temp_dir = std::env::temp_dir();
-        let script_path = temp_dir.join(format!("launcher_{}.sh", key));
-        let pid_path = temp_dir.join(format!("launcher_{}.pid", key));
-        let pid_str = pid_path.to_string_lossy().to_string();
-
-        let mut lines = Vec::new();
-        lines.push("#!/usr/bin/env bash".to_string());
-        lines.push(format!("echo $$ > \"{}\"", pid_str));
-        lines.push(format!("trap 'rm -f \"{}\"' EXIT", pid_str));
-        for (k, v) in env_vars {
-            lines.push(format!("export {}=\"{}\"", k, v.replace('"', "\\\"")));
+        use std::io::Write;
+        if key.contains(['/', '\\']) {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid server key"));
         }
-        if !cwd_str.is_empty() && cwd_str != "." {
-            lines.push(format!("cd \"{}\"", cwd_str));
-        }
-        lines.push(format!("echo -ne \"\\033]0;Server - {}\\007\"", name));
-        lines.push(cmd_str.to_string());
-        lines.push("EXIT_CODE=$?".to_string());
-        lines.push("echo \"\"".to_string());
-        lines.push("echo \"[launcher] Process exited with code $EXIT_CODE.\"".to_string());
-        lines.push("read -n 1 -s -r -p \"Press any key to close this terminal...\"".to_string());
 
-        let _ = std::fs::write(&script_path, lines.join("\n"));
+        let pid_path = std::env::temp_dir().join(format!("launcher_{key}.pid"));
+        let quote = crate::remote::shell_quote;
+        let mut script = tempfile::Builder::new().prefix("launcher-server-").suffix(".sh").tempfile()?;
+        write!(script, r#"#!/usr/bin/env bash
+rm -f -- "$0"
+pid_file={pid_path}
+if (umask 077; set -o noclobber; printf '%s\n' "$$" > "$pid_file") 2>/dev/null; then
+    trap 'rm -f -- "$pid_file"' EXIT
+fi
+printf '\033]0;%s\007' {title}
+bash -c {command}
+status=$?
+printf '\n[launcher] Process exited with code %s.\n' "$status"
+read -n 1 -s -r -p 'Press any key to close this terminal...'
+exit "$status"
+"#,
+            pid_path = quote(&pid_path.to_string_lossy()),
+            title = quote(&format!("Server - {}", name.replace(char::is_control, ""))),
+            command = quote(cmd_str),
+        )?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            if let Ok(metadata) = std::fs::metadata(&script_path) {
-                let mut perms = metadata.permissions();
-                perms.set_mode(0o755);
-                let _ = std::fs::set_permissions(&script_path, perms);
-            }
+            script.as_file().set_permissions(std::fs::Permissions::from_mode(0o700))?;
         }
 
+        let script_path = script.into_temp_path();
         let script_str = script_path.to_string_lossy().to_string();
         let chosen = find_terminal();
 
@@ -1245,22 +1244,22 @@ fn spawn_own_console(
             }
             cmd.arg(&script_str);
         } else {
-            cmd = Command::new("sh");
-            cmd.args(&["-c", &script_str]);
+            cmd = Command::new("bash");
+            cmd.arg(&script_str);
         }
 
         if !cwd_str.is_empty() && cwd_str != "." {
             cmd.current_dir(cwd_str);
         }
-        for (k, v) in env_vars {
-            cmd.env(k, v);
-        }
+        cmd.envs(env_vars);
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
             cmd.process_group(0);
         }
-        cmd.spawn()
+        let child = cmd.spawn()?;
+        script_path.keep().map_err(|error| error.error)?;
+        Ok(child)
     }
 }
 

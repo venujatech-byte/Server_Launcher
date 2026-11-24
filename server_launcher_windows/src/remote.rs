@@ -211,7 +211,7 @@ pub fn test_ssh_connection(host: &SshRemoteHost) -> Result<String, String> {
     }
 
     let target = format!("{}@{}", host.user.trim(), host.host.trim());
-    cmd.arg(&target).arg("echo __LAUNCHER_SSH_OK__ && uname -s -r -m");
+    cmd.arg("--").arg(&target).arg("echo __LAUNCHER_SSH_OK__ && uname -s -r -m");
 
     match cmd.output() {
         Ok(out) => {
@@ -265,7 +265,7 @@ pub fn build_ssh_command(host: &SshRemoteHost, remote_cmd: &str) -> Command {
     }
 
     let target = format!("{}@{}", host.user.trim(), host.host.trim());
-    cmd.arg(&target);
+    cmd.arg("--").arg(&target);
 
     let full_remote_cmd = if !host.remote_cwd.trim().is_empty() {
         format!("cd {} 2>/dev/null || true; {}", shell_quote(host.remote_cwd.trim()), remote_cmd)
@@ -428,222 +428,60 @@ pub fn parse_remote_listeners_str(text: &str) -> Vec<RemoteListener> {
 
 /// Launch an external terminal running an interactive SSH session to this host
 pub fn launch_external_ssh_terminal(host: &SshRemoteHost) -> Result<(), String> {
-    let script_dir = std::env::temp_dir();
-    let script_path = script_dir.join(format!("launcher_ssh_{}.sh", host.id));
-
-    let key_arg = if !host.key_path.trim().is_empty() {
-        format!("-i \"{}\"", host.key_path.trim())
-    } else {
-        String::new()
-    };
-
-    let target = format!("{}@{}", host.user.trim(), host.host.trim());
-    let cwd_cmd = if !host.remote_cwd.trim().is_empty() {
-        format!(" -t \"cd '{}' && exec bash -l\"", host.remote_cwd.trim())
-    } else {
-        String::new()
-    };
-
-    let (pass_block, ssh_cmd) = if !host.password.trim().is_empty() {
-        let escaped_pass = host.password.trim().replace('"', "\\\"").replace('$', "\\$");
-        (
-            format!(
-r#"if command -v sshpass >/dev/null 2>&1; then
-    export SSHPASS="{}"
-    SSH_BIN="sshpass -e ssh"
-else
-    echo "Note: sshpass not installed. Please enter password if prompted."
-    SSH_BIN="ssh"
-fi
-"#,
-                escaped_pass
-            ),
-            "$SSH_BIN"
-        )
-    } else {
-        (String::new(), "ssh")
-    };
-
-    let script_content = format!(
-r#"#!/usr/bin/env bash
-echo "=========================================================="
-echo " Server Launcher: Remote SSH Terminal"
-echo " Host   : {name} ({target}:{port})"
-echo "=========================================================="
-echo "Connecting to {target}..."
-{pass_block}
-{ssh_cmd} -p {port} {key_arg} {target}{cwd_cmd}
-echo ""
-echo "SSH connection closed. Press enter to exit."
-read -r
-"#,
-        name = host.name,
-        target = target,
-        port = host.port,
-        key_arg = key_arg,
-        cwd_cmd = cwd_cmd,
-        pass_block = pass_block,
-        ssh_cmd = ssh_cmd
-    );
-
-    let _ = std::fs::write(&script_path, script_content);
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(metadata) = std::fs::metadata(&script_path) {
-            let mut perms = metadata.permissions();
-            perms.set_mode(0o755);
-            let _ = std::fs::set_permissions(&script_path, perms);
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let script_str = script_path.to_string_lossy().to_string();
-        let chosen = crate::service::find_terminal();
-        let mut cmd;
-        if let Some((term, args)) = chosen {
-            cmd = Command::new(term);
-            for arg in args {
-                cmd.arg(arg);
-            }
-            cmd.arg(&script_str);
-        } else {
-            cmd = Command::new("x-terminal-emulator");
-            cmd.args(&["-e", &script_str]);
-        }
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            cmd.process_group(0);
-        }
-        cmd.spawn().map_err(|e| format!("Failed to spawn terminal: {}", e))?;
-        Ok(())
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let mut cmd = Command::new("cmd.exe");
-        cmd.args(&["/K", &format!("ssh -p {} {} {}", host.port, key_arg, target)]);
-        cmd.spawn().map_err(|e| format!("Failed to spawn cmd: {}", e))?;
-        Ok(())
-    }
+    launch_ssh_in_terminal(host, None)
 }
 
-/// Launch an external terminal running a specific command on this remote host
+/// Launch an external terminal running a specific command on this remote host.
 pub fn launch_external_ssh_command(host: &SshRemoteHost, cmd_to_run: &str) -> Result<(), String> {
-    let script_dir = std::env::temp_dir();
-    let script_path = script_dir.join(format!(
-        "launcher_ssh_cmd_{}.sh",
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
-    ));
+    launch_ssh_in_terminal(host, Some(cmd_to_run))
+}
 
-    let key_arg = if !host.key_path.trim().is_empty() {
-        format!("-i \"{}\"", host.key_path.trim())
-    } else {
-        String::new()
-    };
-
-    let target = format!("{}@{}", host.user.trim(), host.host.trim());
-    let remote_cd = if !host.remote_cwd.trim().is_empty() {
-        format!("cd '{}' && ", host.remote_cwd.trim())
-    } else {
-        String::new()
-    };
-
-    let (pass_block, ssh_cmd) = if !host.password.trim().is_empty() {
-        let escaped_pass = host.password.trim().replace('"', "\\\"").replace('$', "\\$");
-        (
-            format!(
-r#"if command -v sshpass >/dev/null 2>&1; then
-    export SSHPASS="{}"
-    SSH_BIN="sshpass -e ssh"
-else
-    echo "Note: sshpass not installed. Please enter password if prompted."
-    SSH_BIN="ssh"
-fi
-"#,
-                escaped_pass
-            ),
-            "$SSH_BIN"
-        )
-    } else {
-        (String::new(), "ssh")
-    };
-
-    let escaped_remote_cmd = cmd_to_run.replace('"', "\\\"");
-
-    let script_content = format!(
-r#"#!/usr/bin/env bash
-echo "=========================================================="
-echo " Server Launcher: Remote SSH Command Execution"
-echo " Host   : {name} ({target}:{port})"
-echo " Command: {cmd}"
-echo "=========================================================="
-echo "Connecting to {target}..."
-{pass_block}
-{ssh_cmd} -t -p {port} {key_arg} {target} "{remote_cd}{cmd}"
-EXIT_CODE=$?
-echo ""
-echo "[launcher] Command exited with code $EXIT_CODE."
-read -n 1 -s -r -p "Press any key to close this terminal..."
-"#,
-        name = host.name,
-        target = target,
-        port = host.port,
-        key_arg = key_arg,
-        pass_block = pass_block,
-        ssh_cmd = ssh_cmd,
-        remote_cd = remote_cd,
-        cmd = escaped_remote_cmd,
-    );
-
-    let _ = std::fs::write(&script_path, script_content);
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(metadata) = std::fs::metadata(&script_path) {
-            let mut perms = metadata.permissions();
-            perms.set_mode(0o755);
-            let _ = std::fs::set_permissions(&script_path, perms);
-        }
+fn launch_ssh_in_terminal(host: &SshRemoteHost, command: Option<&str>) -> Result<(), String> {
+    let mut args = vec![
+        "-t".to_owned(), "-o".to_owned(), "StrictHostKeyChecking=accept-new".to_owned(),
+        "-p".to_owned(), host.port.to_string(),
+    ];
+    if !host.key_path.trim().is_empty() {
+        args.extend(["-i".to_owned(), host.key_path.trim().to_owned()]);
+    }
+    args.extend(["--".to_owned(), format!("{}@{}", host.user.trim(), host.host.trim())]);
+    match (host.remote_cwd.trim(), command) {
+        ("", None) => {}
+        ("", Some(command)) => args.push(command.to_owned()),
+        (cwd, None) => args.push(format!("cd {} && exec bash -l", shell_quote(cwd))),
+        (cwd, Some(command)) => args.push(format!("cd {} && {}", shell_quote(cwd), command)),
     }
 
-    #[cfg(not(target_os = "windows"))]
+    // The external terminal prompts for credentials when key or agent authentication fails.
+    #[cfg(windows)]
     {
-        let script_str = script_path.to_string_lossy().to_string();
-        let chosen = crate::service::find_terminal();
-        let mut cmd;
-        if let Some((term, args)) = chosen {
-            cmd = Command::new(term);
-            for arg in args {
-                cmd.arg(arg);
-            }
-            cmd.arg(&script_str);
-        } else {
-            cmd = Command::new("x-terminal-emulator");
-            cmd.args(&["-e", &script_str]);
-        }
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            cmd.process_group(0);
-        }
-        cmd.spawn().map_err(|e| format!("Failed to spawn terminal: {}", e))?;
-        Ok(())
+        use std::os::windows::process::CommandExt;
+        Command::new("ssh.exe").args(args).creation_flags(0x00000010)
+            .spawn().map_err(|e| format!("Failed to open SSH terminal: {e}"))?;
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(not(windows))]
     {
-        let mut cmd = Command::new("cmd.exe");
-        cmd.args(&["/K", &format!("ssh -t -p {} {} {} \"{} {}\"", host.port, key_arg, target, remote_cd, escaped_remote_cmd)]);
-        cmd.spawn().map_err(|e| format!("Failed to spawn cmd: {}", e))?;
-        Ok(())
+        use std::io::Write;
+        use std::os::unix::{fs::PermissionsExt, process::CommandExt};
+        let mut script = tempfile::NamedTempFile::new()
+            .map_err(|e| format!("Could not create SSH launcher: {e}"))?;
+        let args = args.iter().map(|arg| shell_quote(arg)).collect::<Vec<_>>().join(" ");
+        writeln!(script, "#!/bin/sh\nrm -f -- \"$0\"\nssh {args}\nprintf '\\nPress Enter to close… '\nread -r ignored")
+            .map_err(|e| format!("Could not write SSH launcher: {e}"))?;
+        script.as_file().set_permissions(std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("Could not make SSH launcher executable: {e}"))?;
+        let (terminal, terminal_args) = crate::service::find_terminal()
+            .unwrap_or(("x-terminal-emulator", &["-e"]));
+        // Close the writable handle before executing the script.
+        let path = script.into_temp_path().keep()
+            .map_err(|e| format!("Could not retain SSH launcher: {e}"))?;
+        if let Err(error) = Command::new(terminal).args(terminal_args).arg(&path).process_group(0).spawn() {
+            let _ = std::fs::remove_file(&path);
+            return Err(format!("Failed to open SSH terminal: {error}"));
+        }
     }
+    Ok(())
 }
 
 /// Parse ~/.ssh/config to import existing configured hosts
@@ -727,127 +565,47 @@ pub fn parse_ssh_config_str(content: &str, home: &std::path::Path) -> Vec<SshRem
     hosts
 }
 
-/// Terminate a process on a remote SSH host using sudo if available, falling back to kill -9
-#[allow(dead_code)]
-pub fn kill_remote_process_pid(host: &SshRemoteHost, pid: u32) -> Result<(), String> {
-    let has_pass = !host.password.trim().is_empty();
-    let kill_cmd = if has_pass {
-        let pass = host.password.trim();
-        format!(
-            "(echo '{}' | sudo -S kill -15 {} 2>/dev/null; sleep 0.1; echo '{}' | sudo -S kill -9 {} 2>/dev/null) \
-             || (sudo -n kill -15 {} 2>/dev/null; sleep 0.1; sudo -n kill -9 {} 2>/dev/null) \
-             || (sudo kill -15 {} 2>/dev/null; sleep 0.1; sudo kill -9 {} 2>/dev/null) \
-             || (kill -15 {} 2>/dev/null; sleep 0.1; kill -9 {} 2>/dev/null)",
-            pass, pid, pass, pid, pid, pid, pid, pid, pid, pid
-        )
-    } else {
-        format!(
-            "(sudo -n kill -15 {} 2>/dev/null; sleep 0.1; sudo -n kill -9 {} 2>/dev/null) \
-             || (sudo kill -15 {} 2>/dev/null; sleep 0.1; sudo kill -9 {} 2>/dev/null) \
-             || (kill -15 {} 2>/dev/null; sleep 0.1; kill -9 {} 2>/dev/null)",
-            pid, pid, pid, pid, pid, pid
-        )
-    };
-
-    let mut cmd = build_ssh_command(host, &kill_cmd);
-    match cmd.output() {
-        Ok(out) => {
-            if out.status.success() {
-                Ok(())
-            } else {
-                let err = String::from_utf8_lossy(&out.stderr);
-                if err.trim().is_empty() {
-                    Ok(())
-                } else {
-                    Err(format!("Remote kill failed: {}", err.trim()))
-                }
-            }
-        }
-        Err(e) => Err(format!("Failed to execute remote kill: {}", e)),
-    }
-}
-
 /// Reboot the remote SSH host device using sudo authorization.
 pub fn reboot_remote_device(host: &SshRemoteHost, sudo_password: &str) -> Result<String, String> {
-    let effective_pass = if !sudo_password.trim().is_empty() {
-        sudo_password.trim()
-    } else {
-        host.password.trim()
-    };
-
-    let reboot_cmd = if !effective_pass.is_empty() {
-        format!(
-            "(echo '{}' | sudo -S reboot 2>/dev/null) \
-             || (echo '{}' | sudo -S shutdown -r now 2>/dev/null) \
-             || (echo '{}' | sudo -S systemctl reboot 2>/dev/null) \
-             || (sudo -n reboot 2>/dev/null) \
-             || (sudo reboot 2>/dev/null) \
-             || reboot",
-            effective_pass, effective_pass, effective_pass
-        )
-    } else {
-        "(sudo -n reboot 2>/dev/null) \
-         || (sudo -n shutdown -r now 2>/dev/null) \
-         || (sudo reboot 2>/dev/null) \
-         || reboot".to_string()
-    };
-
-    let mut cmd = build_ssh_command(host, &reboot_cmd);
-    match cmd.output() {
-        Ok(out) => {
-            let err = String::from_utf8_lossy(&out.stderr);
-            // When a reboot is triggered, SSH immediately disconnects, which may yield exit code 255
-            if out.status.success() || out.status.code() == Some(255) || err.contains("closed by remote host") || err.contains("Connection to") || err.trim().is_empty() {
-                Ok("Reboot signal sent successfully. Remote device is restarting.".to_string())
-            } else if err.contains("incorrect password") || err.contains("Sorry, try again") {
-                Err("Authentication failed: Incorrect sudo password".to_string())
-            } else {
-                Err(format!("Reboot command failed: {}", err.trim()))
-            }
-        }
-        Err(e) => Err(format!("Failed to execute SSH reboot command: {}", e)),
-    }
+    run_remote_power_action(host, sudo_password, "reboot")
 }
 
-/// Shut down the remote SSH host device using sudo authorization (poweroff / shutdown -h now).
+/// Shut down the remote SSH host device using sudo authorization.
 pub fn shutdown_remote_device(host: &SshRemoteHost, sudo_password: &str) -> Result<String, String> {
-    let effective_pass = if !sudo_password.trim().is_empty() {
-        sudo_password.trim()
-    } else {
-        host.password.trim()
-    };
+    run_remote_power_action(host, sudo_password, "poweroff")
+}
 
-    let shutdown_cmd = if !effective_pass.is_empty() {
-        format!(
-            "(echo '{}' | sudo -S shutdown -h now 2>/dev/null) \
-             || (echo '{}' | sudo -S poweroff 2>/dev/null) \
-             || (echo '{}' | sudo -S systemctl poweroff 2>/dev/null) \
-             || (sudo -n shutdown -h now 2>/dev/null) \
-             || (sudo shutdown -h now 2>/dev/null) \
-             || poweroff",
-            effective_pass, effective_pass, effective_pass
+fn run_remote_power_action(host: &SshRemoteHost, password: &str, action: &str) -> Result<String, String> {
+    use std::io::Write;
+    use std::process::Stdio;
+    debug_assert!(matches!(action, "reboot" | "poweroff"));
+    let password = if password.is_empty() { &host.password } else { password };
+    if password.contains(['\r', '\n']) {
+        return Err("The sudo password contains a line break.".into());
+    }
+    let sudo = if password.is_empty() { "sudo -n --" } else { "sudo -S -p '' --" };
+    let mut command = build_ssh_command(host, &format!("{sudo} {action}"));
+    command.stdin(if password.is_empty() { Stdio::null() } else { Stdio::piped() })
+        .stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|e| format!("Could not start SSH: {e}"))?;
+    let write_result = if let Some(mut input) = child.stdin.take() {
+        input.write_all(password.as_bytes()).and_then(|()| input.write_all(b"\n"))
+    } else {
+        Ok(())
+    };
+    let output = child.wait_with_output().map_err(|e| format!("SSH failed: {e}"))?;
+    if output.status.success() {
+        return Ok(format!("Remote {action} command accepted."));
+    }
+    let error = String::from_utf8_lossy(&output.stderr);
+    Err(if error.trim().is_empty() {
+        write_result.err().map_or_else(
+            || format!("Remote {action} could not be confirmed ({})", output.status),
+            |e| format!("Could not send sudo credentials: {e}"),
         )
     } else {
-        "(sudo -n shutdown -h now 2>/dev/null) \
-         || (sudo -n poweroff 2>/dev/null) \
-         || (sudo shutdown -h now 2>/dev/null) \
-         || poweroff".to_string()
-    };
-
-    let mut cmd = build_ssh_command(host, &shutdown_cmd);
-    match cmd.output() {
-        Ok(out) => {
-            let err = String::from_utf8_lossy(&out.stderr);
-            if out.status.success() || out.status.code() == Some(255) || err.contains("closed by remote host") || err.contains("Connection to") || err.trim().is_empty() {
-                Ok("Shutdown signal sent successfully. Remote device is powering off.".to_string())
-            } else if err.contains("incorrect password") || err.contains("Sorry, try again") {
-                Err("Authentication failed: Incorrect sudo password".to_string())
-            } else {
-                Err(format!("Shutdown command failed: {}", err.trim()))
-            }
-        }
-        Err(e) => Err(format!("Failed to execute SSH shutdown command: {}", e)),
-    }
+        format!("Remote {action} could not be confirmed: {}", error.trim())
+    })
 }
 
 #[cfg(test)]

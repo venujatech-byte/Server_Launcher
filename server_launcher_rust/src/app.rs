@@ -1296,7 +1296,7 @@ impl LauncherApp {
         });
     }
 
-    fn persist_config(&self) {
+    fn persist_config(&mut self) {
         let cfg = ConfigFile {
             servers: self.services.iter().map(|s| s.config.clone()).collect(),
             server_tab_order: self.server_tab_order.clone(),
@@ -1309,7 +1309,10 @@ impl LauncherApp {
             app_autostart: self.app_autostart,
             journal_refresh_interval: Some(self.journal_refresh_interval),
         };
-        let _ = cfg.save_to_file(&self.config_path);
+        if let Err(error) = cfg.save_to_file(&self.config_path) {
+            eprintln!("Configuration save failed: {error}");
+            self.import_status_msg = Some((format!("Could not save settings: {error}"), true, Instant::now()));
+        }
     }
 
     pub fn import_servers_from_file_dialog(&mut self) {

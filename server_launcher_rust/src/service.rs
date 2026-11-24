@@ -208,7 +208,7 @@ impl Service {
             cpu_usage: 0.0,
             memory_mb: 0.0,
             started_at: None,
-            logs: Arc::new(Mutex::new(VecDeque::with_capacity(2000))),
+            logs: Arc::new(Mutex::new(VecDeque::new())),
             stdin_writer: None,
             child_handle: None,
             max_logs: 2000,

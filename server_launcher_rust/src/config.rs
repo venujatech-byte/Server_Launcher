@@ -215,7 +215,19 @@ impl ConfigFile {
     pub fn save_to_file(&self, path: &Path) -> Result<(), String> {
         let content = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Serialization error: {}", e))?;
-        fs::write(path, content).map_err(|e| format!("Write error: {}", e))?;
+        use std::io::Write;
+        // Resolve an existing symlink before replacing the file it points to.
+        let target = if fs::symlink_metadata(path).is_ok() {
+            path.canonicalize().map_err(|e| format!("Config path error: {e}"))?
+        } else {
+            path.to_path_buf()
+        };
+        let directory = target.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+        let mut temp = tempfile::NamedTempFile::new_in(directory)
+            .map_err(|e| format!("Could not stage configuration: {e}"))?;
+        temp.write_all(content.as_bytes()).and_then(|()| temp.as_file().sync_all())
+            .map_err(|e| format!("Write error: {e}"))?;
+        temp.persist(&target).map_err(|e| format!("Could not replace configuration: {e}"))?;
         Ok(())
     }
 }

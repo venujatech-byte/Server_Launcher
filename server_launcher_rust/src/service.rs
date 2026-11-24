@@ -35,8 +35,19 @@ pub struct LogEntry {
     pub kind: LogKind,
 }
 
+const MAX_LOG_ENTRY_BYTES: usize = 8 * 1024;
+
 impl LogEntry {
-    pub fn new(text: String, kind: LogKind) -> Self {
+    pub fn new(mut text: String, kind: LogKind) -> Self {
+        const TRUNCATED: &str = " … [truncated]";
+        if text.len() > MAX_LOG_ENTRY_BYTES {
+            let mut end = MAX_LOG_ENTRY_BYTES - TRUNCATED.len();
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text.truncate(end);
+            text.push_str(TRUNCATED);
+        }
         let timestamp = Local::now().format("%H:%M:%S").to_string();
         Self {
             text: text.into(),
@@ -1531,6 +1542,17 @@ mod tests {
         let input = "\x1b[32mSuccess!\x1b[0m \x1b[1;31mError text\x1b[0m\r\n";
         let cleaned = strip_ansi(input);
         assert_eq!(cleaned, "Success! Error text\n");
+    }
+
+    #[test]
+    fn oversized_log_entry_is_truncated_at_a_utf8_boundary() {
+        let normal = LogEntry::new("ordinary output".into(), LogKind::Stdout);
+        assert_eq!(&*normal.text, "ordinary output");
+
+        let entry = LogEntry::new("界".repeat(MAX_LOG_ENTRY_BYTES), LogKind::Stdout);
+        assert!(entry.text.len() <= MAX_LOG_ENTRY_BYTES);
+        assert!(entry.text.ends_with("[truncated]"));
+        assert!(!entry.text.contains('�'));
     }
 
     #[test]

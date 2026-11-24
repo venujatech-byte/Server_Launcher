@@ -106,3 +106,5 @@ Local server logs now reuse a single active-view snapshot and cache matching row
 The saved Commands list caches category counts by host and matching row indexes by host, category, and query. Imports, saves, and deletions invalidate the cached catalog view. Runtime impact remains unmeasured.
 
 Systemd journal and dependency commands now cap captured output at 2 MiB per stream. Oversized output is drained without retaining the excess and returns a clear error instead of caching incomplete content.
+
+Command terminals now reuse the bounded stream reader used by server and SSH output. Retained terminal entries are capped at 8 KiB on a UTF-8 boundary, with a visible truncation marker. This limits individual entries while retaining the existing per-stream row limits.

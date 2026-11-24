@@ -714,6 +714,21 @@ pub struct ExternalTerminalSession {
     pub logs: Arc<Mutex<VecDeque<crate::service::LogEntry>>>,
 }
 
+fn ssh_identity_link(ui: &mut Ui, text: RichText, full_text: &str, hover_fill: Color32) -> bool {
+    let background = ui.painter().add(egui::Shape::Noop);
+    let response = ui.add(egui::Label::new(text).truncate().sense(egui::Sense::click()))
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    if response.hovered() {
+        ui.painter().set(background, egui::Shape::rect_filled(
+            response.rect.expand2(egui::vec2(3.0, 1.0)), Rounding::same(4.0), hover_fill,
+        ));
+    }
+    response.on_hover_ui(|ui| {
+        ui.label(RichText::new("Edit SSH host").size(11.0).strong());
+        ui.label(RichText::new(full_text).size(10.5).weak());
+    }).clicked()
+}
+
 impl LauncherApp {
     fn workspace_sidebar_width(&self) -> f32 {
         match self.active_sidebar_tab {
@@ -2752,17 +2767,13 @@ impl eframe::App for LauncherApp {
 
                         ui.vertical(|ui| {
                             ui.horizontal(|ui| {
-                                let name = egui::Label::new(RichText::new(&host.name)
-                                    .size(16.5).strong().color(p.text_primary))
-                                    .truncate()
-                                    .sense(egui::Sense::click());
                                 let name_width = ui.available_width().min(220.0);
-                                let name_response = ui.scope(|ui| {
+                                let edit = ui.scope(|ui| {
                                     ui.set_max_width(name_width);
-                                    ui.add(name)
+                                    ssh_identity_link(ui, RichText::new(&host.name).size(16.5).strong().color(p.text_primary),
+                                        &host.name, p.bg_button_hover)
                                 }).inner;
-                                if name_response.on_hover_text(format!("{} · Click to edit SSH host", host.name)).clicked()
-                                {
+                                if edit {
                                     self.ssh_host_modal.open_edit(host);
                                 }
                                 ui.add_space(5.0);
@@ -2832,8 +2843,9 @@ impl eframe::App for LauncherApp {
                                 ui.spacing_mut().interact_size.y = 0.0;
                                 ui.spacing_mut().button_padding.y = 0.0;
                                 ui.horizontal(|ui| {
-                                    if ui.add(egui::Label::new(RichText::new(&target_desc).size(11.5).color(p.text_muted)).truncate().sense(egui::Sense::click()))
-                                        .on_hover_text(format!("Edit SSH host\n{target_desc}")).clicked() {
+                                    if ssh_identity_link(ui, RichText::new(&target_desc).size(11.5).color(p.text_muted),
+                                        &target_desc, p.bg_button_hover)
+                                    {
                                         self.ssh_host_modal.open_edit(host);
                                     }
                                     let reconnect = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(10.0))

@@ -727,14 +727,14 @@ fn render_window_button(
     kind: WindowButtonKind,
     palette: &crate::theme::ThemePalette,
 ) -> bool {
-    let size = egui::vec2(34.0, 22.0);
+    let size = egui::vec2(46.0, 32.0);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
     let hovered = resp.hovered();
 
     let (bg_color, stroke_color) = match kind {
         WindowButtonKind::Close => {
             if hovered {
-                (palette.danger, Color32::WHITE)
+                (Color32::from_rgb(232, 17, 35), Color32::WHITE)
             } else {
                 (Color32::TRANSPARENT, palette.text_secondary)
             }
@@ -756,7 +756,7 @@ fn render_window_button(
     };
 
     if bg_color != Color32::TRANSPARENT {
-        ui.painter().rect_filled(rect, Rounding::same(4.0), bg_color);
+        ui.painter().rect_filled(rect, Rounding::ZERO, bg_color);
     }
 
     let painter = ui.painter();
@@ -811,6 +811,21 @@ fn render_window_button(
         WindowButtonKind::Close => "Close",
     })
     .clicked()
+}
+
+fn ssh_identity_link(ui: &mut Ui, text: RichText, full_text: &str, hover_fill: Color32) -> bool {
+    let background = ui.painter().add(egui::Shape::Noop);
+    let response = ui.add(egui::Label::new(text).truncate().sense(egui::Sense::click()))
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    if response.hovered() {
+        ui.painter().set(background, egui::Shape::rect_filled(
+            response.rect.expand2(egui::vec2(3.0, 1.0)), Rounding::same(4.0), hover_fill,
+        ));
+    }
+    response.on_hover_ui(|ui| {
+        ui.label(RichText::new("Edit SSH host").size(11.0).strong());
+        ui.label(RichText::new(full_text).size(10.5).weak());
+    }).clicked()
 }
 
 impl LauncherApp {
@@ -2818,19 +2833,19 @@ impl eframe::App for LauncherApp {
         let p = self.palette();
 
         // ═════════════════════════════════════════════════════════════════════
-        // 0. DEDICATED SLIM CUSTOM TITLEBAR (Height 24px)
+        // 0. CUSTOM TITLE BAR
         // ═════════════════════════════════════════════════════════════════════
         egui::TopBottomPanel::top("custom_titlebar")
             .show_separator_line(false)
-            .exact_height(24.0)
+            .exact_height(32.0)
             .frame(
                 Frame::none()
                     .fill(p.bg_header)
                     .inner_margin(egui::Margin {
                         left: 10.0,
-                        right: 4.0,
-                        top: 1.0,
-                        bottom: 1.0,
+                        right: 0.0,
+                        top: 0.0,
+                        bottom: 0.0,
                     }),
             )
             .show(ctx, |ui| {
@@ -2861,7 +2876,7 @@ impl eframe::App for LauncherApp {
 
                     // Right window controls: only Minimize, Maximize, and Close
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = 2.0;
+                        ui.spacing_mut().item_spacing.x = 0.0;
 
                         // 1. Close (far right)
                         if render_window_button(ui, WindowButtonKind::Close, &p) {
@@ -2921,17 +2936,13 @@ impl eframe::App for LauncherApp {
 
                         ui.vertical(|ui| {
                             ui.horizontal(|ui| {
-                                let name = egui::Label::new(RichText::new(&host.name)
-                                    .size(16.5).strong().color(p.text_primary))
-                                    .truncate()
-                                    .sense(egui::Sense::click());
                                 let name_width = ui.available_width().min(220.0);
-                                let name_response = ui.scope(|ui| {
+                                let edit = ui.scope(|ui| {
                                     ui.set_max_width(name_width);
-                                    ui.add(name)
+                                    ssh_identity_link(ui, RichText::new(&host.name).size(16.5).strong().color(p.text_primary),
+                                        &host.name, p.bg_button_hover)
                                 }).inner;
-                                if name_response.on_hover_text(format!("{} · Click to edit SSH host", host.name)).clicked()
-                                {
+                                if edit {
                                     self.ssh_host_modal.open_edit(host);
                                 }
                                 ui.add_space(5.0);
@@ -3001,8 +3012,9 @@ impl eframe::App for LauncherApp {
                                 ui.spacing_mut().interact_size.y = 0.0;
                                 ui.spacing_mut().button_padding.y = 0.0;
                                 ui.horizontal(|ui| {
-                                    if ui.add(egui::Label::new(RichText::new(&target_desc).size(11.5).color(p.text_muted)).truncate().sense(egui::Sense::click()))
-                                        .on_hover_text(format!("Edit SSH host\n{target_desc}")).clicked() {
+                                    if ssh_identity_link(ui, RichText::new(&target_desc).size(11.5).color(p.text_muted),
+                                        &target_desc, p.bg_button_hover)
+                                    {
                                         self.ssh_host_modal.open_edit(host);
                                     }
                                     let reconnect = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(10.0))

@@ -193,11 +193,7 @@ impl LauncherApp {
 
                                     ui.add_space(10.0);
 
-                                    // 3 Metric Cards in row (Equal Height Synced)
-                                    let card_height_id = ui.make_persistent_id("power_top_metric_cards_h");
-                                    let target_card_h: f32 = ui.data(|d| d.get_temp::<f32>(card_height_id)).unwrap_or(118.0).max(118.0);
-                                    let mut observed_max_inner_h: f32 = 98.0;
-                                    let needed_inner_h = (target_card_h - 20.0).max(98.0);
+                                    const BATTERY_TILE_HEIGHT: f32 = 132.0;
 
                                     let render_card_meta_row = |ui: &mut egui::Ui, label: &str, val: &str, val_col: Color32| {
                                         ui.horizontal(|ui| {
@@ -248,9 +244,7 @@ impl LauncherApp {
                                                 ui.add_space(3.0);
                                                 render_card_meta_row(ui, "Time", &est_time_str, accent);
 
-                                                let inner_h = ui.min_size().y;
-                                                observed_max_inner_h = observed_max_inner_h.max(inner_h);
-                                                ui.set_min_height(needed_inner_h);
+                                                ui.set_min_height(BATTERY_TILE_HEIGHT);
                                             });
 
                                         // Card 2: Remaining vs Design
@@ -289,9 +283,7 @@ impl LauncherApp {
                                                 ui.add_space(3.0);
                                                 render_card_meta_row(ui, "Design", &format!("{} Wh", reported_sensor_value(Some(design_wh), 1)), p.text_muted);
 
-                                                let inner_h = ui.min_size().y;
-                                                observed_max_inner_h = observed_max_inner_h.max(inner_h);
-                                                ui.set_min_height(needed_inner_h);
+                                                ui.set_min_height(BATTERY_TILE_HEIGHT);
                                             });
 
                                         // Card 3: Lifecycle Endurance
@@ -322,15 +314,11 @@ impl LauncherApp {
                                                 let cond_label = bat.map(|battery| battery.status.as_str()).unwrap_or("Unavailable");
                                                 render_card_meta_row(ui, "State", cond_label, p.text_muted);
 
-                                                let inner_h = ui.min_size().y;
-                                                observed_max_inner_h = observed_max_inner_h.max(inner_h);
-                                                ui.set_min_height(needed_inner_h);
+                                                ui.set_min_height(BATTERY_TILE_HEIGHT);
                                             });
                                     });
 
-                                    ui.data_mut(|d| d.insert_temp(card_height_id, observed_max_inner_h + 20.0));
-
-                                    ui.add_space(12.0);
+                                    ui.add_space(8.0);
 
                                     // Row of 4 Sub-chips (Fits cleanly on 1 line without wrapping)
                                     ui.columns(4, |cols| {

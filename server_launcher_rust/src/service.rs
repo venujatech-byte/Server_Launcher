@@ -86,12 +86,22 @@ impl ProcessRecord {
     }
 }
 
-fn pid_file(config: &ServerConfig) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("launcher_{}.pid", config.key))
+fn validate_server_key(key: &str) -> std::io::Result<()> {
+    if key.is_empty() || key == "." || key == ".." || key.chars().any(|c| {
+        c.is_control() || matches!(c, '/' | '\\' | ':' | '<' | '>' | '"' | '|' | '?' | '*')
+    }) {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid server key for process record"));
+    }
+    Ok(())
+}
+
+fn pid_file(config: &ServerConfig) -> std::io::Result<std::path::PathBuf> {
+    validate_server_key(&config.key)?;
+    Ok(std::env::temp_dir().join(format!("launcher_{}.pid", config.key)))
 }
 
 fn read_process_record(config: &ServerConfig) -> Option<ProcessRecord> {
-    serde_json::from_str(&std::fs::read_to_string(pid_file(config)).ok()?).ok()
+    serde_json::from_str(&std::fs::read_to_string(pid_file(config).ok()?).ok()?).ok()
 }
 
 fn write_process_record(config: &ServerConfig, pid: u32) -> std::io::Result<()> {
@@ -107,7 +117,12 @@ fn write_process_record(config: &ServerConfig, pid: u32) -> std::io::Result<()> 
 }
 
 fn write_identity(config: &ServerConfig, identity: &ProcessIdentity) -> std::io::Result<()> {
-    std::fs::write(pid_file(config), serde_json::to_vec(identity)?)
+    use std::io::Write;
+    let path = pid_file(config)?;
+    let mut temp = tempfile::NamedTempFile::new_in(std::env::temp_dir())?;
+    temp.write_all(&serde_json::to_vec(identity)?)?;
+    temp.as_file().sync_all()?;
+    temp.persist(path).map(|_| ()).map_err(|error| error.error)
 }
 
 // sysinfo 0.31 computes Linux CPU percentages only during an All refresh.
@@ -368,7 +383,7 @@ impl Service {
             LogKind::Launcher,
         );
         self.state = ServiceState::Starting;
-        let _ = std::fs::remove_file(pid_file(&self.config));
+        if let Ok(path) = pid_file(&self.config) { let _ = std::fs::remove_file(path); }
 
         let cmd_str = self.config.command.clone();
         let cwd_str = self.config.cwd.clone();
@@ -590,8 +605,7 @@ impl Service {
             });
         }
 
-        let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", self.config.key));
-        let _ = std::fs::remove_file(&pid_file);
+        if let Ok(path) = pid_file(&self.config) { let _ = std::fs::remove_file(path); }
 
         if let Some(pid) = self.pid {
             #[cfg(target_os = "windows")]
@@ -737,7 +751,7 @@ impl Service {
         }
 
         if self.config.own_console {
-            let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", self.config.key));
+            let pid_file = pid_file(&self.config).ok();
             // Unix terminal wrappers publish their shell PID after the terminal starts.
             if let Some(ProcessRecord::Legacy(pid)) = read_process_record(&self.config) {
                 if pid > 0 {
@@ -757,7 +771,7 @@ impl Service {
                         self.cpu_usage = 0.0;
                         self.memory_mb = 0.0;
                         self.port_open = false;
-                        let _ = std::fs::remove_file(&pid_file);
+                        if let Some(path) = &pid_file { let _ = std::fs::remove_file(path); }
 
                         self.append_log(
                             "[launcher] Console process terminated.".to_string(),
@@ -854,8 +868,7 @@ impl Service {
                 self.cpu_usage = 0.0;
                 self.memory_mb = 0.0;
                 self.port_open = false;
-                let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", self.config.key));
-                let _ = std::fs::remove_file(&pid_file);
+                if let Ok(path) = pid_file(&self.config) { let _ = std::fs::remove_file(path); }
 
                 self.append_log(
                     "[launcher] Attached process terminated.".to_string(),
@@ -1207,9 +1220,7 @@ fn spawn_own_console(
     #[cfg(not(target_os = "windows"))]
     {
         use std::io::Write;
-        if key.contains(['/', '\\']) {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid server key"));
-        }
+        validate_server_key(key)?;
 
         let pid_path = std::env::temp_dir().join(format!("launcher_{key}.pid"));
         let quote = crate::remote::shell_quote;
@@ -1637,6 +1648,38 @@ mod tests {
     }
 
     #[test]
+    fn process_records_reject_unsafe_keys_and_keep_legacy_records_readable() {
+        let mut config = identity_test_config();
+        for key in ["../outside", "..", "bad/key", "bad\\key", "C:drive"] {
+            config.key = key.into();
+            assert!(pid_file(&config).is_err());
+            assert!(write_identity(&config, &ProcessIdentity { key: key.into(), command: String::new(), cwd: String::new(), pid: 1, start_time: 1 }).is_err());
+            assert!(read_process_record(&config).is_none());
+        }
+
+        config.key = format!("legacy_record_{}", std::process::id());
+        let path = pid_file(&config).unwrap();
+        std::fs::write(&path, std::process::id().to_string()).unwrap();
+        assert!(matches!(read_process_record(&config), Some(ProcessRecord::Legacy(pid)) if pid == std::process::id()));
+
+        let mut interrupted = tempfile::NamedTempFile::new_in(std::env::temp_dir()).unwrap();
+        std::io::Write::write_all(&mut interrupted, b"{\"partial\":").unwrap();
+        drop(interrupted);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), std::process::id().to_string());
+        assert!(matches!(read_process_record(&config), Some(ProcessRecord::Legacy(_))));
+
+        let identity = ProcessIdentity { key: config.key.clone(), command: config.command.clone(), cwd: config.cwd.clone(), pid: 1, start_time: 1 };
+        write_identity(&config, &identity).unwrap();
+        assert!(matches!(read_process_record(&config), Some(ProcessRecord::Identity(record)) if record.key == config.key));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn process_tree_includes_nested_children_once_and_ignores_other_roots() {
         let pid = Pid::from_u32;
         let parents = [
@@ -1715,7 +1758,7 @@ mod tests {
         reconnect_services(&mut services);
         assert_eq!(services[0].state, ServiceState::Stopped);
         assert_eq!(services[1].pid, Some(pid));
-        for service in services { let _ = std::fs::remove_file(pid_file(&service.config)); }
+        for service in services { if let Ok(path) = pid_file(&service.config) { let _ = std::fs::remove_file(path); } }
     }
 
     #[test]
@@ -1730,10 +1773,10 @@ mod tests {
         assert!(services.iter().all(|service| service.state == ServiceState::Stopped));
         let ProcessRecord::Identity(mut identity) = read_process_record(&services[0].config).unwrap() else { panic!("Expected identity record"); };
         identity.start_time += 1;
-        std::fs::write(pid_file(&services[0].config), serde_json::to_vec(&identity).unwrap()).unwrap();
+        write_identity(&services[0].config, &identity).unwrap();
         reconnect_services(&mut services[..1]);
         assert_eq!(services[0].state, ServiceState::Stopped);
-        for service in services { let _ = std::fs::remove_file(pid_file(&service.config)); }
+        for service in services { if let Ok(path) = pid_file(&service.config) { let _ = std::fs::remove_file(path); } }
     }
 
     #[test]
@@ -1748,7 +1791,7 @@ mod tests {
         config.cwd = process.cwd().unwrap().to_string_lossy().into_owned();
         let mut duplicate = config.clone();
         duplicate.key = identity_test_config().key;
-        for config in [&config, &duplicate] { std::fs::write(pid_file(config), pid.to_string()).unwrap(); }
+        for config in [&config, &duplicate] { std::fs::write(pid_file(config).unwrap(), pid.to_string()).unwrap(); }
         let mut services = vec![Service::new(config), Service::new(duplicate)];
         reconnect_services(&mut services);
         assert!(services.iter().all(|service| service.state == ServiceState::Stopped));
@@ -1756,7 +1799,7 @@ mod tests {
         reconnect_services(&mut services[..1]);
         assert_eq!(services[0].pid, Some(pid));
         assert!(matches!(read_process_record(&services[0].config), Some(ProcessRecord::Identity(_))));
-        for service in services { let _ = std::fs::remove_file(pid_file(&service.config)); }
+        for service in services { if let Ok(path) = pid_file(&service.config) { let _ = std::fs::remove_file(path); } }
     }
 
     #[test]

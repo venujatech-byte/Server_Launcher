@@ -160,7 +160,15 @@ fn ssh_policy_args(host: &SshRemoteHost) -> Vec<&'static str> {
 }
 
 // OpenSSH's ConnectTimeout covers the handshake, not the remote command.
-pub(crate) fn ssh_probe_output(mut command: Command, timeout: std::time::Duration) -> std::io::Result<std::process::Output> {
+pub(crate) fn ssh_probe_output(command: Command, timeout: std::time::Duration) -> std::io::Result<std::process::Output> {
+    ssh_probe_output_cancellable(command, timeout, None)
+}
+
+pub(crate) fn ssh_probe_output_cancellable(
+    mut command: Command,
+    timeout: std::time::Duration,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> std::io::Result<std::process::Output> {
     use std::io::{Read, Seek, SeekFrom};
     use std::process::Stdio;
     use std::time::{Duration, Instant};
@@ -177,12 +185,16 @@ pub(crate) fn ssh_probe_output(mut command: Command, timeout: std::time::Duratio
         command.process_group(0);
     }
 
+    let cancelled = || cancel.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed));
+    if cancelled() {
+        return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "Transfer cancelled"));
+    }
     let mut child = command.spawn()?;
     let deadline = Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
+            Ok(None) if Instant::now() < deadline && !cancelled() => std::thread::sleep(Duration::from_millis(25)),
             result => {
                 #[cfg(unix)]
                 unsafe {
@@ -192,7 +204,11 @@ pub(crate) fn ssh_probe_output(mut command: Command, timeout: std::time::Duratio
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(result.err().unwrap_or_else(|| {
-                    std::io::Error::new(std::io::ErrorKind::TimedOut, "SSH probe exceeded its deadline")
+                    if cancelled() {
+                        std::io::Error::new(std::io::ErrorKind::Interrupted, "Transfer cancelled")
+                    } else {
+                        std::io::Error::new(std::io::ErrorKind::TimedOut, "SSH probe exceeded its deadline")
+                    }
                 }));
             }
         }
@@ -263,6 +279,25 @@ pub fn test_ssh_connection(host: &SshRemoteHost, timeout_seconds: u32) -> Result
 }
 
 /// Prepare a Command that executes a shell command on the remote host over SSH
+pub(crate) fn build_scp_command(host: &SshRemoteHost) -> Command {
+    let mut command = if !host.password.trim().is_empty() && is_sshpass_available() {
+        let mut command = Command::new("sshpass");
+        command.args(["-e", "scp"]).env("SSHPASS", host.password.trim());
+        command
+    } else {
+        let mut command = Command::new("scp");
+        command.arg("-B");
+        command
+    };
+    command.args(ssh_policy_args(host))
+        .args(["-o", "ConnectTimeout=5", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2"])
+        .arg("-P").arg(host.port.to_string());
+    if !host.key_path.trim().is_empty() {
+        command.arg("-i").arg(host.key_path.trim());
+    }
+    command
+}
+
 pub fn build_ssh_command(host: &SshRemoteHost, remote_cmd: &str) -> Command {
     let has_password = !host.password.trim().is_empty();
     let mut cmd;

@@ -2,6 +2,7 @@ use super::*;
 
 mod backend;
 mod model;
+mod transfers;
 
 #[derive(Clone)]
 struct RemoteFiles {
@@ -16,8 +17,9 @@ impl LauncherApp {
         let mut files = ui.ctx().data(|data| data.get_temp::<RemoteFiles>(id))
             .unwrap_or_else(|| RemoteFiles { path: ".".into(), worker: None, listing: None });
 
-        let result = files.worker.as_ref().and_then(|worker| match worker.lock().unwrap().try_recv() {
-            Ok(result) => Some(result),
+        let result = files.worker.as_ref().and_then(|worker| match worker.events.lock().unwrap().try_recv() {
+            Ok(backend::Event::Finished(result)) => Some(result),
+            Ok(backend::Event::Progress(_, _)) => None,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err("File operation stopped unexpectedly.".into())),
             Err(std::sync::mpsc::TryRecvError::Empty) => None,
         });
@@ -25,7 +27,7 @@ impl LauncherApp {
             files.worker = None;
             files.listing = Some(result.and_then(|result| match result {
                 backend::Outcome::Listing(listing) => Ok(listing),
-                backend::Outcome::Changed => Err("No listing returned.".into()),
+                backend::Outcome::Changed(message) => Err(message),
             }));
         }
 
@@ -39,8 +41,11 @@ impl LauncherApp {
         if refresh || (files.worker.is_none() && files.listing.is_none()) {
             files.worker = Some(backend::start(host, backend::Job::List(files.path.clone()), ui.ctx().clone()));
         }
-        if files.worker.is_some() {
+        if let Some(worker) = &files.worker {
             ui.spinner();
+            if ui.button("Cancel").clicked() {
+                worker.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
         }
         match &files.listing {
             Some(Ok(listing)) => {

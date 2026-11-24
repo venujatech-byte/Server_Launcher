@@ -1,4 +1,4 @@
-use super::{model, SshRemoteHost};
+use super::{model, transfers, SshRemoteHost};
 use crate::remote::{build_ssh_command, shell_quote, ssh_probe_output};
 use std::{sync::{mpsc, Arc, Mutex}, time::Duration};
 
@@ -11,24 +11,40 @@ pub(super) enum Job {
     Delete(Vec<String>),
     Compress(Vec<String>, String),
     Extract(String, String),
+    Transfer(transfers::Transfer),
 }
 
 #[derive(Debug)]
 pub(super) enum Outcome {
     Listing(model::Listing),
-    Changed,
+    Changed(String),
 }
 
-pub(super) type Worker = Arc<Mutex<mpsc::Receiver<Result<Outcome, String>>>>;
+pub(super) enum Event {
+    Progress(String, f32),
+    Finished(Result<Outcome, String>),
+}
+
+#[derive(Clone)]
+pub(super) struct Worker {
+    pub events: Arc<Mutex<mpsc::Receiver<Event>>>,
+    pub cancel: Arc<std::sync::atomic::AtomicBool>,
+}
 
 pub(super) fn start(host: &SshRemoteHost, job: Job, ctx: egui::Context) -> Worker {
     let host = host.clone();
     let (tx, rx) = mpsc::channel();
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let worker_cancel = Arc::clone(&cancel);
     std::thread::spawn(move || {
-        let _ = tx.send(run(&host, job));
+        let outcome = match job {
+            Job::Transfer(request) => transfers::run(&host, request, &tx, &ctx, &worker_cancel).map(Outcome::Changed),
+            job => run(&host, job),
+        };
+        let _ = tx.send(Event::Finished(outcome));
         ctx.request_repaint();
     });
-    Arc::new(Mutex::new(rx))
+    Worker { events: Arc::new(Mutex::new(rx)), cancel }
 }
 
 fn run(host: &SshRemoteHost, job: Job) -> Result<Outcome, String> {
@@ -39,7 +55,7 @@ fn run(host: &SshRemoteHost, job: Job) -> Result<Outcome, String> {
         return model::parse_listing(&output).map(Outcome::Listing);
     }
     let command = mutation_command(job)?;
-    execute(host, &command, 300).map(|_| Outcome::Changed)
+    execute(host, &command, 300).map(|_| Outcome::Changed("Operation complete.".into()))
 }
 
 pub(super) fn execute(host: &SshRemoteHost, command: &str, timeout: u64) -> Result<Vec<u8>, String> {
@@ -134,6 +150,6 @@ for path in "$temp"/* "$temp"/.[!.]* "$temp"/..?*; do
     mv -T -- "$path" "./$name" || exit
 done"#, require(tool), shell_quote(&directory))
         }
-        Job::List(_) => unreachable!(),
+        Job::List(_) | Job::Transfer(_) => unreachable!(),
     })
 }

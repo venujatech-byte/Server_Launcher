@@ -1081,60 +1081,29 @@ pub fn launch_external_terminal(
     #[cfg(not(target_os = "windows"))]
     {
         let pid_num = pid.unwrap_or(0);
-        let script_dir = std::env::temp_dir();
-        let safe_name: String = name.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
-        let script_path = script_dir.join(format!("launcher_term_{}_{}.sh", safe_name, port));
-
-        let script_content = format!(
-r#"#!/usr/bin/env bash
-cd "{cwd}" 2>/dev/null || true
-echo "=========================================================="
-echo " Server Launcher: External Terminal"
-echo " Service : {name}"
-echo " Port    : :{port}"
-echo " PID     : {pid_num}"
-echo " CWD     : {cwd}"
-echo " Command : {cmd_str}"
-echo "=========================================================="
-echo ""
-if command -v journalctl >/dev/null 2>&1 && [ "{pid_num}" -gt 0 ]; then
-    echo "--- Systemd / journald output for PID {pid_num} ---"
-    journalctl _PID={pid_num} -n 25 --no-pager 2>/dev/null || true
-    echo ""
-fi
-echo "Interactive shell opened in {cwd}."
-echo "Type exit or press Ctrl+D to close."
-echo ""
-exec bash
-"#,
-            cwd = cwd_path,
-            name = name,
-            port = port,
-            pid_num = pid_num,
-            cmd_str = cmd_str
-        );
-
-        if let Err(e) = std::fs::write(&script_path, script_content) {
-            return Err(format!("Failed to write terminal script: {}", e));
-        }
+        let cwd_path = std::path::absolute(cwd_path)
+            .map_err(|error| format!("Failed to resolve terminal directory: {error}"))?;
+        use std::io::Write;
+        let mut script = tempfile::Builder::new().prefix("launcher-term-").suffix(".sh").tempfile()
+            .map_err(|error| format!("Failed to create terminal script: {error}"))?;
+        script.write_all(external_terminal_script(name, pid_num, port, &cwd_path.to_string_lossy(), cmd_str).as_bytes())
+            .map_err(|error| format!("Failed to write terminal script: {error}"))?;
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            if let Ok(metadata) = std::fs::metadata(&script_path) {
-                let mut perms = metadata.permissions();
-                perms.set_mode(0o755);
-                let _ = std::fs::set_permissions(&script_path, perms);
-            }
+            script.as_file().set_permissions(std::fs::Permissions::from_mode(0o700))
+                .map_err(|error| format!("Failed to set terminal script permissions: {error}"))?;
         }
 
+        let script_path = script.into_temp_path();
         let script_str = script_path.to_string_lossy().to_string();
 
         #[cfg(target_os = "macos")]
         {
             let mut cmd = Command::new("open");
             cmd.args(&["-a", "Terminal", &script_str]);
-            return cmd.spawn().map(|_| ()).map_err(|e| format!("Failed to spawn Terminal: {}", e));
+            cmd.spawn().map_err(|e| format!("Failed to spawn Terminal: {}", e))?;
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -1153,11 +1122,10 @@ exec bash
                 for fb in &["x-terminal-emulator", "xterm", "sh"] {
                     let mut c = Command::new(fb);
                     if *fb == "sh" {
-                        c.args(&["-c", &script_str]);
+                        c.arg(&script_str);
                     } else {
                         c.args(&["-e", &script_str]);
                     }
-                    c.current_dir(cwd_path);
                     if c.spawn().is_ok() {
                         fallback_spawned = true;
                         break;
@@ -1166,28 +1134,53 @@ exec bash
                 if !fallback_spawned {
                     return Err("No compatible terminal emulator found on this system".to_string());
                 }
+                script_path.keep().map_err(|error| error.to_string())?;
                 return Ok(());
             }
 
-            cmd.current_dir(cwd_path);
             #[cfg(unix)]
             {
                 use std::os::unix::process::CommandExt;
                 cmd.process_group(0);
             }
             cmd.spawn().map_err(|e| format!("Failed to spawn terminal: {}", e))?;
-            Ok(())
         }
+        script_path.keep().map_err(|error| error.to_string())?;
+        Ok(())
     }
 
     #[cfg(target_os = "windows")]
     {
         let mut cmd = Command::new("cmd.exe");
-        let title = format!("Server: {} (: {})", name, port);
-        cmd.args(&["/K", &format!("title {} && cd /d \"{}\"", title, cwd_path)]);
+        use std::os::windows::process::CommandExt;
+        let _ = (name, pid, port, cmd_str);
+        cmd.arg("/D").current_dir(cwd_path).creation_flags(0x00000010);
         cmd.spawn().map_err(|e| format!("Failed to spawn cmd: {}", e))?;
         Ok(())
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn external_terminal_script(name: &str, pid: u32, port: u16, cwd: &str, command: &str) -> String {
+    let quote = crate::remote::shell_quote;
+    format!(r#"#!/usr/bin/env bash
+rm -f -- "$0"
+if ! cd -- {cwd_operand}; then
+    printf '%s\n' 'Could not open the requested directory.'
+fi
+printf '%s\n' '==========================================================' ' Server Launcher: External Terminal' {name} ' Port    : :{port}' ' PID     : {pid}' {cwd} {command} '==========================================================' ''
+if command -v journalctl >/dev/null 2>&1 && [ {pid} -gt 0 ]; then
+    printf '%s\n' '--- Systemd / journald output for PID {pid} ---'
+    journalctl -b _PID={pid} -n 25 --no-pager 2>/dev/null || true
+fi
+printf '%s\n' 'Type exit or press Ctrl+D to close.'
+exec bash
+"#,
+        cwd_operand = quote(cwd),
+        name = quote(&format!(" Service : {name}")),
+        cwd = quote(&format!(" CWD     : {cwd}")),
+        command = quote(&format!(" Command : {command}")),
+    )
 }
 
 fn spawn_own_console(
@@ -1542,6 +1535,14 @@ mod tests {
         let input = "\x1b[32mSuccess!\x1b[0m \x1b[1;31mError text\x1b[0m\r\n";
         let cleaned = strip_ansi(input);
         assert_eq!(cleaned, "Success! Error text\n");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn external_terminal_quotes_display_values() {
+        let script = external_terminal_script("Pat’s server", 0, 80, "/tmp/Pat's files", "printf '%s' hello");
+        assert!(script.contains("cd -- '/tmp/Pat'\\''s files'"));
+        assert!(script.contains("' Command : printf '\\''%s'\\'' hello'"));
     }
 
     #[test]

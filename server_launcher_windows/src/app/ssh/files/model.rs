@@ -44,21 +44,31 @@ pub(super) fn valid_name(name: &str) -> bool {
 
 pub(super) fn archive_extension(name: &str) -> Option<&'static str> {
     let name = name.to_ascii_lowercase();
-    [".tar.gz", ".tar.bz2", ".tar.xz", ".tgz", ".tar", ".zip", ".rar"]
-        .into_iter().find(|ext| name.ends_with(ext))
+    [
+        ".tar.gz", ".tar.bz2", ".tar.xz", ".tgz", ".tar", ".zip", ".rar",
+    ]
+    .into_iter()
+    .find(|ext| name.ends_with(ext))
 }
 
 // GNU find's NUL records preserve spaces, quotes and embedded newlines.
 pub(super) fn parse_listing(bytes: &[u8]) -> Result<Listing, String> {
-    let data = std::str::from_utf8(bytes).map_err(|_| "This directory contains names that are not valid UTF-8.")?;
-    let data = data.strip_suffix('\0').ok_or("Incomplete directory listing.")?;
+    let data = std::str::from_utf8(bytes)
+        .map_err(|_| "This directory contains names that are not valid UTF-8.")?;
+    let data = data
+        .strip_suffix('\0')
+        .ok_or("Incomplete directory listing.")?;
     let mut fields = data.split('\0');
-    let path = fields.next().filter(|value| value.starts_with('/')).ok_or("Invalid remote directory.")?;
+    let path = fields
+        .next()
+        .filter(|value| value.starts_with('/'))
+        .ok_or("Invalid remote directory.")?;
     let fields: Vec<_> = fields.collect();
     let mut entries = Vec::new();
-    let mut records = fields.chunks_exact(5);
-    for record in &mut records {
-        let [kind, modified, mode, size, name] = record else { return Err("Invalid directory entry.".into()); };
+    for record in fields.chunks(5) {
+        let [kind, modified, mode, size, name] = record else {
+            return Err("Invalid directory entry.".into());
+        };
         if !valid_name(name) {
             return Err("Invalid directory entry name.".into());
         }
@@ -70,14 +80,17 @@ pub(super) fn parse_listing(bytes: &[u8]) -> Result<Listing, String> {
             _ => Kind::Other,
         };
         entries.push(Entry {
-            name: (*name).to_owned(), kind, modified: (*modified).to_owned(),
-            size: size.parse().map_err(|_| "Invalid file size.")?, mode: (*mode).to_owned(),
+            name: (*name).to_owned(),
+            kind,
+            modified: (*modified).to_owned(),
+            size: size.parse().map_err(|_| "Invalid file size.")?,
+            mode: (*mode).to_owned(),
         });
     }
-    if !records.remainder().is_empty() {
-        return Err("Incomplete directory entry.".into());
-    }
-    Ok(Listing { path: path.to_owned(), entries })
+    Ok(Listing {
+        path: path.to_owned(),
+        entries,
+    })
 }
 
 #[cfg(test)]
@@ -88,7 +101,10 @@ mod tests {
     fn parses_nul_separated_names_and_rejects_truncated_records() {
         let listing = parse_listing(b"/tmp\0f\02026-01-01 12:00\0644\03\0a 'b\nc.zip\0").unwrap();
         assert_eq!(listing.entries[0].kind, Kind::Archive);
-        assert_eq!(join(&listing.path, &listing.entries[0].name), "/tmp/a 'b\nc.zip");
+        assert_eq!(
+            join(&listing.path, &listing.entries[0].name),
+            "/tmp/a 'b\nc.zip"
+        );
         assert!(parse_listing(b"/tmp\0f\0").is_err());
     }
 }

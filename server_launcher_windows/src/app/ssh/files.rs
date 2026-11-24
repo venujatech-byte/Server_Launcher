@@ -24,6 +24,7 @@ struct RemoteFiles {
     listing: Option<Arc<Listing>>,
     worker: Option<Worker>,
     transfer: bool,
+    changing: bool,
     refreshing_after_change: bool,
     progress: Option<(String, f32)>,
     notice: Option<(String, bool)>,
@@ -53,6 +54,7 @@ impl RemoteFiles {
             self.notice = None;
             self.progress = None;
             self.transfer = matches!(job, Job::Transfer(_));
+            self.changing = !matches!(job, Job::List(_));
             self.worker = Some(backend::start(host, job, ctx.clone()));
         }
     }
@@ -66,13 +68,16 @@ impl RemoteFiles {
                     Ok(Event::Progress(text, ratio)) => self.progress = Some((text, ratio)),
                     Ok(Event::Finished(result)) => break result,
                     Err(std::sync::mpsc::TryRecvError::Empty) => return,
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => break Err("File worker disconnected.".into()),
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        break Err("File worker disconnected.".into())
+                    }
                 }
             }
         };
         self.worker = None;
         self.progress = None;
         self.transfer = false;
+        let changing = std::mem::take(&mut self.changing);
 
         match result {
             Ok(Outcome::Listing(listing)) => {
@@ -88,18 +93,22 @@ impl RemoteFiles {
                     self.anchor = None;
                     self.filter.clear();
                 } else {
-                    let names: BTreeSet<_> = listing.entries.iter().map(|entry| entry.name.as_str()).collect();
+                    let names: BTreeSet<_> = listing
+                        .entries
+                        .iter()
+                        .map(|entry| entry.name.as_str())
+                        .collect();
                     self.selected.retain(|name| names.contains(name.as_str()));
                 }
                 self.listing = Some(Arc::new(listing));
             }
-            Ok(Outcome::Changed(message)) => {
+            Ok(Outcome::Changed { message, moved }) => {
                 if let Some(path) = self.directory().map(str::to_owned) {
                     self.start(host, ctx, Job::List(path));
                     self.refreshing_after_change = true;
                 }
                 self.notice = Some((message, false));
-                if self.clipboard.as_ref().is_some_and(|(cut, _)| *cut) && self.clear_cut_on_success() {
+                if moved {
                     self.clipboard = None;
                 }
             }
@@ -109,6 +118,12 @@ impl RemoteFiles {
                     let previous = self.notice.take().map(|(text, _)| text).unwrap_or_default();
                     self.notice = Some((format!("{previous}\nCould not refresh: {error}"), true));
                 } else {
+                    if changing {
+                        if let Some(path) = self.directory().map(str::to_owned) {
+                            self.start(host, ctx, Job::List(path));
+                            self.refreshing_after_change = true;
+                        }
+                    }
                     self.notice = Some((error, true));
                 }
             }
@@ -117,16 +132,15 @@ impl RemoteFiles {
             self.refreshing_after_change = false;
         }
     }
-
-    fn clear_cut_on_success(&self) -> bool {
-        self.notice.as_ref().is_some_and(|(text, _)| text == "Moved selected items.")
-    }
 }
 
 impl LauncherApp {
     pub(super) fn render_remote_files(&self, ui: &mut Ui, host: &SshRemoteHost) {
         let id = egui::Id::new(("remote_files_explorer", &host.id));
-        let mut files = ui.ctx().data_mut(|data| data.remove_temp::<RemoteFiles>(id)).unwrap_or_default();
+        let mut files = ui
+            .ctx()
+            .data_mut(|data| data.remove_temp::<RemoteFiles>(id))
+            .unwrap_or_default();
         files.poll(host, ui.ctx());
         if files.worker.is_none() && files.listing.is_none() && files.notice.is_none() {
             files.start(host, ui.ctx(), Job::List(".".into()));

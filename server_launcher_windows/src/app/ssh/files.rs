@@ -17,6 +17,7 @@ enum Prompt {
     Delete(Vec<String>),
     Compress(Vec<String>),
     Extract(String),
+    InstallMicro(String),
 }
 
 #[derive(Clone, Default)]
@@ -54,7 +55,7 @@ impl RemoteFiles {
             self.notice = None;
             self.progress = None;
             self.transfer = matches!(job, Job::Transfer(_));
-            self.changing = !matches!(job, Job::List(_));
+            self.changing = !matches!(job, Job::List(_) | Job::Micro(_, _));
             self.worker = Some(backend::start(host, job, ctx.clone()));
         }
     }
@@ -80,6 +81,10 @@ impl RemoteFiles {
         let changing = std::mem::take(&mut self.changing);
 
         match result {
+            Ok(Outcome::MicroMissing(path)) => self.prompt = Some(Prompt::InstallMicro(path)),
+            Ok(Outcome::MicroOpened) => {
+                self.notice = Some(("Opened Micro in an SSH terminal.".into(), false))
+            }
             Ok(Outcome::Listing(listing)) => {
                 if let Some(index) = self.history_target.take() {
                     self.history_index = index;

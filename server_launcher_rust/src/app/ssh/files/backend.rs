@@ -8,6 +8,7 @@ use std::{
 #[derive(Debug)]
 pub(super) enum Job {
     List(String),
+    Micro(String, bool),
     Create(String, bool),
     Rename(String, String),
     Paste(Vec<String>, String, bool),
@@ -20,6 +21,8 @@ pub(super) enum Job {
 #[derive(Debug)]
 pub(super) enum Outcome {
     Listing(model::Listing),
+    MicroMissing(String),
+    MicroOpened,
     Changed { message: String, moved: bool },
 }
 
@@ -71,6 +74,9 @@ fn run(host: &SshRemoteHost, job: Job) -> Result<Outcome, String> {
         let output = execute(host, &command, 15)?;
         return model::parse_listing(&output).map(Outcome::Listing);
     }
+    if let Job::Micro(path, install) = job {
+        return open_micro(host, path, install);
+    }
     let moved = matches!(&job, Job::Paste(_, _, true));
     let command = mutation_command(job)?;
     execute(host, &command, 300).map(|_| Outcome::Changed {
@@ -81,6 +87,49 @@ fn run(host: &SshRemoteHost, job: Job) -> Result<Outcome, String> {
         },
         moved,
     })
+}
+
+fn open_micro(host: &SshRemoteHost, path: String, install: bool) -> Result<Outcome, String> {
+    let mut command = String::new();
+    if install {
+        command.push_str(
+            r#"
+install_micro() {
+    if [ "$(id -u)" = 0 ]; then "$@"; else sudo "$@"; fi
+}
+if ! command -v micro >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+        install_micro apt-get install micro || exit
+    elif command -v dnf >/dev/null 2>&1; then
+        install_micro dnf install micro || exit
+    elif command -v pacman >/dev/null 2>&1; then
+        install_micro pacman -S micro || exit
+    elif command -v zypper >/dev/null 2>&1; then
+        install_micro zypper install micro || exit
+    elif command -v apk >/dev/null 2>&1; then
+        install_micro apk add micro || exit
+    else
+        printf '%s\n' 'Install Micro manually on this SSH host, then try again.' >&2
+        exit 127
+    fi
+fi
+"#,
+        );
+    } else {
+        let installed = execute(
+            host,
+            "if command -v micro >/dev/null 2>&1; then printf yes; else printf no; fi",
+            15,
+        )?;
+        if installed != b"yes" {
+            return Ok(Outcome::MicroMissing(path));
+        }
+    }
+    command.push_str(&format!("exec micro {}", shell_quote(&path)));
+    let mut host = host.clone();
+    host.remote_cwd.clear();
+    crate::remote::launch_external_ssh_command(&host, &command)?;
+    Ok(Outcome::MicroOpened)
 }
 
 pub(super) fn execute(
@@ -233,6 +282,6 @@ done"#,
                 require(tool)
             )
         }
-        Job::List(_) | Job::Transfer(_) => unreachable!(),
+        Job::List(_) | Job::Micro(_, _) | Job::Transfer(_) => unreachable!(),
     })
 }

@@ -62,7 +62,9 @@ impl Action {
             Self::Forward => files.history_index + 1 < files.history.len(),
             Self::Up => files.directory().is_some_and(|path| path != "/"),
             Self::Refresh => true,
-            Self::Open => single.is_some_and(|entry| entry.kind == Kind::Folder),
+            Self::Open => {
+                single.is_some_and(|entry| entry.kind == Kind::Folder || entry.opens_in_micro())
+            }
             Self::ExtractHere | Self::ExtractTo => {
                 single.is_some_and(|entry| entry.kind == Kind::Archive)
             }
@@ -556,7 +558,9 @@ fn details(
                                     files.anchor = Some(entry.name.clone());
                                 }
                             }
-                            if response.double_clicked() && entry.kind == Kind::Folder {
+                            if response.double_clicked()
+                                && (entry.kind == Kind::Folder || entry.opens_in_micro())
+                            {
                                 files.selected.clear();
                                 files.selected.insert(entry.name.clone());
                                 *action = Some(Open);
@@ -694,7 +698,20 @@ fn activate(files: &mut RemoteFiles, host: &SshRemoteHost, ctx: &egui::Context, 
                 .to_owned(),
         ),
         Refresh => Job::List(directory),
-        Open => Job::List(model::join(&directory, &single())),
+        Open => {
+            let name = single();
+            let path = model::join(&directory, &name);
+            if files.listing.as_ref().is_some_and(|listing| {
+                listing
+                    .entries
+                    .iter()
+                    .any(|entry| entry.name == name && entry.opens_in_micro())
+            }) {
+                Job::Micro(path, false)
+            } else {
+                Job::List(path)
+            }
+        }
         Copy | Cut => {
             files.clipboard = Some((matches!(action, Cut), paths()));
             files.notice = Some(("Selection added to the remote clipboard.".into(), false));
@@ -762,6 +779,7 @@ fn prompt(ctx: &egui::Context, id: egui::Id, files: &mut RemoteFiles, host: &Ssh
         Prompt::Delete(_) => ("Permanently delete items", "Delete"),
         Prompt::Compress(_) => ("Create archive", "Compress"),
         Prompt::Extract(_) => ("Extract to new folder", "Extract"),
+        Prompt::InstallMicro(_) => ("Micro is not installed", "Install and open"),
     };
     let formats = [".zip", ".tar", ".tar.gz", ".rar"];
     let mut dismiss = false;
@@ -772,7 +790,11 @@ fn prompt(ctx: &egui::Context, id: egui::Id, files: &mut RemoteFiles, host: &Ssh
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ctx, |ui| {
-            if let Prompt::Delete(paths) = &prompt {
+            if let Prompt::InstallMicro(path) = &prompt {
+                ui.label("Install Micro on the SSH host and open this file?");
+                ui.monospace(path.escape_debug().to_string());
+                ui.label("The SSH terminal will show any package manager or sudo prompts.");
+            } else if let Prompt::Delete(paths) = &prompt {
                 ui.label("The selected items will be removed from the remote host.");
                 egui::ScrollArea::vertical()
                     .max_height(180.0)
@@ -804,7 +826,8 @@ fn prompt(ctx: &egui::Context, id: egui::Id, files: &mut RemoteFiles, host: &Ssh
                     || ui.input(|input| input.key_pressed(egui::Key::Escape));
                 submit = ui
                     .add_enabled(
-                        matches!(prompt, Prompt::Delete(_)) || model::valid_name(&files.name),
+                        matches!(prompt, Prompt::Delete(_) | Prompt::InstallMicro(_))
+                            || model::valid_name(&files.name),
                         egui::Button::new(button),
                     )
                     .clicked();
@@ -834,6 +857,7 @@ fn prompt(ctx: &egui::Context, id: egui::Id, files: &mut RemoteFiles, host: &Ssh
             Job::Compress(paths, target)
         }
         Prompt::Extract(source) => Job::Extract(source, target, true),
+        Prompt::InstallMicro(path) => Job::Micro(path, true),
     };
     files.prompt = None;
     files.start(host, ctx, job);

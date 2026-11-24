@@ -51,6 +51,78 @@ pub(super) fn archive_extension(name: &str) -> Option<&'static str> {
     .find(|ext| name.ends_with(ext))
 }
 
+impl Entry {
+    pub fn opens_in_micro(&self) -> bool {
+        if self.kind != Kind::File {
+            return false;
+        }
+        let name = self.name.to_ascii_lowercase();
+        matches!(
+            name.as_str(),
+            "dockerfile"
+                | "makefile"
+                | "readme"
+                | "license"
+                | ".env"
+                | ".gitignore"
+                | ".bashrc"
+                | ".zshrc"
+        ) || name.rsplit_once('.').is_some_and(|(_, ext)| {
+            matches!(
+                ext,
+                "txt"
+                    | "md"
+                    | "log"
+                    | "rs"
+                    | "py"
+                    | "js"
+                    | "jsx"
+                    | "ts"
+                    | "tsx"
+                    | "html"
+                    | "css"
+                    | "scss"
+                    | "json"
+                    | "toml"
+                    | "yaml"
+                    | "yml"
+                    | "xml"
+                    | "ini"
+                    | "conf"
+                    | "cfg"
+                    | "env"
+                    | "sh"
+                    | "bash"
+                    | "zsh"
+                    | "fish"
+                    | "c"
+                    | "h"
+                    | "cpp"
+                    | "hpp"
+                    | "java"
+                    | "kt"
+                    | "go"
+                    | "rb"
+                    | "php"
+                    | "lua"
+                    | "swift"
+                    | "cs"
+                    | "sql"
+                    | "csv"
+                    | "tsv"
+                    | "service"
+                    | "socket"
+                    | "timer"
+                    | "vue"
+                    | "svelte"
+                    | "diff"
+                    | "patch"
+                    | "rst"
+            )
+        })
+    }
+}
+
 // GNU find's NUL records preserve spaces, quotes and embedded newlines.
 pub(super) fn parse_listing(bytes: &[u8]) -> Result<Listing, String> {
     let data = std::str::from_utf8(bytes)

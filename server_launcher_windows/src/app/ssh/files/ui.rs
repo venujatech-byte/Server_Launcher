@@ -47,6 +47,37 @@ impl Action {
         }
     }
 
+    fn icon(self) -> &'static str {
+        match self {
+            Self::Back => lucide::ARROW_LEFT,
+            Self::Forward => lucide::ARROW_RIGHT,
+            Self::Up => lucide::ARROW_UP,
+            Self::Refresh => lucide::REFRESH_CW,
+            Self::Open => lucide::FOLDER_OPEN,
+            Self::Copy => lucide::COPY,
+            Self::Cut => "✂",
+            Self::Paste => lucide::CLIPBOARD,
+            Self::Rename => lucide::EDIT,
+            Self::Delete => lucide::TRASH,
+            Self::NewFolder | Self::UploadFolder => lucide::FOLDER,
+            Self::NewFile => lucide::FILE_TEXT,
+            Self::UploadFiles => lucide::UPLOAD,
+            Self::Download => lucide::DOWNLOAD,
+            Self::Compress => lucide::PACKAGE,
+            Self::ExtractHere | Self::ExtractTo => lucide::FOLDER_OPEN,
+        }
+    }
+
+    fn menu_group(self) -> u8 {
+        match self {
+            Self::Open | Self::Download => 0,
+            Self::Cut | Self::Copy | Self::Paste | Self::Rename => 1,
+            Self::Delete => 2,
+            Self::Compress | Self::ExtractHere | Self::ExtractTo => 3,
+            _ => 4,
+        }
+    }
+
     fn enabled(self, files: &RemoteFiles) -> bool {
         if files.worker.is_some() {
             return false;
@@ -124,44 +155,31 @@ pub(super) fn explorer(
                 ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::NONE;
                 ui.visuals_mut().widgets.hovered.bg_fill = p.bg_button_hover;
                 ui.visuals_mut().widgets.hovered.bg_stroke = Stroke::NONE;
+                ui.visuals_mut().widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
+                ui.visuals_mut().widgets.hovered.weak_bg_fill = p.bg_button_hover;
                 ui.horizontal_wrapped(|ui| {
-                    for (item, icon) in [
-                        (Back, lucide::ARROW_LEFT),
-                        (Forward, lucide::ARROW_RIGHT),
-                        (Up, lucide::ARROW_UP),
-                        (Refresh, lucide::REFRESH_CW),
-                    ] {
-                        if ui
-                            .add_enabled(
-                                item.enabled(files),
-                                egui::Button::new(RichText::new(icon).size(12.0))
-                                    .frame(item.enabled(files))
-                                    .min_size(egui::vec2(24.0, 24.0)),
-                            )
-                            .on_hover_text(item.label())
-                            .clicked()
-                        {
-                            action = Some(item);
-                        }
+                    for item in [Back, Forward, Up, Refresh] {
+                        command_button(ui, files, item, &mut action, p, true);
                     }
                     ui.separator();
                     ui.menu_button(
                         RichText::new(format!("{} New", lucide::PLUS)).size(11.5),
-                        |ui| menu(ui, files, &[NewFolder, NewFile], &mut action),
+                        |ui| menu(ui, files, &[NewFolder, NewFile], &mut action, p),
                     );
                     for item in [Cut, Copy, Paste, Rename, Delete] {
-                        command_button(ui, files, item, &mut action);
+                        command_button(ui, files, item, &mut action, p, true);
                     }
                     ui.separator();
                     ui.menu_button(
                         RichText::new(format!("{} Upload", lucide::UPLOAD)).size(11.5),
-                        |ui| menu(ui, files, &[UploadFiles, UploadFolder], &mut action),
+                        |ui| menu(ui, files, &[UploadFiles, UploadFolder], &mut action, p),
                     );
-                    command_button(ui, files, Download, &mut action);
-                    command_button(ui, files, Compress, &mut action);
-                    ui.menu_button(RichText::new("Extract").size(11.5), |ui| {
-                        menu(ui, files, &[ExtractHere, ExtractTo], &mut action)
-                    });
+                    command_button(ui, files, Download, &mut action, p, false);
+                    command_button(ui, files, Compress, &mut action, p, false);
+                    ui.menu_button(
+                        RichText::new(format!("{} Extract", lucide::FOLDER_OPEN)).size(11.5),
+                        |ui| menu(ui, files, &[ExtractHere, ExtractTo], &mut action, p),
+                    );
                 });
                 ui.add_space(6.0);
                 ui.horizontal_wrapped(|ui| {
@@ -175,12 +193,29 @@ pub(super) fn explorer(
                             address(ui, files, &mut navigate, p);
                         },
                     );
-                    ui.add(
-                        egui::TextEdit::singleline(&mut files.filter)
-                            .hint_text(RichText::new("Filter this folder").color(p.text_muted))
-                            .font(egui::FontId::proportional(11.5))
-                            .desired_width(145.0),
-                    );
+                    Frame::none()
+                        .fill(p.bg_input)
+                        .rounding(Rounding::same(6.0))
+                        .inner_margin(egui::Margin::symmetric(7.0, 3.0))
+                        .show(ui, |ui| {
+                            ui.spacing_mut().interact_size.y = 21.0;
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(lucide::SEARCH).size(11.5).color(p.text_muted),
+                                );
+                                ui.add_sized(
+                                    [145.0, 21.0],
+                                    egui::TextEdit::singleline(&mut files.filter)
+                                        .hint_text(
+                                            RichText::new("Filter this folder").color(p.text_muted),
+                                        )
+                                        .font(egui::FontId::proportional(11.5))
+                                        .vertical_align(egui::Align::Center)
+                                        .margin(egui::Margin::ZERO)
+                                        .frame(false),
+                                );
+                            });
+                        });
                     ui.checkbox(
                         &mut files.hidden,
                         RichText::new("Hidden files")
@@ -266,24 +301,80 @@ pub(super) fn explorer(
     prompt(&ctx, id, files, host);
 }
 
-fn command_button(ui: &mut Ui, files: &RemoteFiles, item: Action, action: &mut Option<Action>) {
+fn command_button(
+    ui: &mut Ui,
+    files: &RemoteFiles,
+    item: Action,
+    action: &mut Option<Action>,
+    p: &ThemePalette,
+    icon_only: bool,
+) {
+    let enabled = item.enabled(files);
+    let text = if icon_only {
+        item.icon().to_owned()
+    } else {
+        format!("{} {}", item.icon(), item.label())
+    };
+    let color = if !enabled {
+        p.text_muted
+    } else if matches!(item, Action::Delete) {
+        p.danger
+    } else {
+        p.text_primary
+    };
+    let button = egui::Button::new(
+        RichText::new(text)
+            .size(if icon_only { 13.0 } else { 11.5 })
+            .color(color),
+    )
+    .rounding(Rounding::same(5.0))
+    .stroke(Stroke::NONE)
+    .min_size(egui::vec2(26.0, 24.0));
     if ui
-        .add_enabled(
-            item.enabled(files),
-            egui::Button::new(RichText::new(item.label()).size(11.5)).frame(item.enabled(files)),
-        )
+        .add_enabled(enabled, button)
+        .on_hover_text(item.label())
         .clicked()
     {
         *action = Some(item);
     }
 }
 
-fn menu(ui: &mut Ui, files: &RemoteFiles, items: &[Action], action: &mut Option<Action>) {
+fn menu(
+    ui: &mut Ui,
+    files: &RemoteFiles,
+    items: &[Action],
+    action: &mut Option<Action>,
+    p: &ThemePalette,
+) {
+    ui.set_min_width(178.0);
+    ui.spacing_mut().item_spacing.y = 2.0;
+    ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
+    ui.visuals_mut().widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
+    ui.visuals_mut().widgets.hovered.weak_bg_fill = p.bg_button_hover;
+    let mut previous_group = None;
     for &item in items {
-        if ui
-            .add_enabled(item.enabled(files), egui::Button::new(item.label()))
-            .clicked()
-        {
+        let group = item.menu_group();
+        if previous_group.is_some_and(|previous| previous != group) {
+            ui.separator();
+        }
+        previous_group = Some(group);
+        let enabled = item.enabled(files);
+        let color = if !enabled {
+            p.text_muted
+        } else if matches!(item, Action::Delete) {
+            p.danger
+        } else {
+            p.text_primary
+        };
+        let label = RichText::new(format!("{}  {}", item.icon(), item.label()))
+            .size(11.5)
+            .color(color);
+        let width = ui.available_width();
+        let button = egui::Button::new(label)
+            .rounding(Rounding::same(5.0))
+            .stroke(Stroke::NONE)
+            .min_size(egui::vec2(width, 24.0));
+        if ui.add_enabled(enabled, button).clicked() {
             *action = Some(item);
             ui.close_menu();
         }
@@ -498,6 +589,7 @@ fn details(
                                             Refresh,
                                         ],
                                         action,
+                                        p,
                                     )
                                 });
                                 if order.is_empty() && files.worker.is_none() {
@@ -581,6 +673,7 @@ fn details(
                                         ExtractTo,
                                     ],
                                     action,
+                                    p,
                                 )
                             });
                             response

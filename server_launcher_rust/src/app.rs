@@ -3642,7 +3642,14 @@ fn render_process_context_menu(
             resp
         };
 
-        if !windows_process_host {
+        if windows_process_host {
+            if item(ui, "End task", "Ctrl+T").clicked() {
+                *proc_action = Some(ProcAction::Terminate { pid });
+                ui.close_menu();
+            }
+            return;
+        }
+
         // 1. Properties (Alt+Return)
         if item(ui, "Properties", "Alt+Return").clicked() {
             *proc_action = Some(ProcAction::Properties {
@@ -3723,7 +3730,6 @@ fn render_process_context_menu(
         if item(ui, "Resume", "Ctrl+C").clicked() {
             *proc_action = Some(ProcAction::Resume { pid });
             ui.close_menu();
-        }
         }
 
         // 8. Terminate... (Ctrl+T)

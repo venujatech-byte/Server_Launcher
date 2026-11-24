@@ -565,7 +565,7 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 5. Row of 4 Telemetry Cards
-                sensor_card_columns(ui, 4, |ui, column| match column {
+                let render_diagnostic = |ui: &mut Ui, column| match column {
                     0 => {
                     // Card 1: THERMAL CORE
                     Frame::none()
@@ -709,7 +709,16 @@ impl LauncherApp {
                         });
                     },
                     _ => unreachable!(),
-                });
+                };
+                if sensor_grid_columns(ui.available_width(), ui.spacing().item_spacing.x, 4) == 4 {
+                    ui.columns(4, |columns| {
+                        for (index, column) in columns.iter_mut().enumerate() {
+                            render_diagnostic(column, index);
+                        }
+                    });
+                } else {
+                    sensor_card_columns(ui, 4, render_diagnostic);
+                }
 
                 ui.add_space(8.0);
 

@@ -4596,7 +4596,7 @@ mod layout_tests {
     fn other_listeners_are_filtered_by_process_ownership_not_port() {
         let pid = std::process::id();
         let mut sys = System::new();
-        sys.refresh_processes_specifics(sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]), sysinfo::ProcessRefreshKind::new());
+        sys.refresh_processes_specifics(sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]), false, sysinfo::ProcessRefreshKind::nothing());
         let listener = crate::scanner::ListenerInfo { proto: "TCP".into(), port: 5173, pid: Some(pid), start_marker: None, name: "node".into() };
         assert!(!listener_is_managed(&listener, &BTreeSet::new(), &sys));
         assert!(listener_is_managed(&listener, &BTreeSet::from([pid]), &sys));

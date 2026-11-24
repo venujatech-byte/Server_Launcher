@@ -106,7 +106,7 @@ fn read_process_record(config: &ServerConfig) -> Option<ProcessRecord> {
 
 fn write_process_record(config: &ServerConfig, pid: u32) -> std::io::Result<()> {
     let mut sys = System::new();
-    sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[Pid::from_u32(pid)]), sysinfo::ProcessRefreshKind::new());
+    sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[Pid::from_u32(pid)]), false, sysinfo::ProcessRefreshKind::nothing());
     let process = sys.process(Pid::from_u32(pid)).filter(|p| p.start_time() > 0)
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Process identity unavailable"))?;
     let identity = ProcessIdentity {
@@ -128,10 +128,10 @@ fn write_identity(config: &ServerConfig, identity: &ProcessIdentity) -> std::io:
 // sysinfo 0.31 computes Linux CPU percentages only during an All refresh.
 // Keep this scheduled: extra refreshes reset the per-process CPU time baselines.
 pub fn refresh_process_metrics(sys: &mut System) {
-    let refresh = sysinfo::ProcessRefreshKind::new().with_cpu();
+    let refresh = sysinfo::ProcessRefreshKind::nothing().with_cpu();
     #[cfg(not(target_os = "linux"))]
     let refresh = refresh.with_memory();
-    sys.refresh_processes_specifics(ProcessesToUpdate::All, refresh);
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
 }
 
 fn process_tree_pids(root: Pid, parents: impl IntoIterator<Item = (Pid, Option<Pid>)>) -> Vec<Pid> {
@@ -151,7 +151,7 @@ fn refresh_process_alive(pid: u32) -> bool {
     // Keep liveness probes separate so they cannot overwrite the CPU sampling baseline.
     let mut sys = System::new();
     // Targeted sysinfo refreshes retain dead entries, so presence in the cache is not enough.
-    let updated = sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[Pid::from_u32(pid)]), sysinfo::ProcessRefreshKind::new());
+    let updated = sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[Pid::from_u32(pid)]), false, sysinfo::ProcessRefreshKind::nothing());
     updated > 0 && sys.process(Pid::from_u32(pid)).is_some_and(|p| p.status() != sysinfo::ProcessStatus::Zombie)
 }
 
@@ -179,7 +179,7 @@ pub fn reconnect_services(services: &mut [Service]) {
     let pids: Vec<_> = records.iter().flatten().map(ProcessRecord::pid).filter(|&pid| pid > 0).map(Pid::from_u32).collect();
     if pids.is_empty() { return; }
     let mut sys = System::new();
-    sys.refresh_processes_specifics(ProcessesToUpdate::Some(&pids), sysinfo::ProcessRefreshKind::new()
+    sys.refresh_processes_specifics(ProcessesToUpdate::Some(&pids), false, sysinfo::ProcessRefreshKind::nothing()
         .with_cmd(sysinfo::UpdateKind::Always).with_cwd(sysinfo::UpdateKind::Always));
     let candidates: Vec<_> = records.iter().zip(services.iter()).map(|(record, service)| {
         let record = record.as_ref()?;
@@ -1778,7 +1778,7 @@ mod tests {
     fn legacy_records_migrate_but_duplicate_pid_claims_are_rejected() {
         let pid = std::process::id();
         let mut sys = System::new();
-        sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[Pid::from_u32(pid)]), sysinfo::ProcessRefreshKind::new()
+        sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[Pid::from_u32(pid)]), false, sysinfo::ProcessRefreshKind::nothing()
             .with_cmd(sysinfo::UpdateKind::Always).with_cwd(sysinfo::UpdateKind::Always));
         let process = sys.process(Pid::from_u32(pid)).unwrap();
         let mut config = identity_test_config();
@@ -1837,7 +1837,7 @@ mod tests {
         // Attach to current test process PID
         let current_pid = std::process::id();
         let mut sys = System::new();
-        sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[Pid::from_u32(current_pid)]), sysinfo::ProcessRefreshKind::new());
+        sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[Pid::from_u32(current_pid)]), false, sysinfo::ProcessRefreshKind::nothing());
         let start_time = sys.process(Pid::from_u32(current_pid)).unwrap().start_time();
         s.attach_existing(current_pid, start_time);
 

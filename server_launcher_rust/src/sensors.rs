@@ -523,13 +523,13 @@ impl SystemSensorsCollector {
         // 1. Refresh System
         self.sys.refresh_cpu_all();
         self.sys.refresh_memory();
-        self.disks.refresh();
-        self.networks.refresh();
-        self.components.refresh();
+        self.disks.refresh(false);
+        self.components.refresh(false);
 
         let now = Instant::now();
-        if self.last_hardware_scan.elapsed() >= Duration::from_secs(30) {
-            self.networks.refresh_list();
+        let inventory_due = self.last_hardware_scan.elapsed() >= Duration::from_secs(30);
+        self.networks.refresh(inventory_due);
+        if inventory_due {
             self.cached_physical_disks = collect_physical_disks();
             self.cached_displays = detect_displays();
             self.last_hardware_scan = now;
@@ -543,7 +543,7 @@ impl SystemSensorsCollector {
             .first()
             .map(|c| c.brand().to_string())
             .unwrap_or_else(|| "Unknown CPU".to_string());
-        let cpu_cores_physical = self.sys.physical_core_count().unwrap_or(0);
+        let cpu_cores_physical = System::physical_core_count().unwrap_or(0);
         let cpu_cores_logical = self.sys.cpus().len();
         let cpu_global_usage = normalize_total_cpu_percent(self.sys.global_cpu_usage(), cpu_cores_logical);
         #[cfg(target_os = "linux")]
@@ -749,13 +749,14 @@ impl SystemSensorsCollector {
         // If hwmon didn't find anything, fallback to sysinfo components
         if temp_sensors.is_empty() {
             for c in &self.components {
+                let Some(temp) = c.temperature() else { continue; };
                 let label = c.label().to_string();
                 let cat = categorize_sensor(&label, "sysinfo");
                 temp_sensors.push(TempSensor {
                     name: label,
                     chip: "sysinfo".to_string(),
-                    temp: c.temperature(),
-                    max: Some(c.max()),
+                    temp,
+                    max: c.max(),
                     crit: c.critical(),
                     category: cat,
                 });
@@ -790,7 +791,9 @@ impl SystemSensorsCollector {
             let current_proc_net = if include_process_network { collect_process_tcp_counters() } else { HashMap::new() };
             self.sys.refresh_processes_specifics(
                 sysinfo::ProcessesToUpdate::All,
-                sysinfo::ProcessRefreshKind::new()
+                true,
+                sysinfo::ProcessRefreshKind::nothing()
+                    .without_tasks()
                     .with_cpu()
                     .with_memory()
                     .with_disk_usage()

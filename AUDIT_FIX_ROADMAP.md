@@ -33,6 +33,14 @@ Each stage below has one suggested commit. Add the verified result and any remai
 
 - [ ] **6. Fix one measured bottleneck per commit.** The first Linux round points to Servers Overview scrolling. Inspect the profile before choosing a fix. If list rendering dominates, start in both crates at `src/app/listeners.rs` and preserve expanded rows, inline terminals, and scroll position. If terminal layout dominates, start in `app/ssh/terminal.rs::render_remote_servers_right_panel`. Preserve wrapping, line starts, selection, and user-controlled vertical scrolling. If sensor collection dominates, use the matching stage in [SENSORS_AUDIT_ROADMAP.md](SENSORS_AUDIT_ROADMAP.md) and inspect the current `src/sensors.rs` plus the applicable sensor panel. Preserve collection cadence and tests for unavailable data. Compare the same baseline before claiming a gain. Use `perf(ssh): reduce wrapped terminal layout work` or `perf(sensors): reduce measured collection overhead` as appropriate. Stage only the affected feature files and audit Markdown files.
 
+### Stage 6 candidate: Linux Top Apps process enumeration
+
+The release Top Apps baseline at a 1-second refresh is 9.60–9.80% of one core. The filesystem trace points to thread enumeration. Sysinfo 0.34 introduced `ProcessRefreshKind::without_tasks()`. See the [upstream migration guide](https://docs.rs/crate/sysinfo/0.34.2/source/migration_guide.md).
+
+1. Implemented the 0.34.2 migration in both desktop crates. Search all `sysinfo` call sites and preserve each refresh's dead-process removal behavior. Keep the Linux Top Apps switch scoped to the dedicated process refresh in `src/sensors.rs::collect_with_top_apps`. Preserve TCP cadence, PID start markers, and CPU, RAM and disk metrics.
+2. Compile both crates with the roadmap checks and verify the Windows target through a native runner when authorized. Record package source revision and build settings for both Linux comparison binaries.
+3. Repeat two 30-second Top Apps runs per build at 1-second refresh with comparable process counts. Use a separate syscall trace to verify the task enumeration reduction. Report CPU and RSS from the untraced runs. Keep Stage 6 open until the comparison is available.
+
 ## Deferred decisions
 
 Release authenticity is still an audit finding. Independent signing requires a separately managed trust root and an explicit release-policy decision. Preserve the completed updater and packaging as requested. Android Cockpit remains deferred.

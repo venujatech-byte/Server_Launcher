@@ -195,7 +195,8 @@ impl LauncherApp {
                                         )
                                         .fill(p.bg_button)
                                         .rounding(Rounding::same(8.0));
-                                        if ui.add(stop_btn).on_hover_text("Stop this remote server gracefully").clicked() {
+                                        let identified = l.pid.is_some() && l.start_marker.is_some();
+                                        if ui.add_enabled(identified, stop_btn).on_disabled_hover_text("Process identity is unavailable.").on_hover_text("Stop this remote server gracefully").clicked() {
                                             requested = Some((l.clone(), false));
                                         }
 
@@ -214,7 +215,7 @@ impl LauncherApp {
                                         ui.menu_button(RichText::new("⋯").size(11.0), |ui| {
                                             ui.set_min_width(88.0);
                                             ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
-                                            if ui.add_sized([88.0, 24.0], egui::Button::new(RichText::new("Kill").size(11.5))).on_hover_text("Force stop this remote process").clicked() {
+                                            if ui.add_enabled(identified, egui::Button::new(RichText::new("Kill").size(11.5)).min_size(egui::vec2(88.0, 24.0))).on_disabled_hover_text("Process identity is unavailable.").on_hover_text("Force stop this remote process").clicked() {
                                                 requested = Some((l.clone(), true));
                                                 ui.close_menu();
                                             }
@@ -405,7 +406,7 @@ impl LauncherApp {
                     let target = {
                         let snapshots = self.remote_listeners.lock().unwrap();
                         snapshots.get(&host.id).and_then(|listeners| {
-                            let mut matches = listeners.iter().filter(|l| l.port == listener.port && l.proto == listener.proto && l.pid == listener.pid && l.name == listener.name);
+                            let mut matches = listeners.iter().filter(|l| l.port == listener.port && l.proto == listener.proto && l.pid == listener.pid && l.start_marker == listener.start_marker && l.name == listener.name);
                             let target = matches.next()?.clone();
                             matches.next().is_none().then_some(target)
                         })
@@ -422,32 +423,38 @@ impl LauncherApp {
     }
 
     pub(in crate::app) fn dispatch_remote_listener_stop(&self, host: &SshRemoteHost, l: &crate::remote::RemoteListener, force: bool, ctx: &Context) {
-        if force {
-        let kill_cmd = if let Some(pid) = l.pid {
-            format!("kill -9 {}", pid)
-        } else {
-            format!("fuser -k -n tcp {} 2>/dev/null || true", l.port)
-        };
-        self.run_remote_ssh_command(host, &kill_cmd, Some(ctx.clone()));
+        let (Some(pid), Some(marker)) = (l.pid, l.start_marker) else { return };
+        let host_id = host.id.clone();
         self.schedule_remote_scan(host, 1500, ctx.clone());
-        } else {
-        let stop_cmd = build_remote_stop_cmd(&l.name, l.port, l.pid);
-        let start_cmd = guess_remote_start_cmd(&l.name, l.port);
-        if let Ok(mut map) = self.remote_stopped_servers.lock() {
-            let list = map.entry(host.id.clone()).or_default();
-            if !list.iter().any(|s| s.port == l.port) {
-                list.push(RemoteStoppedServer {
-                    name: l.name.clone(),
-                    port: l.port,
-                    proto: l.proto.clone(),
-                    last_pid: l.pid,
-                    cmd: l.cmd.clone(),
-                    start_cmd,
-                });
+        let host = host.clone();
+        let listener = l.clone();
+        let stopped = self.remote_stopped_servers.clone();
+        let logs = self.get_remote_logs(&host_id);
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let signal = if force { "KILL" } else { "TERM" };
+            match crate::procmgr::send_remote_signal(&host, pid, signal, Some(marker)) {
+                Ok(()) => {
+                    if !force {
+                        if let Ok(mut map) = stopped.lock() {
+                            let list = map.entry(host_id).or_default();
+                            if !list.iter().any(|entry| entry.port == listener.port) {
+                                list.push(RemoteStoppedServer {
+                                    name: listener.name.clone(),
+                                    port: listener.port,
+                                    proto: listener.proto,
+                                    last_pid: Some(pid),
+                                    cmd: listener.cmd,
+                                    start_cmd: guess_remote_start_cmd(&listener.name, listener.port),
+                                });
+                            }
+                        }
+                    }
+                    crate::service::push_log_line(&format!("[ssh] Sent {signal} to PID {pid}."), &logs, 1000, crate::service::LogKind::Launcher);
+                }
+                Err(error) => crate::service::push_log_line(&format!("[ssh] Listener action failed: {error}"), &logs, 1000, crate::service::LogKind::Error),
             }
-        }
-        self.run_remote_ssh_command(host, &stop_cmd, Some(ctx.clone()));
-        self.schedule_remote_scan(host, 1500, ctx.clone());
-        }
+            repaint.request_repaint();
+        });
     }
 }

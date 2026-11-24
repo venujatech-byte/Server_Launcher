@@ -8,6 +8,8 @@ pub struct RemoteListener {
     pub port: u16,
     pub name: String,
     pub pid: Option<u32>,
+    #[serde(default)]
+    pub start_marker: Option<u64>,
     pub cmd: String,
     #[serde(default)]
     pub cpu_pct: Option<f32>,
@@ -64,23 +66,6 @@ pub fn guess_remote_start_cmd(name: &str, port: u16) -> String {
             _ => format!("echo 'Please specify start command for port {}'", port),
         }
     }
-}
-
-pub fn build_remote_stop_cmd(name: &str, port: u16, pid: Option<u32>) -> String {
-    let clean_svc = clean_service_name(name);
-    let pid_str = pid.map(|p| p.to_string()).unwrap_or_default();
-    format!(
-r#"echo "[launcher] Stopping {name} on port {port}..."; \
-if [ -n "{clean_svc}" ] && sudo systemctl is-active --quiet "{clean_svc}" 2>/dev/null; then \
-    sudo systemctl stop "{clean_svc}" && echo "[launcher] {clean_svc} stopped via systemd."; \
-elif [ -n "{pid_str}" ]; then \
-    kill -15 {pid_str} 2>/dev/null || kill -9 {pid_str} 2>/dev/null; \
-    echo "[launcher] Stopped PID {pid_str}."; \
-else \
-    fuser -k -n tcp {port} 2>/dev/null || true; \
-    echo "[launcher] Stopped listeners on port {port}."; \
-fi"#
-    )
 }
 
 pub fn build_remote_restart_cmd(name: &str, port: u16, pid: Option<u32>) -> String {
@@ -296,6 +281,17 @@ pub(crate) fn shell_quote(value: &str) -> String {
 pub fn fetch_remote_listeners(host: &SshRemoteHost) -> Result<Vec<RemoteListener>, String> {
     // Run ss -tulpn or lsof or netstat on the remote host, plus ps for CPU & RAM metrics
     let remote_script = r#"
+set -f
+metrics=$(
+ps -eo pid,%cpu,rss --no-headers 2>/dev/null | while read -r pid cpu rss; do
+    marker=
+    if { IFS= read -r stat < "/proc/$pid/stat"; } 2>/dev/null; then
+        set -- ${stat##*) }
+        marker=${20}
+    fi
+    printf '%s %s %s %s\n' "$pid" "$cpu" "$rss" "$marker"
+done
+)
 if command -v ss >/dev/null 2>&1; then
     ss -tulpn -H 2>/dev/null
 elif command -v netstat >/dev/null 2>&1; then
@@ -304,7 +300,7 @@ else
     echo "NO_NET_TOOLS"
 fi
 echo "---PS_METRICS---"
-ps -eo pid,%cpu,rss --no-headers 2>/dev/null || true
+printf '%s\n' "$metrics"
 "#;
 
     let mut cmd = build_ssh_command(host, remote_script);
@@ -340,7 +336,7 @@ pub fn parse_remote_listeners_str(text: &str) -> Vec<RemoteListener> {
         }
     }
 
-    let mut metrics: std::collections::HashMap<u32, (f32, f32)> = std::collections::HashMap::new();
+    let mut metrics: std::collections::HashMap<u32, (f32, f32, Option<u64>)> = std::collections::HashMap::new();
     for line in ps_lines {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 3 {
@@ -348,7 +344,7 @@ pub fn parse_remote_listeners_str(text: &str) -> Vec<RemoteListener> {
                 let cpu = parts[1].parse::<f32>().unwrap_or(0.0);
                 let rss_kb = parts[2].parse::<f32>().unwrap_or(0.0);
                 let mem_mb = (rss_kb / 1024.0 * 10.0).round() / 10.0;
-                metrics.insert(pid, (cpu, mem_mb));
+                metrics.insert(pid, (cpu, mem_mb, parts.get(3).and_then(|marker| marker.parse().ok())));
             }
         }
     }
@@ -415,16 +411,17 @@ pub fn parse_remote_listeners_str(text: &str) -> Vec<RemoteListener> {
                     };
                 }
 
-                let (cpu_pct, mem_mb) = pid
+                let (cpu_pct, mem_mb, start_marker) = pid
                     .and_then(|p| metrics.get(&p).copied())
-                    .map(|(c, m)| (Some(c), Some(m)))
-                    .unwrap_or((None, None));
+                    .map(|(c, m, marker)| (Some(c), Some(m), marker))
+                    .unwrap_or((None, None, None));
 
                 listeners.push(RemoteListener {
                     proto,
                     port,
                     name: proc_name,
                     pid,
+                    start_marker,
                     cmd: format!("Listening on :{}", port),
                     cpu_pct,
                     mem_mb,
@@ -670,7 +667,7 @@ tcp    LISTEN  0       128            0.0.0.0:22          0.0.0.0:*      users:(
 tcp    LISTEN  0       511                  *:80                *:*      users:(("nginx",pid=1234,fd=6))
 tcp    LISTEN  0       128            0.0.0.0:3000        0.0.0.0:*      users:(("node",pid=5678,fd=10))
 ---PS_METRICS---
-850  0.2  12480
+850  0.2  12480  98765
 1234  1.8  48920
 5678  12.5  150400
 "#;
@@ -681,12 +678,14 @@ tcp    LISTEN  0       128            0.0.0.0:3000        0.0.0.0:*      users:(
         assert_eq!(listeners[0].port, 22);
         assert_eq!(listeners[0].name, "sshd");
         assert_eq!(listeners[0].pid, Some(850));
+        assert_eq!(listeners[0].start_marker, Some(98765));
         assert_eq!(listeners[0].cpu_pct, Some(0.2));
         assert_eq!(listeners[0].mem_mb, Some(12.2)); // 12480 / 1024 = 12.1875 -> 12.2
 
         assert_eq!(listeners[1].port, 80);
         assert_eq!(listeners[1].name, "nginx");
         assert_eq!(listeners[1].pid, Some(1234));
+        assert_eq!(listeners[1].start_marker, None);
         assert_eq!(listeners[1].cpu_pct, Some(1.8));
 
         assert_eq!(listeners[2].port, 3000);
@@ -700,10 +699,6 @@ tcp    LISTEN  0       128            0.0.0.0:3000        0.0.0.0:*      users:(
         assert_eq!(clean_service_name("http / nginx"), "nginx");
         assert_eq!(clean_service_name("sshd"), "sshd");
         assert_eq!(clean_service_name("port_8080"), "");
-
-        let stop_cmd = build_remote_stop_cmd("nginx", 80, Some(1234));
-        assert!(stop_cmd.contains("systemctl stop \"nginx\""));
-        assert!(stop_cmd.contains("kill -15 1234"));
 
         let restart_cmd = build_remote_restart_cmd("nginx", 80, Some(1234));
         assert!(restart_cmd.contains("systemctl restart \"nginx\""));
@@ -720,6 +715,7 @@ tcp    LISTEN  0       128            0.0.0.0:3000        0.0.0.0:*      users:(
                 port: 22,
                 name: "sshd".to_string(),
                 pid: Some(100),
+                start_marker: None,
                 cmd: "".to_string(),
                 cpu_pct: None,
                 mem_mb: None,
@@ -729,6 +725,7 @@ tcp    LISTEN  0       128            0.0.0.0:3000        0.0.0.0:*      users:(
                 port: 80,
                 name: "nginx".to_string(),
                 pid: Some(200),
+                start_marker: None,
                 cmd: "".to_string(),
                 cpu_pct: None,
                 mem_mb: None,

@@ -29,7 +29,7 @@ use crate::systemd::{
 };
 use crate::remote::{
     build_remote_restart_cmd, build_remote_start_cmd,
-    build_remote_stop_cmd, build_ssh_command,
+    build_ssh_command,
     clean_service_name, fetch_remote_listeners, guess_remote_start_cmd,
     import_from_ssh_config, launch_external_ssh_terminal, test_ssh_connection,
     RemoteListener, RemoteStoppedServer,

@@ -116,6 +116,12 @@ pub(super) fn explorer(
             .inner_margin(egui::Margin::symmetric(12.0, 8.0))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
+                ui.spacing_mut().interact_size.y = 24.0;
+                ui.spacing_mut().button_padding = egui::vec2(8.0, 3.0);
+                ui.visuals_mut().widgets.inactive.bg_fill = p.bg_button;
+                ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::NONE;
+                ui.visuals_mut().widgets.hovered.bg_fill = p.bg_button_hover;
+                ui.visuals_mut().widgets.hovered.bg_stroke = Stroke::NONE;
                 ui.horizontal_wrapped(|ui| {
                     for (item, icon) in [
                         (Back, lucide::ARROW_LEFT),
@@ -126,7 +132,9 @@ pub(super) fn explorer(
                         if ui
                             .add_enabled(
                                 item.enabled(files),
-                                egui::Button::new(icon).min_size(egui::vec2(26.0, 25.0)),
+                                egui::Button::new(RichText::new(icon).size(12.0))
+                                    .frame(item.enabled(files))
+                                    .min_size(egui::vec2(24.0, 24.0)),
                             )
                             .on_hover_text(item.label())
                             .clicked()
@@ -135,19 +143,21 @@ pub(super) fn explorer(
                         }
                     }
                     ui.separator();
-                    ui.menu_button("＋ New", |ui| {
-                        menu(ui, files, &[NewFolder, NewFile], &mut action)
-                    });
+                    ui.menu_button(
+                        RichText::new(format!("{} New", lucide::PLUS)).size(11.5),
+                        |ui| menu(ui, files, &[NewFolder, NewFile], &mut action),
+                    );
                     for item in [Cut, Copy, Paste, Rename, Delete] {
                         command_button(ui, files, item, &mut action);
                     }
                     ui.separator();
-                    ui.menu_button(format!("{} Upload", lucide::UPLOAD), |ui| {
-                        menu(ui, files, &[UploadFiles, UploadFolder], &mut action)
-                    });
+                    ui.menu_button(
+                        RichText::new(format!("{} Upload", lucide::UPLOAD)).size(11.5),
+                        |ui| menu(ui, files, &[UploadFiles, UploadFolder], &mut action),
+                    );
                     command_button(ui, files, Download, &mut action);
                     command_button(ui, files, Compress, &mut action);
-                    ui.menu_button("Extract", |ui| {
+                    ui.menu_button(RichText::new("Extract").size(11.5), |ui| {
                         menu(ui, files, &[ExtractHere, ExtractTo], &mut action)
                     });
                 });
@@ -165,10 +175,16 @@ pub(super) fn explorer(
                     );
                     ui.add(
                         egui::TextEdit::singleline(&mut files.filter)
-                            .hint_text("Filter this folder")
+                            .hint_text(RichText::new("Filter this folder").color(p.text_muted))
+                            .font(egui::FontId::proportional(11.5))
                             .desired_width(145.0),
                     );
-                    ui.checkbox(&mut files.hidden, "Hidden files");
+                    ui.checkbox(
+                        &mut files.hidden,
+                        RichText::new("Hidden files")
+                            .size(11.5)
+                            .color(p.text_secondary),
+                    );
                 });
             });
 
@@ -250,7 +266,10 @@ pub(super) fn explorer(
 
 fn command_button(ui: &mut Ui, files: &RemoteFiles, item: Action, action: &mut Option<Action>) {
     if ui
-        .add_enabled(item.enabled(files), egui::Button::new(item.label()))
+        .add_enabled(
+            item.enabled(files),
+            egui::Button::new(RichText::new(item.label()).size(11.5)).frame(item.enabled(files)),
+        )
         .clicked()
     {
         *action = Some(item);
@@ -275,11 +294,13 @@ fn address(ui: &mut Ui, files: &mut RemoteFiles, navigate: &mut Option<String>, 
         .rounding(Rounding::same(6.0))
         .inner_margin(egui::Margin::symmetric(7.0, 3.0))
         .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().interact_size.y = 21.0;
             if let Some((text, focus)) = files.address.as_mut() {
                 let response = ui.add(
                     egui::TextEdit::singleline(text)
                         .desired_width(f32::INFINITY)
+                        .font(egui::FontId::proportional(11.5))
                         .frame(false),
                 );
                 if *focus {
@@ -302,8 +323,9 @@ fn address(ui: &mut Ui, files: &mut RemoteFiles, navigate: &mut Option<String>, 
             let path = files.directory().unwrap_or(".");
             let mut parent = String::new();
             let mut edit = false;
-            ui.horizontal_wrapped(|ui| {
-                if path.starts_with('/') && ui.small_button("/").clicked() {
+            ui.horizontal(|ui| {
+                if path.starts_with('/') && ui.small_button(RichText::new("/").size(11.5)).clicked()
+                {
                     *navigate = Some("/".into());
                 }
                 for segment in path.split('/').filter(|segment| !segment.is_empty()) {
@@ -311,12 +333,14 @@ fn address(ui: &mut Ui, files: &mut RemoteFiles, navigate: &mut Option<String>, 
                     parent.push_str(segment);
                     ui.label("›");
                     let label = segment.escape_debug().to_string();
-                    if ui.small_button(label).clicked() && path.starts_with('/') {
+                    if ui.small_button(RichText::new(label).size(11.5)).clicked()
+                        && path.starts_with('/')
+                    {
                         *navigate = Some(parent.clone());
                     }
                 }
                 let (rect, response) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width().max(24.0), 21.0),
+                    egui::vec2(ui.available_width().max(0.0), 21.0),
                     egui::Sense::click(),
                 );
                 if response.on_hover_text("Edit path · Ctrl+L").clicked() {
@@ -404,13 +428,30 @@ fn details(
                     } else {
                         " ↑"
                     };
-                    if ui
-                        .add_sized(
-                            [widths[index], 26.0],
-                            egui::Button::new(format!("{title}{mark}")).frame(false),
-                        )
-                        .clicked()
-                    {
+                    let (rect, response) = ui
+                        .allocate_exact_size(egui::vec2(widths[index], 26.0), egui::Sense::click());
+                    ui.painter().rect_filled(
+                        rect,
+                        Rounding::ZERO,
+                        if response.hovered() {
+                            p.bg_button_hover
+                        } else {
+                            p.bg_card
+                        },
+                    );
+                    let inset = if index == 0 { 30.0 } else { 8.0 };
+                    ui.painter().text(
+                        rect.left_center() + egui::vec2(inset, 0.0),
+                        egui::Align2::LEFT_CENTER,
+                        format!("{title}{mark}"),
+                        egui::FontId::proportional(11.5),
+                        if files.sort == index {
+                            p.text_primary
+                        } else {
+                            p.text_secondary
+                        },
+                    );
+                    if response.clicked() {
                         if files.sort == index {
                             files.descending = !files.descending;
                         } else {
@@ -800,15 +841,21 @@ fn prompt(ctx: &egui::Context, id: egui::Id, files: &mut RemoteFiles, host: &Ssh
 
 fn status(ui: &mut Ui, p: &ThemePalette, files: &mut RemoteFiles) {
     ui.horizontal_wrapped(|ui| {
-        let count = files
-            .listing
-            .as_ref()
-            .map_or(0, |listing| listing.entries.len());
-        ui.label(
-            RichText::new(format!("{count} items"))
-                .size(11.0)
-                .color(p.text_secondary),
-        );
+        let query = files.filter.to_lowercase();
+        let items = files.listing.iter().flat_map(|listing| &listing.entries);
+        let total = items.clone().count();
+        let visible = items
+            .filter(|entry| {
+                (files.hidden || !entry.name.starts_with('.'))
+                    && (query.is_empty() || entry.name.to_lowercase().contains(&query))
+            })
+            .count();
+        let count = if visible == total {
+            format!("{total} items")
+        } else {
+            format!("{visible} of {total} items")
+        };
+        ui.label(RichText::new(count).size(11.0).color(p.text_secondary));
         if !files.selected.is_empty() {
             let size = files
                 .listing

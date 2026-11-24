@@ -98,7 +98,7 @@ impl LauncherApp {
                                         "Reported power telemetry; battery information unavailable".to_string()
                                     }
                                 } else {
-                                    format!("ACPI battery health & power telemetry • Remaining: {}", est_time_str)
+                                    format!("Time remaining: {est_time_str}")
                                 };
                                 Frame::none().fill(p.bg_button).rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(8.0, 4.0))
@@ -185,7 +185,7 @@ impl LauncherApp {
                                                         ui.spacing_mut().item_spacing.x = 4.0;
                                                         let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
                                                         ui.painter().circle_filled(d_rect.center(), 2.5, accent);
-                                                        ui.label(RichText::new(if bat_health.is_finite() { format!("Capacity {}%", reported_sensor_value(Some(bat_health), 0)) } else { "Health unavailable".into() }).size(8.5).monospace().strong().color(p.text_primary));
+                                                        ui.label(RichText::new(if bat_health.is_finite() { format!("Capacity retained {}%", reported_sensor_value(Some(bat_health), 0)) } else { "Health unavailable".into() }).size(8.5).monospace().strong().color(p.text_primary));
                                                     });
                                                 });
                                         });
@@ -203,7 +203,7 @@ impl LauncherApp {
                                         ui.horizontal(|ui| {
                                             let avail = ui.available_width();
                                             let left_w = (avail * 0.40).clamp(28.0, 55.0);
-                                            let right_w = (avail - left_w - 4.0).max(10.0);
+                                            let right_w = (avail - left_w - ui.spacing().item_spacing.x).max(0.0);
                                             ui.allocate_ui_with_layout(egui::vec2(left_w, 14.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                                 ui.add(egui::Label::new(RichText::new(label).size(8.5).monospace().color(p.text_muted)).truncate());
                                             });
@@ -222,12 +222,11 @@ impl LauncherApp {
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[0], |ui| {
                                                 ui.set_width(ui.available_width());
-                                                let content_start_y = ui.cursor().min.y;
 
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     ui.label(RichText::new(crate::lucide::BATTERY_CHARGING).size(11.0).color(accent));
-                                                    ui.label(RichText::new("State of Charge").size(9.5).monospace().color(p.text_muted));
+                                                    ui.label(RichText::new("Charge").size(9.5).monospace().color(p.text_muted));
                                                 });
                                                 ui.add_space(4.0);
                                                 ui.horizontal(|ui| {
@@ -249,11 +248,9 @@ impl LauncherApp {
                                                 ui.add_space(3.0);
                                                 render_card_meta_row(ui, "Time", &est_time_str, accent);
 
-                                                let inner_h = ui.cursor().min.y - content_start_y;
+                                                let inner_h = ui.min_size().y;
                                                 observed_max_inner_h = observed_max_inner_h.max(inner_h);
-                                                if inner_h < needed_inner_h {
-                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
-                                                }
+                                                ui.set_min_height(needed_inner_h);
                                             });
 
                                         // Card 2: Remaining vs Design
@@ -264,13 +261,12 @@ impl LauncherApp {
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[1], |ui| {
                                                 ui.set_width(ui.available_width());
-                                                let content_start_y = ui.cursor().min.y;
 
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(accent));
                                                     let estimated = bat.is_some_and(|battery| battery.energy_estimated);
-                                                    ui.label(RichText::new(if estimated { "Energy (est.)" } else { "Remaining vs Design" }).size(9.5).monospace().color(p.text_muted))
+                                                    ui.label(RichText::new(if estimated { "Energy (est.)" } else { "Battery energy" }).size(9.5).monospace().color(p.text_muted))
                                                         .on_hover_text(if estimated { "One or more energy values are estimated from reported charge and design voltage." } else { "Energy values reported by the battery, when available." });
                                                 });
                                                 ui.add_space(4.0);
@@ -293,11 +289,9 @@ impl LauncherApp {
                                                 ui.add_space(3.0);
                                                 render_card_meta_row(ui, "Design", &format!("{} Wh", reported_sensor_value(Some(design_wh), 1)), p.text_muted);
 
-                                                let inner_h = ui.cursor().min.y - content_start_y;
+                                                let inner_h = ui.min_size().y;
                                                 observed_max_inner_h = observed_max_inner_h.max(inner_h);
-                                                if inner_h < needed_inner_h {
-                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
-                                                }
+                                                ui.set_min_height(needed_inner_h);
                                             });
 
                                         // Card 3: Lifecycle Endurance
@@ -308,12 +302,11 @@ impl LauncherApp {
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[2], |ui| {
                                                 ui.set_width(ui.available_width());
-                                                let content_start_y = ui.cursor().min.y;
 
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     ui.label(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(accent));
-                                                    ui.label(RichText::new("Lifecycle Endurance").size(9.5).monospace().color(p.text_muted));
+                                                    ui.label(RichText::new("Charge cycles").size(9.5).monospace().color(p.text_muted));
                                                 });
                                                 ui.add_space(4.0);
                                                 ui.horizontal(|ui| {
@@ -326,17 +319,12 @@ impl LauncherApp {
                                                         ui.label(RichText::new("unavailable").size(11.0).color(p.text_muted));
                                                     }
                                                 });
-                                                let life_label = "Not reported";
                                                 let cond_label = bat.map(|battery| battery.status.as_str()).unwrap_or("Unavailable");
-                                                render_card_meta_row(ui, "Lifespan", life_label, p.text_secondary);
-                                                ui.add_space(3.0);
                                                 render_card_meta_row(ui, "State", cond_label, p.text_muted);
 
-                                                let inner_h = ui.cursor().min.y - content_start_y;
+                                                let inner_h = ui.min_size().y;
                                                 observed_max_inner_h = observed_max_inner_h.max(inner_h);
-                                                if inner_h < needed_inner_h {
-                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
-                                                }
+                                                ui.set_min_height(needed_inner_h);
                                             });
                                     });
 
@@ -351,10 +339,10 @@ impl LauncherApp {
 
                                         let ac_status = match snap.power.ac_online { Some(true) => "Connected", Some(false) => "Disconnected", None => "Unavailable" };
                                         let chips = [
-                                            ("Terminal Potential", format!("{} V", reported_sensor_value(Some(volts_val), 2)), p.text_primary),
-                                            ("Chemistry Stack", chem_str.to_string(), p.text_primary),
+                                            ("Voltage", format!("{} V", reported_sensor_value(Some(volts_val), 2)), p.text_primary),
+                                            ("Battery chemistry", chem_str.to_string(), p.text_primary),
                                             ("CPU Temp", format!("{} °C", reported_sensor_value(snap.cpu_temp, 1)), p.text_secondary),
-                                            ("AC Adapter State", ac_status.to_string(), p.text_secondary),
+                                            ("AC adapter", ac_status.to_string(), p.text_secondary),
                                         ];
                                         for (i, (title, val, val_col)) in chips.into_iter().enumerate() {
                                             Frame::none()
@@ -543,7 +531,7 @@ impl LauncherApp {
                                 };
 
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("Estimated System Draw").size(9.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new("System draw").size(9.5).monospace().color(p.text_muted));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         Frame::none()
                                             .fill(p.bg_subtle)
@@ -566,12 +554,12 @@ impl LauncherApp {
 
                                 // Smooth realtime animated waveform canvas
                                 draw_estimated_power_waveform(ui, 68.0, watts_val, accent);
-                                ui.label(RichText::new("Animated model; the curve and component allocations are estimates, not measured history.").size(11.0).color(p.text_muted));
+                                ui.label(RichText::new("The animated chart and component values show model estimates.").size(11.0).color(p.text_muted));
 
                                 ui.add_space(10.0);
 
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("LOAD ALLOCATION").size(8.0).monospace().strong().color(p.text_muted));
+                                    ui.label(RichText::new("Component estimates").size(12.0).strong().color(p.text_muted));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.label(RichText::new("ESTIMATED").size(7.5).monospace().color(p.text_muted));
                                     });

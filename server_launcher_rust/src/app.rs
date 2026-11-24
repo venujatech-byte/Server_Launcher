@@ -1293,6 +1293,7 @@ impl LauncherApp {
         }
 
         let collector_arc = Arc::clone(&self.sensors_collector);
+        let sensor_password = (!self.local_sudo_password.is_empty()).then(|| self.local_sudo_password.clone());
         let include_process_network = include_top && self.sensors_subtab == SensorsSubTab::TopApps;
         let in_flight_arc = Arc::clone(&self.sensors_in_flight);
         let shared_snap_arc = Arc::clone(&self.sensors_shared_snapshot);
@@ -1300,7 +1301,7 @@ impl LauncherApp {
         std::thread::spawn(move || {
             let snap = if let Ok(mut coll) = collector_arc.lock() {
                 let mut snapshot = coll.collect_with_top_apps(include_top, include_process_network);
-                coll.refresh_protected_hardware(&mut snapshot);
+                coll.refresh_protected_hardware(&mut snapshot, sensor_password.as_deref());
                 snapshot
             } else {
                 crate::sensors::SystemSensorsSnapshot::default()
@@ -5916,6 +5917,9 @@ impl LauncherApp {
                             self.sudo_popup.error = result.from_popup.then_some(error);
                             self.sudo_popup.just_opened = true;
                         }
+                    } else if matching_popup && matches!(action, PendingSudoAction::UnlockSensorAccess) {
+                        self.sudo_popup.error = Some(error);
+                        self.sudo_popup.password_input.clear();
                     } else if matching_popup {
                         self.sudo_popup.open = false;
                         self.sudo_popup.pending = None;

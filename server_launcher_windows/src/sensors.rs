@@ -6028,11 +6028,22 @@ impl SystemSensorsCollector {
         Ok(summary)
     }
 
-    pub fn refresh_protected_hardware(&mut self, snapshot: &mut SystemSensorsSnapshot) {
-        if self.protected_data.is_none() { return; }
-        if self.last_protected_poll.elapsed() >= Duration::from_secs(2) {
+    pub fn refresh_protected_hardware(&mut self, snapshot: &mut SystemSensorsSnapshot, password: Option<&str>) {
+        let Some(previous) = self.protected_data.as_ref() else { return; };
+        let authorization_expired = previous["notes"].as_array().is_some_and(|notes| {
+            notes.iter().filter_map(|note| note.as_str()).any(crate::systemd::needs_sudo_password)
+        });
+        // Retry authentication only through the explicit Unlock action after a denied sample.
+        if !authorization_expired && self.last_protected_poll.elapsed() >= Duration::from_secs(2) {
             self.last_protected_poll = Instant::now();
-            match read_protected_hardware(None, false) {
+            let sample = read_protected_hardware(None, false).or_else(|error| {
+                if let Some(password) = password.filter(|_| crate::systemd::needs_sudo_password(&error)) {
+                    read_protected_hardware(Some(password), false)
+                } else {
+                    Err(error)
+                }
+            });
+            match sample {
                 Ok(mut data) => {
                     data["memory"] = self.protected_data.as_ref().unwrap()["memory"].clone();
                     self.protected_data = Some(data);
@@ -6047,7 +6058,9 @@ impl SystemSensorsCollector {
             }
         }
         let data = self.protected_data.as_ref().unwrap();
-        snapshot.hardware_access_unlocked = true;
+        snapshot.hardware_access_unlocked = !data["notes"].as_array().is_some_and(|notes| {
+            notes.iter().filter_map(|note| note.as_str()).any(crate::systemd::needs_sudo_password)
+        });
         snapshot.hardware_access_error = data["notes"].as_array().filter(|notes| !notes.is_empty()).map(|notes| notes.iter().filter_map(|note| note.as_str()).collect::<Vec<_>>().join("; "));
         apply_protected_hardware(snapshot, data);
     }

@@ -6,6 +6,8 @@ impl LauncherApp {
             return;
         }
 
+        let unlock = matches!(self.sudo_popup.pending, Some(PendingSudoAction::UnlockSensorAccess));
+        let title = if unlock { "Unlock hardware sensors" } else { "Administrator Authentication" };
         let mut is_open = self.sudo_popup.open;
         let mut submit = false;
         let mut cancel = ctx.input(|input| input.key_pressed(egui::Key::Escape));
@@ -13,7 +15,7 @@ impl LauncherApp {
         let screen = ctx.screen_rect();
         let window_id = egui::Id::new("sudo_auth_modal_dialog");
         let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
-        egui::Window::new("Administrator Authentication")
+        egui::Window::new(title)
             .id(window_id)
             .title_bar(false)
             .collapsible(false)
@@ -36,13 +38,16 @@ impl LauncherApp {
                     .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
             )
             .show(ctx, |ui| {
-                crate::modals::render_modal_titlebar(ui, "Administrator Authentication", &mut is_open);
+                crate::modals::render_modal_titlebar(ui, title, &mut is_open);
                 ui.add_space(8.0);
                 ui.add_space(4.0);
 
                 if let Some(pending) = &self.sudo_popup.pending {
                     match pending {
-                        PendingSudoAction::UnlockSensorAccess => { ui.label("Read-only access to CPU energy, Intel GPU counters and RAM inventory on this computer."); }
+                        PendingSudoAction::UnlockSensorAccess => {
+                            ui.label(RichText::new("Read protected hardware metrics").size(15.0).strong().color(palette.text_primary));
+                            ui.label(RichText::new("CPU package power, Intel GPU counters, and RAM module details depend on hardware support.").size(12.0).color(palette.text_secondary));
+                        }
                         PendingSudoAction::SetChargeLimit { battery, limit } => { ui.label(format!("Set battery {} charge limit to {}% on the selected host.", battery, limit)); }
                         PendingSudoAction::ServiceAction { unit, action, .. } => {
                             let act_color = match *action {
@@ -102,12 +107,13 @@ impl LauncherApp {
                     ui.add_space(6.0);
                 }
 
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Password:").size(12.0).strong().color(palette.text_primary));
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("Password").size(12.0).strong().color(palette.text_primary));
                     let edit = egui::TextEdit::singleline(&mut self.sudo_popup.password_input)
                         .password(true)
-                        .desired_width(260.0);
-                    let resp = ui.add(edit);
+                        .hint_text("Enter sudo password")
+                        .desired_width(ui.available_width());
+                    let resp = ui.add_enabled(!busy, edit);
                     if self.sudo_popup.just_opened {
                         resp.request_focus();
                         self.sudo_popup.just_opened = false;
@@ -118,7 +124,7 @@ impl LauncherApp {
                 });
 
                 ui.add_space(6.0);
-                ui.checkbox(&mut self.sudo_popup.remember_password, "Remember for this session");
+                ui.add_enabled(!busy, egui::Checkbox::new(&mut self.sudo_popup.remember_password, "Remember for this session"));
 
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
@@ -130,12 +136,17 @@ impl LauncherApp {
                         cancel = true;
                     }
 
-                    let btn_auth = egui::Button::new(RichText::new(format!("{} Authenticate", crate::lucide::CHECK)).size(11.5).strong().color(Color32::WHITE))
-                        .fill(palette.accent)
-                        .rounding(Rounding::same(4.0));
-                    if ui.add_enabled(!busy && !self.sudo_popup.password_input.is_empty(), btn_auth).clicked() {
-                        submit = true;
-                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let label = if busy { "Checking…" } else if unlock { "Unlock sensors" } else { "Authenticate" };
+                        let btn_auth = egui::Button::new(RichText::new(label).size(11.5).strong().color(palette.accent_text))
+                            .fill(palette.accent)
+                            .rounding(Rounding::same(7.0))
+                            .min_size(egui::vec2(0.0, 28.0));
+                        if ui.add_enabled(!busy && !self.sudo_popup.password_input.is_empty(), btn_auth).clicked() {
+                            submit = true;
+                        }
+                        if busy { ui.spinner(); }
+                    });
                 });
             });
 

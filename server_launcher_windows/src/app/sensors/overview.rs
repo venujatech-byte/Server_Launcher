@@ -115,7 +115,7 @@ impl LauncherApp {
     }
 }
 
-fn overview_metric(
+pub(super) fn overview_metric(
     ui: &mut Ui, palette: &crate::theme::ThemePalette, accent: Color32,
     icon: &str, title: &str, value: Option<f32>, unit: &str, detail: &str,
     history: &[f32], scale: f32,
@@ -132,7 +132,7 @@ fn overview_metric(
             });
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new(reported_sensor_value(value, 1)).size(34.0).strong().color(palette.text_primary));
+                ui.label(RichText::new(reported_sensor_value(value, if unit == "GHz" { 2 } else { 1 })).size(34.0).strong().color(palette.text_primary));
                 if value.is_some() {
                     ui.label(RichText::new(unit).size(14.0).strong().color(palette.text_muted));
                 }

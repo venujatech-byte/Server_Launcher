@@ -101,7 +101,6 @@ impl LauncherApp {
                     sensor_metric_history(ui, host_id, label, if index >= 2 { hardware_timestamp } else { snap.timestamp }, readings[index])).collect();
                 sensor_card_columns(ui, 4, |ui, column| {
                     let history = &histories[column];
-                    let minimum = history.iter().copied().filter(|value| value.is_finite()).reduce(f32::min);
                     let maximum = history.iter().copied().filter(|value| value.is_finite()).reduce(f32::max);
                     let subtitle = match column {
                         0 => format!("{} Cores / {} Threads", phys, log),
@@ -110,12 +109,11 @@ impl LauncherApp {
                         _ => snap.cpu_tjunction_max.map(|value| format!("Reported limit: {:.0}°C", value)).unwrap_or_else(|| "Temperature limit unavailable".into()),
                     };
                     let scale = if column == 0 { 100.0 } else { maximum.unwrap_or(1.0).max(1.0) * 1.1 };
-                    render_big_stat_card(ui, icons[column], labels[column],
-                        &reported_sensor_value(readings[column], if column == 1 { 2 } else { 1 }), units[column],
+                    super::overview::overview_metric(
+                        ui, &p, accent, icons[column], labels[column], readings[column], units[column],
                         if readings[column].is_some() { &subtitle } else { "Unavailable from this collector" },
-                        &format!("MIN {}", reported_sensor_value(minimum, 1)),
-                        &format!("MAX {}", reported_sensor_value(maximum, 1)),
-                        history, scale, None, accent, p.bg_card, p.text_muted);
+                        history, scale,
+                    );
                 });
 
                 ui.add_space(8.0);

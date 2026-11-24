@@ -71,9 +71,9 @@ impl LauncherApp {
                         if let Some(entries) = stopped.lock().unwrap().get_mut(&host.id) {
                             entries.retain(|entry| rows.binary_search_by_key(&entry.port, |row| row.port).is_err());
                         }
-                        snapshots.insert(host.id, Arc::new(rows));
+                        snapshots.insert(host.id, RemoteListenerSnapshot { rows: Arc::new(rows), error: None });
                     }
-                    Err(_) => { snapshots.entry(host.id).or_default(); }
+                    Err(error) => { snapshots.entry(host.id).or_default().error = Some(error.into()); }
                 }
             }
             if let Some(ctx) = ctx {

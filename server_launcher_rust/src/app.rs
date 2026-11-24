@@ -307,6 +307,12 @@ impl SettingsTab {
     }
 }
 
+#[derive(Clone, Default)]
+struct RemoteListenerSnapshot {
+    rows: Arc<Vec<RemoteListener>>,
+    error: Option<Arc<str>>,
+}
+
 #[derive(Default)]
 struct RemoteCommandActivity {
     count: usize,
@@ -383,7 +389,7 @@ pub struct LauncherApp {
     ssh_hosts: Vec<SshRemoteHost>,
     saved_ssh_refs: BTreeSet<String>,
     ssh_host_modal: SshHostModalState,
-    remote_listeners: Arc<Mutex<HashMap<String, Arc<Vec<RemoteListener>>>>>,
+    remote_listeners: Arc<Mutex<HashMap<String, RemoteListenerSnapshot>>>,
     remote_scanning: Arc<Mutex<BTreeSet<String>>>,
     remote_terminal_logs: Arc<Mutex<HashMap<String, Arc<Mutex<VecDeque<crate::service::LogEntry>>>>>>,
     remote_command_activity: Arc<Mutex<HashMap<String, RemoteCommandActivity>>>,

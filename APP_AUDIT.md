@@ -118,3 +118,5 @@ Unix server launch in an external console now passes the environment and working
 The SSH Servers terminal now limits submissions and quick actions to four concurrent commands per host, releases slots on child exit or spawn failure, and disconnects inherited stdin. SSH Servers commands default to a five-minute inactivity timeout. Settings → Startup controls the delay and whether to time out when the page or window is inactive, only when the window is inactive, or never. Expiration closes the local SSH child and releases its slot. Manual cancellation and remote process termination remain open.
 
 Settings → Startup also controls the local subprocess deadlines for new SSH connection tests and listener scans (defaults 10 and 20 seconds). The OpenSSH handshake timeout still applies independently.
+
+The SSH Servers page now shows port-scan failures with diagnostic details on hover and keeps the last successful rows. Missing or failing remote scan tools produce an error instead of an empty successful scan.

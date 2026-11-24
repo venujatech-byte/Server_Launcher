@@ -10,7 +10,7 @@ impl LauncherApp {
             let map = self.remote_scanning.lock().unwrap();
             map.contains(&host.id)
         };
-        let listeners = {
+        let RemoteListenerSnapshot { rows: listeners, error } = {
             let map = self.remote_listeners.lock().unwrap();
             map.get(&host.id).cloned().unwrap_or_default()
         };
@@ -83,6 +83,19 @@ impl LauncherApp {
                 });
             ui.add_space(6.0);
 
+            if let Some(error) = &error {
+                let status = if is_scanning {
+                    "Retrying port scan…"
+                } else if listeners.is_empty() {
+                    "Port scan failed. Use Scan Ports to retry."
+                } else {
+                    "Port scan failed. Showing the last successful results."
+                };
+                ui.add(egui::Label::new(RichText::new(status).size(11.0).color(p.danger)).wrap())
+                    .on_hover_text(error.as_ref());
+                ui.add_space(4.0);
+            }
+
             let q = self.remote_search_query.get(&host.id).cloned().unwrap_or_default().trim().to_lowercase();
             let visible_listeners: Vec<_> = listeners
                 .iter()
@@ -115,6 +128,9 @@ impl LauncherApp {
                 })
                 .collect();
 
+            if listeners.is_empty() && stopped.is_empty() && error.is_some() {
+                return;
+            }
             if listeners.is_empty() && stopped.is_empty() {
                 Frame::none()
                     .fill(p.bg_card)
@@ -413,7 +429,7 @@ impl LauncherApp {
                     let target = {
                         let snapshots = self.remote_listeners.lock().unwrap();
                         snapshots.get(&host.id).and_then(|listeners| {
-                            let mut matches = listeners.iter().filter(|l| l.port == listener.port && l.proto == listener.proto && l.pid == listener.pid && l.start_marker == listener.start_marker && l.name == listener.name);
+                            let mut matches = listeners.rows.iter().filter(|l| l.port == listener.port && l.proto == listener.proto && l.pid == listener.pid && l.start_marker == listener.start_marker && l.name == listener.name);
                             let target = matches.next()?.clone();
                             matches.next().is_none().then_some(target)
                         })

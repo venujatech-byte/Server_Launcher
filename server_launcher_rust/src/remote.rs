@@ -320,11 +320,12 @@ ps -eo pid,%cpu,rss --no-headers 2>/dev/null | while read -r pid cpu rss; do
 done
 )
 if command -v ss >/dev/null 2>&1; then
-    ss -tulpn -H 2>/dev/null
+    ss -tulpn -H || exit "$?"
 elif command -v netstat >/dev/null 2>&1; then
-    netstat -tulpn 2>/dev/null
+    netstat -tulpn || exit "$?"
 else
-    echo "NO_NET_TOOLS"
+    echo "Port scan requires ss or netstat on the SSH host." >&2
+    exit 127
 fi
 echo "---PS_METRICS---"
 printf '%s\n' "$metrics"

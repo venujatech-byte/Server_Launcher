@@ -139,4 +139,17 @@ Launcher process records now validate server keys before constructing PID paths,
 
 Systemd unit writes are limited to the system override directory or the user Systemd configuration subtree; vendor unit paths and traversal are rejected. Local writes check canonical parent containment and reject symlink destinations. Local and remote edits stage content before replacement, while new files preserve no-overwrite behavior. User-scope write and delete errors do not escalate to sudo; system-scope operations retain the existing sudo prompt and stdin password transport. Regression source covers allowed and rejected roots, preservation of an outside fixture, and local symlink rejection. Linux and Windows crate test targets compile, but no tests ran; privileged Linux, SSH-host, and native Windows verification remain outstanding. Windows Services code was not changed.
 
-Runtime performance sampling could not be performed in this environment. An installed Linux executable was found at `/home/venujasilva/.local/bin/server_launcher`, timestamped 2026-11-24 17:42 local, but no launcher process was running and the display was unavailable to the measurement session (`wmctrl -lG`: “Cannot open display”). The required Servers, busy-terminal, Sensors Overview, and Top Apps 30-second scenarios were not measured. No CPU, RSS, child-process, or before/after performance claims are made; Stage 5 remains open and Stage 6 has no evidence-based target yet.
+### Linux desktop measurements
+
+Single 30-second runs on Fedora using `pidstat -u -r` at one-second intervals and launcher PID 200914. CPU is percent of one core. RSS is the process-wide average for each run.
+
+| Scenario | Average CPU | Average RSS |
+|---|---:|---:|
+| Servers Overview, idle | 0.33% | 127.4 MiB |
+| Servers Overview, continuous scrolling | 69.51% | 127.4 MiB |
+| Embedded SSH terminal, about 20 lines per second | 18.74% | 129.4 MiB |
+| Local SSH child during terminal run | 0.10% | 8.7 MiB |
+| Sensors Overview | 5.10% | 146.3 MiB |
+| Sensors Top Apps | 21.37% | 150.2 MiB |
+
+The preliminary idle run (4.90% CPU) included interaction and was excluded. The remaining runs used the same launcher process, so RSS includes state retained across pages. The exact sensor refresh setting, frame timing and executable revision were not independently recorded. Repeat Overview scrolling and profile the launcher before selecting a Stage 6 change. Scrolling was the highest CPU workload measured in this round.

@@ -70,8 +70,16 @@ impl LauncherApp {
                     }
                     loop {
                         let message = match child.try_wait() {
-                            Ok(Some(_)) => {
+                            Ok(Some(status)) => {
                                 exited = true;
+                                if !status.success() {
+                                    crate::service::push_log_line(
+                                        &format!("[ssh] Command failed ({status})."),
+                                        &logs_clone,
+                                        1000,
+                                        crate::service::LogKind::Error,
+                                    );
+                                }
                                 break;
                             }
                             Ok(None) => {

@@ -128,3 +128,5 @@ A refresh requested during an SSH port scan queues one follow-up for that host. 
 SSH Stop and Kill schedule a listener refresh after the signaling request finishes, with a short settling delay. The launcher only queues that refresh if the host is still configured.
 
 SSH Start and Restart also use the completion-based port refresh. A rejected submission, failed local spawn, timeout, or cancellation does not add a follow-up scan.
+
+The SSH Servers terminal now logs unsuccessful command exit statuses, including when the command produces no output. Existing stderr and completion-triggered port refreshes are preserved.

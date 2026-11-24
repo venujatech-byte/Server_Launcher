@@ -727,7 +727,7 @@ fn render_window_button(
     kind: WindowButtonKind,
     palette: &crate::theme::ThemePalette,
 ) -> bool {
-    let size = egui::vec2(46.0, 32.0);
+    let size = egui::vec2(34.0, 24.0);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
     let hovered = resp.hovered();
 
@@ -761,38 +761,38 @@ fn render_window_button(
 
     let painter = ui.painter();
     let center = rect.center();
-    let stroke = Stroke::new(1.2_f32, stroke_color);
+    let stroke = Stroke::new(1.0_f32, stroke_color);
 
     match kind {
         WindowButtonKind::Minimize => {
             let y = center.y + 1.0;
             painter.line_segment(
-                [egui::pos2(center.x - 5.0, y), egui::pos2(center.x + 5.0, y)],
+                [egui::pos2(center.x - 4.0, y), egui::pos2(center.x + 4.0, y)],
                 stroke,
             );
         }
         WindowButtonKind::Maximize(maximized) => {
             if maximized {
                 // Restore icon: two overlapping squares
-                let back_top_left = egui::pos2(center.x - 2.5, center.y - 4.5);
-                let back_top_right = egui::pos2(center.x + 4.5, center.y - 4.5);
-                let back_bottom_right = egui::pos2(center.x + 4.5, center.y + 2.5);
+                let back_top_left = egui::pos2(center.x - 2.5, center.y - 3.5);
+                let back_top_right = egui::pos2(center.x + 3.5, center.y - 3.5);
+                let back_bottom_right = egui::pos2(center.x + 3.5, center.y + 2.5);
                 painter.line_segment([back_top_left, back_top_right], stroke);
                 painter.line_segment([back_top_right, back_bottom_right], stroke);
 
                 let front_rect = egui::Rect::from_min_size(
-                    egui::pos2(center.x - 4.5, center.y - 2.5),
-                    egui::vec2(7.0, 7.0),
+                    egui::pos2(center.x - 3.5, center.y - 2.5),
+                    egui::vec2(6.0, 6.0),
                 );
                 painter.rect_stroke(front_rect, Rounding::ZERO, stroke);
             } else {
                 // Maximize icon: crisp square outline
-                let square = egui::Rect::from_center_size(center, egui::vec2(9.5, 9.5));
+                let square = egui::Rect::from_center_size(center, egui::vec2(8.0, 8.0));
                 painter.rect_stroke(square, Rounding::ZERO, stroke);
             }
         }
         WindowButtonKind::Close => {
-            let d = 4.5;
+            let d = 3.5;
             painter.line_segment(
                 [egui::pos2(center.x - d, center.y - d), egui::pos2(center.x + d, center.y + d)],
                 stroke,
@@ -2837,7 +2837,7 @@ impl eframe::App for LauncherApp {
         // ═════════════════════════════════════════════════════════════════════
         egui::TopBottomPanel::top("custom_titlebar")
             .show_separator_line(false)
-            .exact_height(32.0)
+            .exact_height(24.0)
             .frame(
                 Frame::none()
                     .fill(p.bg_header)

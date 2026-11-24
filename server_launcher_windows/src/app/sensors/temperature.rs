@@ -146,15 +146,13 @@ impl LauncherApp {
                                 ui.label(RichText::new(if limit.is_finite() { format!("LIMIT: {limit:.1}°C") } else { "Limit unavailable".to_string() }).size(8.5).monospace().color(p.text_muted));
                             });
                 };
-                let count = sensor_cards.len();
-                if count <= 5 && sensor_grid_columns(ui.available_width(), ui.spacing().item_spacing.x, count) == count {
-                    ui.columns(count, |columns| {
-                        for (index, column) in columns.iter_mut().enumerate() {
-                            render_card(column, index);
+                let columns = sensor_grid_columns(ui.available_width(), ui.spacing().item_spacing.x, 3);
+                for start in (0..sensor_cards.len()).step_by(columns) {
+                    ui.columns(columns, |cells| {
+                        for (index, cell) in cells.iter_mut().take(sensor_cards.len() - start).enumerate() {
+                            render_card(cell, start + index);
                         }
                     });
-                } else {
-                    sensor_card_columns(ui, count, render_card);
                 }
 
                 ui.add_space(8.0);

@@ -255,7 +255,7 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     ui.vertical(|ui| {
                                         ui.label(RichText::new("Network activity").size(14.0).strong().color(p.text_primary));
-                                        ui.label(RichText::new("All interfaces • RX / TX").size(9.0).monospace().color(p.text_muted));
+                                        ui.label(RichText::new("All interfaces").size(9.0).monospace().color(p.text_muted));
                                     });
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -266,7 +266,7 @@ impl LauncherApp {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                                 ui.painter().circle_filled(d_rect.center(), 2.8, p.text_muted);
-                                                ui.label(RichText::new(format!("TX: {}", sensor_network_rate(snap, disp_tx_bps))).size(9.5).monospace().color(p.text_secondary));
+                                                ui.label(RichText::new(format!("↑ {}", sensor_network_rate(snap, disp_tx_bps))).size(9.5).monospace().color(p.text_secondary));
                                             });
 
                                             // RX indicator
@@ -274,7 +274,7 @@ impl LauncherApp {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                                 ui.painter().circle_filled(d_rect.center(), 2.8, accent);
-                                                ui.label(RichText::new(format!("RX: {}", sensor_network_rate(snap, disp_rx_bps))).size(9.5).monospace().color(p.text_primary));
+                                                ui.label(RichText::new(format!("↓ {}", sensor_network_rate(snap, disp_rx_bps))).size(9.5).monospace().color(p.text_primary));
                                             });
                                         });
                                     });
@@ -283,26 +283,15 @@ impl LauncherApp {
                                 ui.add_space(8.0);
                                 draw_wifi_realtime_waveform(ui, 115.0, &self.net_rx_history, &self.net_tx_history, accent);
 
-                                ui.add_space(8.0);
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 8.0;
-                                    let rx_rate = sensor_network_rate(snap, disp_rx_bps);
-                                    let tx_rate = sensor_network_rate(snap, disp_tx_bps);
-                                    let badges = [
-                                        (format!("RX: {}", rx_rate), p.text_primary),
-                                        (format!("TX: {}", tx_rate), p.text_secondary),
-                                        (if snap.network_rates_available { format!("Peak: {:.2} MB/s", self.net_peak_mb.max((disp_rx_bps / 1_000_000.0) as f32)) } else if snap.network_stats_available { "Network rates collecting".to_string() } else { "Network counters unavailable".to_string() }, p.text_secondary),
-                                    ];
-                                    for (txt, col) in badges {
-                                        Frame::none()
-                                            .fill(p.bg_input)
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(7.0, 3.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new(txt).size(8.5).monospace().strong().color(col));
-                                            });
-                                    }
-                                });
+                                ui.add_space(6.0);
+                                let peak = if snap.network_rates_available {
+                                    format!("Download peak: {:.2} MB/s", self.net_peak_mb.max((disp_rx_bps / 1_000_000.0) as f32))
+                                } else if snap.network_stats_available {
+                                    "Collecting network rates".to_string()
+                                } else {
+                                    "Network counters unavailable".to_string()
+                                };
+                                ui.label(RichText::new(peak).size(10.0).monospace().color(p.text_secondary));
                             });
                     });
 
@@ -317,29 +306,8 @@ impl LauncherApp {
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    ui.vertical(|ui| {
-                                        let remote_wifi = is_remote && is_wireless == Some(true);
-                                        let r_title = if is_remote && !remote_wifi { "Network interface" } else { "Access point" };
-                                        let r_sub = if is_remote && !remote_wifi { "Host NIC" } else { "Connected AP" };
-                                        ui.label(RichText::new(r_title).size(14.0).strong().color(p.text_primary));
-                                        ui.label(RichText::new(r_sub).size(9.0).monospace().color(p.text_muted));
-                                    });
-
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let qual_str = if let Some(signal) = signal_pct {
-                                            let quality = if signal >= 80 { "EXC" } else if signal >= 50 { "GOOD" } else { "FAIR" };
-                                            format!("{quality} ({signal}%)")
-                                        } else if is_remote && primary_net.is_some() { "INTERFACE FOUND".to_string() } else { "SIGNAL UNAVAILABLE".to_string() };
-                                        Frame::none()
-                                            .fill(accent_with_alpha(accent, 16))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(6.0, 2.5))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new(qual_str).size(8.5).monospace().strong().color(p.text_primary));
-                                            });
-                                    });
-                                });
+                                let title = if is_remote && is_wireless != Some(true) { "Network interface" } else { "Access point" };
+                                ui.label(RichText::new(title).size(14.0).strong().color(p.text_primary));
 
                                 ui.add_space(8.0);
                                 Frame::none()
@@ -427,7 +395,7 @@ impl LauncherApp {
                                                 ui.set_width(ui.available_width());
                                                 ui.label(RichText::new(*k).size(7.5).monospace().color(p.text_muted));
                                                 ui.add_space(1.0);
-                                                ui.label(RichText::new(*v).size(9.0).monospace().strong().color(p.text_primary));
+                                                ui.add(egui::Label::new(RichText::new(*v).size(9.0).monospace().strong().color(p.text_primary)).truncate()).on_hover_text(*v);
                                             });
                                     }
                                 });
@@ -446,10 +414,10 @@ impl LauncherApp {
                 let sock_slice: [f32; 0] = [];
                 let loss_slice: [f32; 0] = [];
 
-                sensor_card_columns(ui, 4, |ui, column| match column {
+                let render_stat = |ui: &mut Ui, column| match column {
                     0 => {
                     // Card 1: BYTES SENT
-                    let egress_sub = if snap.network_stats_available { "All interfaces • since boot" } else { "Network counters unavailable" };
+                    let egress_sub = if snap.network_stats_available { "All interfaces since boot" } else { "Network counters unavailable" };
                     render_big_stat_card(
                         ui,
                         crate::lucide::UPLOAD,
@@ -470,7 +438,7 @@ impl LauncherApp {
                     },
                     1 => {
                     // Card 2: BYTES RECV
-                    let ingress_sub = if snap.network_stats_available { "All interfaces • since boot" } else { "Network counters unavailable" };
+                    let ingress_sub = if snap.network_stats_available { "All interfaces since boot" } else { "Network counters unavailable" };
                     render_big_stat_card(
                         ui,
                         crate::lucide::DOWNLOAD,
@@ -549,7 +517,16 @@ impl LauncherApp {
                     );
                     },
                     _ => unreachable!(),
-                });
+                };
+                if sensor_grid_columns(ui.available_width(), ui.spacing().item_spacing.x, 4) == 4 {
+                    ui.columns(4, |columns| {
+                        for (index, column) in columns.iter_mut().enumerate() {
+                            render_stat(column, index);
+                        }
+                    });
+                } else {
+                    sensor_card_columns(ui, 4, render_stat);
+                }
 
                 ui.add_space(8.0);
 
@@ -639,7 +616,7 @@ impl LauncherApp {
 
                                         ui.vertical(|ui| {
                                             ui.horizontal(|ui| {
-                                                ui.label(RichText::new("IP configuration").size(13.5).strong().color(p.text_primary));
+                                                ui.label(RichText::new("IP configuration").size(14.0).strong().color(p.text_primary));
                                                 let badge_txt = "NETWORK";
                                                 Frame::none()
                                                     .fill(accent_with_alpha(accent, 20))
@@ -795,7 +772,7 @@ impl LauncherApp {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 6.0;
                                                 ui.label(RichText::new(crate::lucide::SHIELD).size(10.5).color(accent));
-                                                ui.label(RichText::new("DHCP Lease").size(9.0).monospace().color(p.text_secondary));
+                                                ui.label(RichText::new("DHCP lease").size(9.0).monospace().color(p.text_secondary));
                                             });
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                 ui.label(RichText::new(lease_time_str).size(9.5).monospace().strong().color(p.text_primary));
@@ -829,7 +806,7 @@ impl LauncherApp {
                                 let ep_badge_str = if is_remote && !snap.active_sockets_available {
                                     "Unavailable".to_string()
                                 } else {
-                                    format!("{} Endpoints", endpoint_count)
+                                    format!("{} listeners", endpoint_count)
                                 };
 
                                 // Card Header
@@ -847,7 +824,7 @@ impl LauncherApp {
 
                                         ui.vertical(|ui| {
                                             ui.horizontal(|ui| {
-                                                ui.label(RichText::new("Sockets").size(13.5).strong().color(p.text_primary));
+                                                ui.label(RichText::new("Listening ports").size(14.0).strong().color(p.text_primary));
                                                 Frame::none()
                                                     .fill(p.bg_subtle)
                                                     .rounding(Rounding::same(4.0))
@@ -856,7 +833,6 @@ impl LauncherApp {
                                                         ui.label(RichText::new(ep_badge_str).size(8.0).monospace().color(p.text_muted));
                                                     });
                                             });
-                                            ui.label(RichText::new("Listening ports").size(8.5).monospace().color(p.text_muted));
                                         });
                                     });
 
@@ -886,13 +862,13 @@ impl LauncherApp {
                                     .striped(false)
                                     .spacing(egui::vec2(12.0, 6.0))
                                     .show(ui, |ui| {
-                                        ui.label(RichText::new("PROCESS").size(8.5).monospace().strong().color(p.text_muted));
-                                        ui.label(RichText::new("PROTO").size(8.5).monospace().strong().color(p.text_muted));
+                                        ui.label(RichText::new("PROCESS").size(9.5).monospace().strong().color(p.text_muted));
+                                        ui.label(RichText::new("PROTOCOL").size(9.0).monospace().strong().color(p.text_muted));
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new("PORT").size(8.5).monospace().strong().color(p.text_muted));
+                                            ui.label(RichText::new("PORT").size(9.5).monospace().strong().color(p.text_muted));
                                         });
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new("STATUS").size(8.5).monospace().strong().color(p.text_muted));
+                                            ui.label(RichText::new("STATUS").size(9.5).monospace().strong().color(p.text_muted));
                                         });
                                         ui.end_row();
 
@@ -978,7 +954,7 @@ impl LauncherApp {
                                         ui.spacing_mut().item_spacing.x = 5.0;
                                         let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
                                         ui.painter().circle_filled(d_rect.center(), 2.0, accent);
-                                        ui.label(RichText::new("Filter: TCP Listen").size(8.5).monospace().color(p.text_muted));
+                                        ui.label(RichText::new("TCP listeners").size(8.5).monospace().color(p.text_muted));
                                     });
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.label(RichText::new("Queue unavailable").size(8.5).monospace().color(p.text_muted));

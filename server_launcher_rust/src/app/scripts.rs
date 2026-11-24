@@ -324,13 +324,13 @@ impl LauncherApp {
                                                     };
                                                     ui.horizontal(|ui| {
                                                         ui.label(
-                                                            RichText::new(&entry.timestamp)
+                                                            RichText::new(entry.timestamp.as_ref())
                                                                 .size(10.5)
                                                                 .color(Color32::from_rgb(90, 100, 120))
                                                                 .monospace(),
                                                         );
                                                         ui.label(
-                                                            RichText::new(&entry.text)
+                                                            RichText::new(entry.text.as_ref())
                                                                 .size(11.5)
                                                                 .color(color)
                                                                 .monospace(),

@@ -111,7 +111,8 @@ impl LauncherApp {
                             ui.set_width(width);
                             ui.set_min_height(output_height);
                             ui.spacing_mut().item_spacing.y = 0.0;
-                            for entry in logs.lock().unwrap().iter() {
+                            let snapshot = logs.lock().unwrap().clone();
+                            for entry in &snapshot {
                                 let color = match entry.kind {
                                     LogKind::Stdout => p.log_stdout,
                                     LogKind::Stderr | LogKind::Error => p.log_stderr,
@@ -119,7 +120,7 @@ impl LauncherApp {
                                     LogKind::Launcher => p.log_launcher,
                                     LogKind::Warning => p.log_warning,
                                 };
-                                let mut text = egui::text::LayoutJob::single_section(entry.text.clone(), egui::TextFormat {
+                                let mut text = egui::text::LayoutJob::single_section(entry.text.to_string(), egui::TextFormat {
                                     font_id: egui::FontId::monospace(11.5), color, line_height: Some(16.0),
                                     ..Default::default()
                                 });

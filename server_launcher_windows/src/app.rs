@@ -4433,12 +4433,12 @@ mod layout_tests {
                 let mut p = crate::theme::ThemeMode::Dark.palette();
                 let mut logs = VecDeque::from([
                     crate::service::LogEntry { timestamp: "12:00:01".into(), text: "first".into(), kind: LogKind::Stdout },
-                    crate::service::LogEntry { timestamp: "12:00:02".into(), text: "middle ".repeat(100), kind: LogKind::Stdout },
+                    crate::service::LogEntry { timestamp: "12:00:02".into(), text: "middle ".repeat(100).into(), kind: LogKind::Stdout },
                     crate::service::LogEntry { timestamp: "12:00:03".into(), text: "last".into(), kind: LogKind::Stdout },
                 ]);
                 let first = cached_inline_console_galley(ui, 8000, &logs, &p);
                 assert!(Arc::ptr_eq(&first, &cached_inline_console_galley(ui, 8000, &logs, &p)));
-                logs[1].text = "updated ".repeat(100);
+                logs[1].text = "updated ".repeat(100).into();
                 let updated = cached_inline_console_galley(ui, 8000, &logs, &p);
                 assert!(!Arc::ptr_eq(&first, &updated));
                 assert!(updated.job.text.contains("updated"));
@@ -4481,7 +4481,7 @@ mod layout_tests {
     fn console_viewport_keeps_list_height_stable_while_scrolling() {
         let p = crate::theme::ThemeMode::Dark.palette();
         let logs = VecDeque::from([crate::service::LogEntry {
-            timestamp: "12:00:00".into(), text: "A long console message ".repeat(100), kind: LogKind::Stdout,
+            timestamp: "12:00:00".into(), text: "A long console message ".repeat(100).into(), kind: LogKind::Stdout,
         }]);
         let mut heights = Vec::new();
         for offset in [0.0, 180.0, 400.0] {

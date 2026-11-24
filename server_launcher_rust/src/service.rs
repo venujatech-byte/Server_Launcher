@@ -30,8 +30,8 @@ pub enum LogKind {
 
 #[derive(Debug, Clone)]
 pub struct LogEntry {
-    pub text: String,
-    pub timestamp: String,
+    pub text: Arc<str>,
+    pub timestamp: Arc<str>,
     pub kind: LogKind,
 }
 
@@ -39,8 +39,8 @@ impl LogEntry {
     pub fn new(text: String, kind: LogKind) -> Self {
         let timestamp = Local::now().format("%H:%M:%S").to_string();
         Self {
-            text,
-            timestamp,
+            text: text.into(),
+            timestamp: timestamp.into(),
             kind,
         }
     }
@@ -1543,11 +1543,11 @@ mod tests {
         let locked = logs.lock().unwrap();
         assert_eq!(locked.len(), 3);
         assert_eq!(locked[0].kind, LogKind::Error);
-        assert_eq!(locked[0].text, "Error: connection refused");
+        assert_eq!(locked[0].text.as_ref(), "Error: connection refused");
         assert_eq!(locked[1].kind, LogKind::Warning);
-        assert_eq!(locked[1].text, "Warning: low disk space");
+        assert_eq!(locked[1].text.as_ref(), "Warning: low disk space");
         assert_eq!(locked[2].kind, LogKind::Stdout);
-        assert_eq!(locked[2].text, "Server ready on port 3000");
+        assert_eq!(locked[2].text.as_ref(), "Server ready on port 3000");
     }
 
     #[test]

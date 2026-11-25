@@ -790,43 +790,46 @@ fn render_inspector_panel(
                 return;
             };
 
-            // Header bar with app name + source badge + click-to-copy ID
-            ui.horizontal(|ui| {
-                ui.set_width(inner_w);
-                app_icon(ui, state.selected_index.and_then(|index| state.icons.get(&index)), 22.0);
-                ui.add(
-                    egui::Label::new(RichText::new(&app.name).size(16.0).strong().color(p.text_primary))
-                        .wrap(),
-                );
-            });
-
-            ui.add_space(4.0);
-            ui.horizontal_wrapped(|ui| {
-                let (sbg, sfg) = source_badge_colors(app.source, p);
-                Frame::none()
-                    .fill(sbg)
-                    .rounding(Rounding::same(4.0))
-                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                    .show(ui, |ui| {
-                        ui.label(RichText::new(app.source.label()).size(10.5).color(sfg));
-                    });
-
-                let id_btn = egui::Button::new(
-                    RichText::new(&app.id)
-                        .size(11.0)
-                        .monospace()
-                        .color(p.text_muted),
-                )
-                .fill(Color32::TRANSPARENT)
-                .stroke(Stroke::NONE);
-                if ui
-                    .add(id_btn)
-                    .hover_tip("Click to copy package / app ID")
-                    .clicked()
-                {
-                    ui.ctx().copy_text(app.id.clone());
-                    state.status_text = format!("Copied '{}'", app.id);
+            let icon = state.selected_index.and_then(|index| state.icons.get(&index));
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                if icon.is_some() {
+                    app_icon(ui, icon, 24.0);
                 }
+                ui.vertical(|ui| {
+                    ui.set_max_width(ui.available_width());
+                    ui.add(
+                        egui::Label::new(RichText::new(&app.name).size(16.0).strong().color(p.text_primary))
+                            .wrap(),
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        let (sbg, sfg) = source_badge_colors(app.source, p);
+                        Frame::none()
+                            .fill(sbg)
+                            .rounding(Rounding::same(4.0))
+                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                            .show(ui, |ui| {
+                                ui.label(RichText::new(app.source.label()).size(10.5).color(sfg));
+                            });
+
+                        let id_btn = egui::Button::new(
+                            RichText::new(&app.id)
+                                .size(11.0)
+                                .monospace()
+                                .color(p.text_muted),
+                        )
+                        .fill(Color32::TRANSPARENT)
+                        .stroke(Stroke::NONE);
+                        if ui
+                            .add(id_btn)
+                            .hover_tip("Click to copy package / app ID")
+                            .clicked()
+                        {
+                            ui.ctx().copy_text(app.id.clone());
+                            state.status_text = format!("Copied '{}'", app.id);
+                        }
+                    });
+                });
             });
 
             if let Some(ref new_ver) = app.update_available {

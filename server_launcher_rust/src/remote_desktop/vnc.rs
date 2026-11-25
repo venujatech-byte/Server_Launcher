@@ -7,6 +7,10 @@ use std::{
     time::Duration,
 };
 
+const RAW: i32 = 0;
+const COPY_RECT: i32 = 1;
+const DESKTOP_SIZE: i32 = -223;
+
 const TIMEOUT: Duration = Duration::from_secs(8);
 
 pub(crate) struct Connection {
@@ -77,7 +81,7 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
         })?;
     stream.set_read_timeout(Some(TIMEOUT))?;
     stream.set_write_timeout(Some(TIMEOUT))?;
-    let size = handshake(&mut stream, profile.shared)?;
+    let mut size = handshake(&mut stream, profile.shared)?;
     {
         let mut state = state.lock().unwrap();
         state.framebuffer.resize(size).map_err(error)?;
@@ -88,7 +92,11 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
     stream.write_all(&[
         0, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16, 0, 0, 0,
     ])?;
-    stream.write_all(&[2, 0, 0, 1, 0, 0, 0, 0])?;
+    let mut encodings = vec![2, 0, 0, 3];
+    for encoding in [COPY_RECT, RAW, DESKTOP_SIZE] {
+        encodings.extend_from_slice(&encoding.to_be_bytes());
+    }
+    stream.write_all(&encodings)?;
     request(&mut stream, size, false)?;
     ctx.request_repaint();
 
@@ -115,11 +123,17 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
                 if count > 4096 {
                     return Err(error("The VNC update contains too many rectangles."));
                 }
-                for _ in 0..count {
-                    read_rectangle(&mut stream, size, state, &mut pixels)?;
+                let mut resized = false;
+                for index in 0..count {
+                    if let Some(new_size) =
+                        read_rectangle(&mut stream, size, state, &mut pixels, index + 1 == count)?
+                    {
+                        size = new_size;
+                        resized = true;
+                    }
                 }
                 ctx.request_repaint();
-                request(&mut stream, size, true)?;
+                request(&mut stream, size, !resized)?;
             }
             2 => {}
             3 => {
@@ -210,26 +224,62 @@ fn read_rectangle(
     size: [usize; 2],
     state: &Mutex<Connection>,
     pixels: &mut Vec<u8>,
-) -> io::Result<()> {
+    last: bool,
+) -> io::Result<Option<[usize; 2]>> {
     let mut rect = [0; 12];
     stream.read_exact(&mut rect)?;
     let field = |i| usize::from(u16::from_be_bytes([rect[i], rect[i + 1]]));
     let [x, y, w, h] = [field(0), field(2), field(4), field(6)];
-    if rect[8..] != [0; 4] || w == 0 || h == 0 || x + w > size[0] || y + h > size[1] {
-        return Err(error("The VNC server sent an invalid raw rectangle."));
+    let encoding = i32::from_be_bytes([rect[8], rect[9], rect[10], rect[11]]);
+    if encoding == DESKTOP_SIZE {
+        if !last {
+            return Err(error("The VNC server sent an invalid desktop size update."));
+        }
+        state
+            .lock()
+            .unwrap()
+            .framebuffer
+            .resize([w, h])
+            .map_err(error)?;
+        return Ok(Some([w, h]));
     }
-    pixels.resize(w * h * 4, 0);
-    stream.read_exact(pixels)?;
-    state
-        .lock()
-        .unwrap()
-        .framebuffer
-        .write_rgba(
-            Region {
-                origin: [x, y],
-                size: [w, h],
-            },
-            pixels,
-        )
-        .map_err(error)
+    if w == 0 || h == 0 || x + w > size[0] || y + h > size[1] {
+        return Err(error("The VNC server sent an invalid rectangle."));
+    }
+    let region = Region {
+        origin: [x, y],
+        size: [w, h],
+    };
+    match encoding {
+        RAW => {
+            pixels.resize(w * h * 4, 0);
+            stream.read_exact(pixels)?;
+            state
+                .lock()
+                .unwrap()
+                .framebuffer
+                .write_rgba(region, pixels)
+                .map_err(error)?;
+        }
+        COPY_RECT => {
+            let mut origin = [0; 4];
+            stream.read_exact(&mut origin)?;
+            let source = [
+                usize::from(u16::from_be_bytes([origin[0], origin[1]])),
+                usize::from(u16::from_be_bytes([origin[2], origin[3]])),
+            ];
+            state
+                .lock()
+                .unwrap()
+                .framebuffer
+                .copy_rect(source, region)
+                .map_err(error)?;
+        }
+        _ => {
+            return Err(error(
+                "The VNC server sent an unsupported framebuffer encoding.",
+            ))
+        }
+    }
+    Ok(None)
 }

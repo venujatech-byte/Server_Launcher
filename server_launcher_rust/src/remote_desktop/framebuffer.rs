@@ -94,6 +94,39 @@ impl Framebuffer {
         Ok(())
     }
 
+    pub(crate) fn copy_rect(
+        &mut self,
+        source: [usize; 2],
+        destination: Region,
+    ) -> Result<(), &'static str> {
+        let [w, h] = destination.size;
+        let source_region = Region {
+            origin: source,
+            size: destination.size,
+        };
+        let fits = |region: Region| {
+            region
+                .end()
+                .is_some_and(|[right, bottom]| right <= self.size[0] && bottom <= self.size[1])
+        };
+        if w == 0 || h == 0 || !fits(source_region) || !fits(destination) {
+            return Err("Invalid framebuffer copy rectangle.");
+        }
+        let [x, y] = destination.origin;
+        let stride = self.size[0];
+        for index in 0..h {
+            let row = if y > source[1] { h - index - 1 } else { index };
+            let from = (source[1] + row) * stride + source[0];
+            let to = (y + row) * stride + x;
+            self.pixels.copy_within(from..from + w, to);
+        }
+        self.dirty = Some(
+            self.dirty
+                .map_or(destination, |dirty| dirty.union(destination)),
+        );
+        Ok(())
+    }
+
     pub(crate) fn take_update(&mut self) -> Option<Update> {
         let region = self.dirty.take()?;
         let [x, y] = region.origin;
@@ -117,6 +150,40 @@ impl Framebuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copies_overlapping_rows_and_columns_without_overwriting_the_source_early() {
+        let mut fb = Framebuffer::default();
+        fb.resize([3, 3]).unwrap();
+        let pixels: Vec<u8> = (0..9).flat_map(|red| [red, 0, 0, 0]).collect();
+        fb.write_rgba(
+            Region {
+                origin: [0, 0],
+                size: [3, 3],
+            },
+            &pixels,
+        )
+        .unwrap();
+        fb.take_update();
+        let destination = Region {
+            origin: [1, 1],
+            size: [2, 2],
+        };
+        fb.copy_rect([0, 0], destination).unwrap();
+        let update = fb.take_update().unwrap();
+        assert_eq!(update.origin, [1, 1]);
+        assert_eq!(
+            update
+                .image
+                .pixels
+                .iter()
+                .map(|pixel| pixel.r())
+                .collect::<Vec<_>>(),
+            [0, 1, 3, 4]
+        );
+        assert!(fb.copy_rect([usize::MAX, 0], destination).is_err());
+        assert!(fb.take_update().is_none());
+    }
 
     #[test]
     fn coalesces_damage_and_keeps_the_latest_pixels() {

@@ -317,7 +317,7 @@ impl LauncherApp {
             .inner_margin(egui::Margin::symmetric(3.0, 3.0))
             .show(ui, |ui| {
                 const TAB_GAP: f32 = 3.0;
-                let count = 6.0;
+                let count = if remote { 7.0 } else { 6.0 };
                 let gaps = (count - 1.0) * TAB_GAP;
                 let tab_width = ((ui.available_width() - gaps) / count).clamp(0.0, 66.0);
                 let tabs_width = count * tab_width + gaps;
@@ -326,17 +326,17 @@ impl LauncherApp {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = TAB_GAP;
                     ui.spacing_mut().button_padding = egui::vec2(3.0, 4.0);
-                    let device_tab = if remote { SidebarTab::Files } else { SidebarTab::Apps };
                     let tabs = [
                         (SidebarTab::Servers, SidebarTab::Servers.label()),
                         (SidebarTab::Scripts, SidebarTab::Scripts.label()),
                         (SidebarTab::Commands, SidebarTab::Commands.label()),
                         (SidebarTab::SystemMD, SidebarTab::SystemMD.label()),
                         (SidebarTab::Sensors, SidebarTab::Sensors.label()),
-                        (device_tab, device_tab.label()),
+                        (SidebarTab::Apps, SidebarTab::Apps.label()),
+                        (SidebarTab::Files, SidebarTab::Files.label()),
                     ];
 
-                    for (tab, label) in tabs {
+                    for (tab, label) in tabs.into_iter().take(count as usize) {
                         let is_active = self.active_sidebar_tab == tab;
                         let bg = if is_active {
                             p.accent

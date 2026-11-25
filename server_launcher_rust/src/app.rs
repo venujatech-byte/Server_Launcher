@@ -712,6 +712,7 @@ pub struct LauncherApp {
 
     // Local Host Apps Manager State
     pub apps_manager: crate::apps::AppsManagerState,
+    remote_apps_managers: std::collections::HashMap<String, crate::apps::AppsManagerState>,
 }
 
 pub struct ExternalTerminalSession {
@@ -1166,6 +1167,7 @@ impl LauncherApp {
             proc_affinity_receiver: Arc::new(Mutex::new(None)),
 
             apps_manager: crate::apps::AppsManagerState::default(),
+            remote_apps_managers: std::collections::HashMap::new(),
 
             // ADB / Android Device Cockpit State
             adb_devices,
@@ -3242,7 +3244,7 @@ impl eframe::App for LauncherApp {
                     });
                 });
                 if let Some((left, right, remote)) = tabs_bounds {
-                    let tabs_width = 417.0;
+                    let tabs_width = if remote { 486.0 } else { 417.0 };
                     let x = header_center - tabs_width * 0.5;
                     if x >= left && x + tabs_width <= right {
                         let rect = egui::Rect::from_min_size(
@@ -3320,7 +3322,7 @@ impl eframe::App for LauncherApp {
                     if self.active_sidebar_tab == SidebarTab::Apps {
                         ui.add_space(8.0);
                         let p = self.palette();
-                        crate::apps::ui::render_apps_page(&mut self.apps_manager, ui, &p);
+                        crate::apps::ui::render_apps_page(&mut self.apps_manager, ui, &p, None);
                         return;
                     }
                     let header_rect = ui.available_rect_before_wrap();

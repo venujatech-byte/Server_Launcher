@@ -15,11 +15,11 @@ fn source_badge_colors(source: AppSource, p: &ThemePalette) -> (Color32, Color32
     }
 }
 
-pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePalette) {
+pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePalette, remote: Option<&crate::config::SshRemoteHost>) {
     let ctx = ui.ctx().clone();
     if !state.initialized {
         state.initialized = true;
-        state.trigger_discovery(&ctx);
+        if let Some(host) = remote { state.refresh_remote(host, &ctx); } else { state.trigger_discovery(&ctx); }
     }
     state.poll_events(&ctx);
 
@@ -28,10 +28,17 @@ pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePale
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 8.0;
 
-        render_top_bar(state, ui, p, &ctx, &mut pending_action);
+        render_top_bar(state, ui, p, &ctx, &mut pending_action, remote);
 
-        let drawer_h = if state.log_drawer_open { 132.0 } else { 30.0 };
-        let main_h = (ui.available_height() - drawer_h - 8.0).max(200.0);
+        egui::TopBottomPanel::bottom(ui.id().with("apps_bottom")).show_separator_line(false)
+            .frame(Frame::none()).show_inside(ui, |ui| {
+                if remote.is_some() {
+                    ui.label(RichText::new("SSH inventory · Read only").size(11.0).color(p.text_muted));
+                } else {
+                    render_task_drawer(state, ui, p);
+                }
+            });
+        let main_h = ui.available_height().max(0.0);
 
         // Match the Files table canvas and keep the inspector on a separate surface.
         Frame::none()
@@ -91,13 +98,13 @@ pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePale
                 }
             });
 
-        render_task_drawer(state, ui, p);
     });
 
-    render_confirmation_modals(state, &ctx, p, &mut pending_action);
-
-    if let Some(action) = pending_action {
-        state.dispatch_action(action, &ctx);
+    if remote.is_none() {
+        render_confirmation_modals(state, &ctx, p, &mut pending_action);
+        if let Some(action) = pending_action {
+            state.dispatch_action(action, &ctx);
+        }
     }
 }
 
@@ -119,6 +126,7 @@ fn render_top_bar(
     p: &ThemePalette,
     ctx: &egui::Context,
     pending_action: &mut Option<AppAction>,
+    remote: Option<&crate::config::SshRemoteHost>,
 ) {
     Frame::none()
         .fill(p.bg_card)
@@ -136,7 +144,7 @@ fn render_top_bar(
             // Row 1: Title + status on left, search + ghost action buttons on right
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new("Local Apps & Packages")
+                    RichText::new(if remote.is_some() { "SSH Apps & Packages" } else { "Local Apps & Packages" })
                         .size(14.5)
                         .strong()
                         .color(p.text_primary),
@@ -189,7 +197,7 @@ fn render_top_bar(
                         }
                     }
 
-                    if ghost_button(
+                    if remote.is_none() && ghost_button(
                         ui,
                         format!("{} Check Updates", crate::lucide::SPARKLES),
                         p.text_secondary,
@@ -210,7 +218,7 @@ fn render_top_bar(
                     )
                     .clicked()
                     {
-                        state.trigger_discovery(ctx);
+                        if let Some(host) = remote { state.refresh_remote(host, ctx); } else { state.trigger_discovery(ctx); }
                     }
 
                     let search_width = (ui.available_width() - 48.0).clamp(55.0, 210.0);
@@ -268,6 +276,7 @@ fn render_top_bar(
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 for &f in AppFilter::all() {
+                    if remote.is_some() && !matches!(f, AppFilter::All | AppFilter::SystemPackages | AppFilter::Flatpak) { continue; }
                     let active = state.filter == f;
                     let count = if f == AppFilter::Repos {
                         state.repos.len()

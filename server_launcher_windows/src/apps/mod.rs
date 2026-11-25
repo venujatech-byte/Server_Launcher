@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod model;
+mod remote;
 pub mod ui;
 
 #[cfg(target_os = "linux")]

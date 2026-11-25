@@ -65,6 +65,14 @@ impl LauncherApp {
             let dialog_open = ui.ctx().data(|data| data.get_temp::<(crate::remote::RemoteListener, bool)>(
                 egui::Id::new(("ssh_listener_confirmation", &host.id))
             )).is_some();
+            if self.active_sidebar_tab == SidebarTab::Apps {
+                if dialog_open { ui.disable(); }
+                let state = self.remote_apps_managers.entry(host.id.clone()).or_default();
+                ui.push_id(("ssh_apps", &host.id), |ui| {
+                    crate::apps::ui::render_apps_page(state, ui, &p, Some(&host));
+                });
+                return;
+            }
             if self.active_sidebar_tab == SidebarTab::Files {
                 if dialog_open { ui.disable(); }
                 self.render_remote_files(ui, &host);

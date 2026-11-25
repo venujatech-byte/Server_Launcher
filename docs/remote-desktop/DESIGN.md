@@ -69,3 +69,14 @@ the final versions.
 
 No connection, platform interoperability, or performance measurements have
 been completed. Record results here only after a runnable viewer is measured.
+
+## Direct connection checks
+
+The host editor checks TCP reachability and the initial
+[RDP security negotiation](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/b2975bdc-6d56-49ee-9c57-f2ff3a0b6817)
+or [RFB version and security offer](https://www.rfc-editor.org/rfc/rfc6143.html).
+The probe stops before authentication and does not load passwords. Its success
+status means that the protocol endpoint responded. VNC checks run on the direct
+route only when explicitly configured. Tunnel and gateway checks require their
+respective transport implementations. The system DNS resolver runs on the
+probe worker and controls resolution time independently of the socket deadline.

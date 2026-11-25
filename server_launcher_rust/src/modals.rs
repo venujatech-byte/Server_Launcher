@@ -1526,6 +1526,8 @@ enum RemotePcTab {
 pub struct SshHostModalState {
     tab: RemotePcTab,
     vnc_port_text: String,
+    rdp_probe: crate::remote_desktop::probe::ProbeControl,
+    vnc_probe: crate::remote_desktop::probe::ProbeControl,
     rdp_password: crate::remote_desktop::editor::PasswordDraft,
     vnc_password: crate::remote_desktop::editor::PasswordDraft,
     pending_save: Option<std::sync::mpsc::Receiver<RemotePcSaveResult>>,
@@ -1587,6 +1589,8 @@ impl SshHostModalState {
 
     pub fn open_add(&mut self) {
         self.tab = RemotePcTab::General;
+        self.rdp_probe = Default::default();
+        self.vnc_probe = Default::default();
         self.clear_desktop_passwords();
         self.open = true;
         self.is_edit = false;
@@ -1610,6 +1614,8 @@ impl SshHostModalState {
 
     pub fn open_edit(&mut self, h: &crate::config::SshRemoteHost) {
         self.tab = RemotePcTab::General;
+        self.rdp_probe = Default::default();
+        self.vnc_probe = Default::default();
         self.clear_desktop_passwords();
         self.open = true;
         self.is_edit = true;
@@ -1890,12 +1896,32 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                             crate::remote_desktop::editor::rdp(ui, &mut state.rdp);
                             if let Some(profile) = state.rdp.as_mut().filter(|profile| profile.enabled) {
                                 state.rdp_password.show(ui, &mut profile.credential_ref);
+                                let direct = !profile.tunnel_via_ssh && profile.gateway.trim().is_empty();
+                                let request = (direct && !state.host.trim().is_empty() && profile.port != 0)
+                                    .then(|| crate::remote_desktop::probe::ProbeRequest {
+                                        host: state.host.trim().trim_matches(['[', ']']).into(),
+                                        port: profile.port,
+                                        protocol: crate::remote_desktop::credentials::DesktopProtocol::Rdp,
+                                        rdp_security: profile.security,
+                                    });
+                                let hint = if direct { "Enter the host and port first." } else { "Connection tests through a tunnel or gateway are not available yet." };
+                                state.rdp_probe.show(ui, request, hint, std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))));
                             }
                         }
                         RemotePcTab::Vnc => {
                             crate::remote_desktop::editor::vnc(ui, &mut state.vnc, &mut state.vnc_port_text, &state.host);
                             if let Some(profile) = state.vnc.as_mut().filter(|profile| profile.enabled) {
                                 state.vnc_password.show(ui, &mut profile.credential_ref);
+                                let request = crate::remote_desktop::editor::vnc_port(&state.vnc_port_text, &state.host)
+                                    .filter(|_| !profile.tunnel_via_ssh && !state.host.trim().is_empty())
+                                    .map(|port| crate::remote_desktop::probe::ProbeRequest {
+                                        host: state.host.trim().trim_matches(['[', ']']).into(),
+                                        port,
+                                        protocol: crate::remote_desktop::credentials::DesktopProtocol::Vnc,
+                                        rdp_security: Default::default(),
+                                    });
+                                let hint = if profile.tunnel_via_ssh { "Connection tests through an SSH tunnel are not available yet." } else { "Enter the host and a valid port or display first." };
+                                state.vnc_probe.show(ui, request, hint, std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))));
                             }
                         }
                     }

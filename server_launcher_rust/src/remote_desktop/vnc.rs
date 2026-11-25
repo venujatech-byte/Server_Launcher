@@ -51,6 +51,7 @@ pub(crate) struct Connection {
     pub framebuffer: Framebuffer,
     pub status: String,
     pub connected: bool,
+    pub(crate) trust_prompt: Option<super::trust::Prompt>,
     input: Option<mpsc::SyncSender<Input>>,
     input_overflow: Arc<AtomicBool>,
 }
@@ -65,12 +66,13 @@ impl Connection {
     pub(crate) fn start_worker(
         initial_status: &str,
         ctx: egui::Context,
-        run: impl FnOnce(&Mutex<Self>, &egui::Context) -> io::Result<()> + Send + 'static,
+        run: impl FnOnce(&Arc<Mutex<Self>>, &egui::Context) -> io::Result<()> + Send + 'static,
     ) -> Arc<Mutex<Self>> {
         let state = Arc::new(Mutex::new(Self {
             framebuffer: Framebuffer::default(),
             status: initial_status.into(),
             connected: false,
+            trust_prompt: None,
             input: None,
             input_overflow: Arc::new(AtomicBool::new(false)),
         }));

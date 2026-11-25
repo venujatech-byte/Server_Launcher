@@ -4,6 +4,7 @@ use super::{
     credentials::{self, DesktopProtocol},
     framebuffer::Region,
     profile::{RdpProfile, RdpSecurity, Resolution},
+    trust::Verifier,
     tunnel::{self, DesktopStream},
     vnc::Connection,
 };
@@ -24,6 +25,7 @@ use ironrdp_blocking::Framed;
 use std::{
     io,
     net::{SocketAddr, TcpStream, ToSocketAddrs},
+    path::{Path, PathBuf},
     sync::{atomic::Ordering, Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -31,9 +33,13 @@ use x509_cert::der::Decode;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-pub(crate) fn start(host: SshRemoteHost, ctx: egui::Context) -> Arc<Mutex<Connection>> {
+pub(crate) fn start(
+    host: SshRemoteHost,
+    config_path: PathBuf,
+    ctx: egui::Context,
+) -> Arc<Mutex<Connection>> {
     Connection::start_worker("Connecting to RDP…", ctx, move |state, ctx| {
-        run(&host, state, ctx)
+        run(&host, &config_path, state, ctx)
     })
 }
 
@@ -52,7 +58,12 @@ impl sspi::network_client::NetworkClient for NoKdc {
     }
 }
 
-fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> io::Result<()> {
+fn run(
+    host: &SshRemoteHost,
+    config_path: &Path,
+    state: &Arc<Mutex<Connection>>,
+    ctx: &egui::Context,
+) -> io::Result<()> {
     let profile = host
         .rdp
         .as_ref()
@@ -99,27 +110,32 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
         ));
     }
 
-    let mut roots = rustls::RootCertStore::empty();
-    roots.add_parsable_certificates(rustls_native_certs::load_native_certs().certs);
-    if roots.is_empty() {
-        return Err(error("Could not load system TLS certificate authorities."));
-    }
-    let mut tls_config = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .map_err(|_| error("Could not configure RDP TLS."))?
-    .with_root_certificates(roots)
-    .with_no_client_auth();
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let verifier = Arc::new(Verifier::new(
+        config_path,
+        host,
+        provider.clone(),
+        state.clone(),
+        ctx.clone(),
+    ));
+    let mut tls_config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|_| error("Could not configure RDP TLS."))?
+        .dangerous()
+        .with_custom_certificate_verifier(verifier.clone())
+        .with_no_client_auth();
     tls_config.resumption = rustls::client::Resumption::disabled();
 
     let tls_client = rustls::ClientConnection::new(Arc::new(tls_config), server_name)
         .map_err(|_| error("Could not start RDP TLS."))?;
     let mut tls_stream = rustls::StreamOwned::new(tls_client, socket);
     while tls_stream.conn.is_handshaking() {
-        tls_stream.conn.complete_io(&mut tls_stream.sock)
-            .map_err(|_| error("RDP TLS verification failed. Check the server name and install its CA in the system trust store."))?;
+        tls_stream
+            .conn
+            .complete_io(&mut tls_stream.sock)
+            .map_err(|_| error(verifier.failure()))?;
     }
+    verifier.finish()?;
     let cert = tls_stream
         .conn
         .peer_certificates()

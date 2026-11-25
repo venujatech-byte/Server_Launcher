@@ -40,6 +40,7 @@ pub(crate) fn run(
         .as_ref()
         .and_then(|host| host.vnc.as_ref())
         .is_some_and(|profile| protocol == DesktopProtocol::Vnc && profile.view_only);
+    let config_path = path.to_owned();
     let palette = ThemeMode::from_id_str(theme).palette();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -82,7 +83,9 @@ pub(crate) fn run(
                 message,
                 framebuffer,
                 connection: viewer_host.map(|host| match protocol {
-                    DesktopProtocol::Rdp => super::rdp::start(host, cc.egui_ctx.clone()),
+                    DesktopProtocol::Rdp => {
+                        super::rdp::start(host, config_path, cc.egui_ctx.clone())
+                    }
                     DesktopProtocol::Vnc => Connection::start(host, cc.egui_ctx.clone()),
                 }),
                 texture: None,
@@ -149,6 +152,40 @@ impl eframe::App for Viewer {
         if self.focus.swap(false, Ordering::AcqRel) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        let prompt = self.connection.as_ref().and_then(|connection| {
+            let state = connection.lock().unwrap();
+            state.trust_prompt.as_ref().map(|prompt| {
+                (
+                    prompt.subject.clone(),
+                    prompt.fingerprint.clone(),
+                    prompt.answer.clone(),
+                )
+            })
+        });
+        if let Some((subject, fingerprint, answer)) = prompt {
+            use super::trust::Choice;
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.heading("Verify the RDP certificate");
+                ui.label(
+                    "Compare the fingerprint with the server administrator before trusting it.",
+                );
+                ui.label(format!("Subject: {subject}"));
+                ui.label("SHA-256");
+                ui.monospace(fingerprint);
+                ui.horizontal_wrapped(|ui| {
+                    for (label, choice) in [
+                        ("Cancel", Choice::Cancel),
+                        ("Trust once", Choice::Once),
+                        ("Always trust", Choice::Always),
+                    ] {
+                        if ui.button(label).clicked() {
+                            let _ = answer.send(choice);
+                        }
+                    }
+                });
+            });
+            return;
         }
         let (update, status, connected) = if let Some(connection) = &self.connection {
             let mut connection = connection.lock().unwrap();

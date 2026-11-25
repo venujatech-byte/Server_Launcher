@@ -133,7 +133,7 @@ inside its own process. The worker negotiates NLA by default and supports an
 explicit TLS selection. It verifies CA trust and the original host name before
 CredSSP or graphical logon, including when SSH supplies the underlying byte
 stream. The Rustls provider is chosen explicitly and TLS resumption is disabled.
-Certificate exceptions and per-host fingerprint prompts are pending. RD Gateway,
+RD Gateway,
 Kerberos/KDC requests, and legacy unencrypted RDP are not accepted. IronRDP holds
 its own copy of the password during connection setup. The launcher zeroizes
 its own working copy and does not log connector errors or credentials.
@@ -150,3 +150,12 @@ periodic UI repaint requests. The current mapping covers the common PC
 scancodes, three pointer buttons, and both scroll axes. Physical keyboard
 layout mapping, IME, extra buttons, and a full interactive RDP server test
 remain pending.
+
+Unknown-issuer RDP certificates can now be explicitly trusted from the
+viewer after comparing the SHA-256 fingerprint. Validity dates and TLS
+handshake signatures are checked for all certificates. System-trusted
+certificates continue to use the platform trust store. Always trust records
+the leaf fingerprint after TLS succeeds and before credentials are sent. The
+store is scoped to the saved config, host, port, and connection route. A
+changed saved fingerprint blocks the connection even if the new certificate
+is signed by a trusted CA. Settings-based pin removal is pending.

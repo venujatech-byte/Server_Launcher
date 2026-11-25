@@ -16,6 +16,13 @@ fn source_badge_colors(source: AppSource, p: &ThemePalette) -> (Color32, Color32
     }
 }
 
+fn app_icon(source: AppSource) -> &'static str {
+    match source {
+        AppSource::Desktop | AppSource::Flatpak | AppSource::Appx | AppSource::ChromePwa => crate::lucide::LAYOUT_GRID,
+        _ => crate::lucide::PACKAGE,
+    }
+}
+
 pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePalette, remote: Option<&crate::config::SshRemoteHost>) {
     let ctx = ui.ctx().clone();
     if !state.initialized {
@@ -420,9 +427,10 @@ fn render_apps_table(
 
                         // Name + Update indicator
                         cell_ui(&mut row_ui, col_name_w, 24.0, false, |ui| {
+                            ui.label(RichText::new(app_icon(app.source)).size(12.0).color(p.accent));
                             ui.add(
                                 egui::Label::new(
-                                    RichText::new(&app.name).size(12.0).color(p.text_primary),
+                                    RichText::new(&app.name).size(13.0).color(p.text_primary),
                                 )
                                 .truncate(),
                             );
@@ -451,7 +459,7 @@ fn render_apps_table(
                         cell_ui(&mut row_ui, col_ver_w, 24.0, false, |ui| {
                             ui.add(
                                 egui::Label::new(
-                                    RichText::new(&app.version).size(11.5).color(p.text_secondary),
+                                    RichText::new(&app.version).size(12.5).color(p.text_secondary),
                                 )
                                 .truncate(),
                             ).hover_tip(&app.version);
@@ -459,13 +467,13 @@ fn render_apps_table(
 
                         // Size
                         cell_ui(&mut row_ui, col_size_w, 24.0, false, |ui| {
-                            ui.label(RichText::new(&app.size_display).size(11.5).color(p.text_muted));
+                            ui.label(RichText::new(&app.size_display).size(12.5).color(p.text_muted));
                         });
 
                         // Installed Date
                         cell_ui(&mut row_ui, col_date_w, 24.0, false, |ui| {
                             let d = app.installed_date.as_deref().unwrap_or("—");
-                            ui.label(RichText::new(d).size(11.0).color(p.text_muted));
+                            ui.label(RichText::new(d).size(12.5).color(p.text_muted));
                         });
 
                         // Minimal borderless ghost icons shown ONLY on row hover or selection
@@ -778,6 +786,7 @@ fn render_inspector_panel(
             // Header bar with app name + source badge + click-to-copy ID
             ui.horizontal(|ui| {
                 ui.set_width(inner_w);
+                ui.label(RichText::new(app_icon(app.source)).size(15.0).color(p.accent));
                 ui.add(
                     egui::Label::new(RichText::new(&app.name).size(16.0).strong().color(p.text_primary))
                         .wrap(),
@@ -854,14 +863,14 @@ fn render_inspector_panel(
                         ui.set_width(inner_w);
 
                         // Description Section
-                        ui.label(RichText::new("Description").size(11.0).strong().color(p.text_muted));
+                        ui.label(RichText::new("Description").size(12.0).strong().color(p.text_muted));
                         ui.add_space(4.0);
                         let desc = if app.description.trim().is_empty() {
                             "No description available"
                         } else {
                             app.description.trim()
                         };
-                        ui.add(egui::Label::new(RichText::new(desc).size(12.0).color(p.text_secondary)).wrap());
+                        ui.add(egui::Label::new(RichText::new(desc).size(13.0).color(p.text_secondary)).wrap());
                         ui.add_space(10.0);
                         let (gsep, _) = ui.allocate_exact_size(egui::vec2(inner_w, 1.0), egui::Sense::hover());
                         ui.painter().rect_filled(gsep, Rounding::ZERO, p.bg_button);
@@ -1050,14 +1059,14 @@ fn meta_row(ui: &mut Ui, p: &ThemePalette, label_w: f32, val_w: f32, label: &str
         egui::vec2(label_w, 18.0),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            ui.label(RichText::new(label).size(11.0).color(p.text_muted));
+            ui.label(RichText::new(label).size(12.0).color(p.text_muted));
         },
     );
     ui.allocate_ui_with_layout(
         egui::vec2(val_w, 18.0),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            ui.add(egui::Label::new(RichText::new(value).size(11.5).color(p.text_primary)).truncate())
+            ui.add(egui::Label::new(RichText::new(value).size(12.5).color(p.text_primary)).truncate())
                 .hover_tip(value);
         },
     );
@@ -1065,11 +1074,18 @@ fn meta_row(ui: &mut Ui, p: &ThemePalette, label_w: f32, val_w: f32, label: &str
 }
 
 fn render_task_drawer(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePalette) {
-    Frame::none()
-        .fill(p.bg_card)
-        .rounding(Rounding::same(8.0))
-        .inner_margin(egui::Margin::symmetric(12.0, 6.0))
-        .show(ui, |ui| {
+    let total_w = ui.available_width();
+    let inspector_w = (total_w * 0.33).min(380.0);
+    let drawer_w = (total_w - inspector_w - 1.0).max(0.0);
+    ui.allocate_ui_with_layout(
+        egui::vec2(drawer_w, ui.available_height()),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            Frame::none()
+                .fill(p.bg_card)
+                .rounding(Rounding::same(8.0))
+                .inner_margin(egui::Margin::symmetric(12.0, 6.0))
+                .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().button_padding = egui::vec2(8.0, 2.0);
             ui.horizontal(|ui| {
@@ -1146,7 +1162,9 @@ fn render_task_drawer(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePalett
                             });
                     });
             }
-        });
+                });
+        },
+    );
 }
 
 fn render_confirmation_modals(

@@ -157,7 +157,17 @@ jobs:
           PACKAGE_VERSION: ${{ steps.package_version.outputs.version }}
           SERVER_LAUNCHER_RELEASE_VERSION: ${{ steps.package_version.outputs.version }}
         working-directory: server_launcher_windows
-        run: cargo tauri build --bundles nsis,msi --config "{\"version\":\"${PACKAGE_VERSION}\"}"
+        run: |
+          for attempt in 1 2 3; do
+            if cargo tauri build --bundles nsis,msi --config "{\"version\":\"${PACKAGE_VERSION}\"}"; then
+              exit 0
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Windows packaging failed on attempt $attempt; retrying in 15 seconds"
+              sleep 15
+            fi
+          done
+          exit 1
 
       - name: Package Windows binary
         shell: pwsh

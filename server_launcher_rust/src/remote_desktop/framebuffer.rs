@@ -127,6 +127,13 @@ impl Framebuffer {
         Ok(())
     }
 
+    pub(crate) fn snapshot(&self) -> Option<ColorImage> {
+        (!self.pixels.is_empty()).then(|| ColorImage {
+            size: self.size,
+            pixels: self.pixels.clone(),
+        })
+    }
+
     pub(crate) fn take_update(&mut self) -> Option<Update> {
         let region = self.dirty.take()?;
         let [x, y] = region.origin;

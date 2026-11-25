@@ -7,6 +7,7 @@ pub(crate) mod probe;
 pub(crate) mod profile;
 pub(crate) mod rdp;
 pub(crate) mod rdp_input;
+pub(crate) mod screenshot;
 pub(crate) mod session;
 pub(crate) mod trust;
 pub(crate) mod tunnel;

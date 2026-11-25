@@ -8,10 +8,10 @@ use super::{
 use crate::{config::ConfigFile, theme::ThemeMode};
 use std::{
     io::Read,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        mpsc, Arc, Mutex,
     },
 };
 
@@ -26,6 +26,7 @@ pub(crate) fn run(
     let profile = config.ssh_hosts.iter().find(|host| host.id == host_id);
     let name = profile.map_or("Remote Desktop", |host| host.name.as_str());
     let title = format!("{name} - {}", protocol.label());
+    let host_name = name.to_owned();
     let message = if profile.is_none() {
         "The saved host could not be loaded. Open the viewer again from its host settings."
     } else {
@@ -94,6 +95,10 @@ pub(crate) fn run(
                 test_pattern,
                 view_only,
                 capture: Capture::default(),
+                host_name,
+                protocol,
+                screenshot: None,
+                screenshot_result: None,
             }))
         }),
     )
@@ -110,16 +115,99 @@ struct Viewer {
     fullscreen: bool,
     view_only: bool,
     capture: Capture,
+    host_name: String,
+    protocol: DesktopProtocol,
+    screenshot: Option<mpsc::Receiver<Result<PathBuf, String>>>,
+    screenshot_result: Option<Result<PathBuf, String>>,
     test_pattern: bool,
 }
 
 impl Viewer {
+    fn take_screenshot(&mut self, ctx: &egui::Context) {
+        let frame = if let Some(connection) = &self.connection {
+            connection.lock().unwrap().framebuffer.snapshot()
+        } else {
+            self.framebuffer.snapshot()
+        };
+        let Some(frame) = frame else { return };
+        let (sender, receiver) = mpsc::channel();
+        self.screenshot = Some(receiver);
+        self.screenshot_result = None;
+        let host = self.host_name.clone();
+        let protocol = self.protocol.label();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(super::screenshot::save(frame, &host, protocol));
+            ctx.request_repaint();
+        });
+    }
+
+    fn screenshot_notification(&mut self, ctx: &egui::Context) {
+        if let Some(receiver) = &self.screenshot {
+            let result = match receiver.try_recv() {
+                Ok(result) => Some(result),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    Some(Err("Screenshot worker stopped unexpectedly.".into()))
+                }
+                Err(mpsc::TryRecvError::Empty) => None,
+            };
+            if let Some(result) = result {
+                self.screenshot = None;
+                self.screenshot_result = Some(result);
+            }
+        }
+        let Some(result) = &self.screenshot_result else {
+            return;
+        };
+        let mut close = false;
+        let mut failure = None;
+        egui::Area::new(egui::Id::new("remote_screenshot_result"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-14.0, -14.0))
+            .movable(false)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_width(ui.ctx().screen_rect().width().min(330.0) - 32.0);
+                    match result {
+                        Ok(path) => {
+                            ui.strong("Screenshot saved");
+                            ui.label(path.display().to_string());
+                            ui.horizontal_wrapped(|ui| {
+                                if ui.button("Open file").clicked() {
+                                    failure = super::screenshot::open(path)
+                                        .err()
+                                        .map(|error| error.to_string());
+                                }
+                                if ui.button("Show in folder").clicked() {
+                                    if let Some(folder) = path.parent() {
+                                        failure = super::screenshot::open(folder)
+                                            .err()
+                                            .map(|error| error.to_string());
+                                    }
+                                }
+                            });
+                        }
+                        Err(error) => {
+                            ui.label(error);
+                        }
+                    }
+                    close = ui.button("Dismiss").clicked();
+                });
+            });
+        if close {
+            self.screenshot_result = None;
+        } else if let Some(error) = failure {
+            self.screenshot_result = Some(Err(format!("Could not open the screenshot: {error}")));
+        }
+    }
+
     fn send_input(
         &mut self,
         ctx: &egui::Context,
         canvas: egui::Rect,
         clip: egui::Rect,
         size: [usize; 2],
+        layer: egui::LayerId,
     ) {
         let Some(connection) = &self.connection else {
             return;
@@ -128,11 +216,15 @@ impl Viewer {
         if !connection.connected || self.view_only {
             return;
         }
+        let unobstructed = ctx
+            .pointer_hover_pos()
+            .and_then(|pos| ctx.layer_id_at(pos))
+            .is_none_or(|top| top == layer);
         ctx.input(|input| {
             self.capture.events(
                 &input.events,
                 input.modifiers,
-                input.focused,
+                input.focused && unobstructed,
                 canvas,
                 clip,
                 size,
@@ -246,6 +338,20 @@ impl eframe::App for Viewer {
                 if !connected && self.texture.is_some() && !self.test_pattern {
                     ui.label(&status);
                 }
+                let screenshot_label = if self.screenshot.is_some() {
+                    "Saving…"
+                } else {
+                    "Screenshot"
+                };
+                if ui
+                    .add_enabled(
+                        self.texture.is_some() && self.screenshot.is_none(),
+                        egui::Button::new(screenshot_label),
+                    )
+                    .clicked()
+                {
+                    self.take_screenshot(ctx);
+                }
                 if self.view_only && connected {
                     ui.label("View only");
                 }
@@ -254,6 +360,7 @@ impl eframe::App for Viewer {
                 }
             });
         });
+        self.screenshot_notification(ctx);
         egui::CentralPanel::default().show(ctx, |ui| {
             let Some(texture) = &self.texture else {
                 ui.centered_and_justified(|ui| ui.label(&status));
@@ -285,7 +392,7 @@ impl eframe::App for Viewer {
                 );
                 screen
             };
-            self.send_input(ctx, screen, clip, pixels);
+            self.send_input(ctx, screen, clip, pixels, ui.layer_id());
         });
     }
 }

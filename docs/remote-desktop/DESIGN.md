@@ -159,3 +159,13 @@ the leaf fingerprint after TLS succeeds and before credentials are sent. The
 store is scoped to the saved config, host, port, and connection route. A
 changed saved fingerprint blocks the connection even if the new certificate
 is signed by a trusted CA. Settings-based pin removal is pending.
+
+## Screenshot capture
+
+The Screenshot button copies the latest remote framebuffer and writes it as
+an opaque RGB PNG on a worker thread. Fit and Fill change the display only.
+Files are saved to the system Pictures folder under `ServerLauncher`.
+The writer publishes a completed PNG without overwriting an existing file.
+The viewer reports the result with open-file and show-folder actions.
+Custom capture folders, clipboard copies, and host-key shortcuts remain
+pending.

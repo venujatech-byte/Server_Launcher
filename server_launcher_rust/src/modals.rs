@@ -1520,6 +1520,7 @@ enum RemotePcTab {
 #[derive(Default)]
 pub struct SshHostModalState {
     tab: RemotePcTab,
+    vnc_port_text: String,
     pub open: bool,
     pub is_edit: bool,
     pub editing_id: Option<String>,
@@ -1559,6 +1560,7 @@ impl SshHostModalState {
         self.strict_host_key = false;
         self.rdp = None;
         self.vnc = None;
+        self.vnc_port_text = "5900".into();
     }
 
     pub fn open_edit(&mut self, h: &crate::config::SshRemoteHost) {
@@ -1580,6 +1582,7 @@ impl SshHostModalState {
         self.strict_host_key = h.strict_host_key;
         self.rdp = h.rdp.clone();
         self.vnc = h.vnc.clone();
+        self.vnc_port_text = h.vnc.as_ref().map_or(5900, |profile| profile.port).to_string();
     }
 }
 
@@ -1815,16 +1818,38 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                             });
                         }
                         RemotePcTab::Rdp => {
-                            ui.label("RDP settings are not available yet.");
+                            crate::remote_desktop::editor::rdp(ui, &mut state.rdp);
                         }
                         RemotePcTab::Vnc => {
-                            ui.label("VNC settings are not available yet.");
+                            crate::remote_desktop::editor::vnc(ui, &mut state.vnc, &mut state.vnc_port_text, &state.host);
                         }
                     }
                 });
             ui.add_space(4.0);
             ui.separator();
             ui.add_space(6.0);
+
+            let validation_error = if state.name.trim().is_empty() || state.host.trim().is_empty() {
+                Some("General: enter a display name and host address.")
+            } else if state.port_str.trim().parse::<u16>().ok().filter(|port| *port > 0).is_none() {
+                Some("SSH: enter a port from 1 to 65535.")
+            } else if state.user.trim().is_empty() {
+                Some("SSH: enter a username.")
+            } else if state.rdp.as_ref().is_some_and(|profile| profile.enabled
+                && (profile.port == 0
+                    || (!profile.same_username_as_ssh && profile.username.trim().is_empty())
+                    || (profile.resolution == crate::remote_desktop::profile::Resolution::Fixed
+                        && (!(1..=8192).contains(&profile.width) || !(1..=8192).contains(&profile.height))))) {
+                Some("RDP: check the port, username, and fixed resolution.")
+            } else if state.vnc.as_ref().is_some_and(|profile| profile.enabled
+                && crate::remote_desktop::editor::vnc_port(&state.vnc_port_text, &state.host).is_none()) {
+                Some("VNC: enter a valid port or display for this host.")
+            } else {
+                None
+            };
+            if let Some(error) = validation_error {
+                ui.label(RichText::new(error).color(palette.danger));
+            }
 
             // Connection feedback stays separate from the final actions.
             // Footer
@@ -1901,7 +1926,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                         .rounding(Rounding::same(8.0))
                         .min_size(egui::vec2(95.0, 28.0));
 
-                    if ui.add(save_btn).clicked() && !state.host.trim().is_empty() {
+                    if ui.add_enabled(!testing && validation_error.is_none(), save_btn).clicked() {
                         let port = state.port_str.trim().parse::<u16>().unwrap_or(22);
                         let name = if state.name.trim().is_empty() {
                             state.host.trim().to_string()
@@ -1925,7 +1950,12 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                             use_agent: state.use_agent,
                             strict_host_key: state.strict_host_key,
                             rdp: state.rdp.clone(),
-                            vnc: state.vnc.clone(),
+                            vnc: state.vnc.clone().map(|mut profile| {
+                                if let Some(port) = crate::remote_desktop::editor::vnc_port(&state.vnc_port_text, &state.host) {
+                                    profile.port = port;
+                                }
+                                profile
+                            }),
                         };
 
                         action = ModalAction::SaveSshHost(host_obj, state.editing_id.clone());

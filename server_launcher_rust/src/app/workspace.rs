@@ -55,7 +55,7 @@ impl LauncherApp {
                 ui.painter().circle_filled(dot_center, 2.5, p.success);
             }
 
-            if local_resp.on_hover_text(local_tooltip).clicked() {
+            if local_resp.on_hover_ui(|ui| { ui.label(RichText::new(local_tooltip).size(11.0)); }).clicked() {
                 self.selected_machine = "local".to_string();
             }
 
@@ -118,7 +118,7 @@ impl LauncherApp {
                             ui.painter().circle_filled(dot_center, 4.0, p.bg_machines_nav);
                             ui.painter().circle_filled(dot_center, 2.5, status_color);
 
-                            let host_resp = host_resp.on_hover_text(host_tooltip);
+                            let host_resp = host_resp.on_hover_ui(|ui| { ui.label(RichText::new(host_tooltip).size(11.0)); });
                             if host_resp.clicked() {
                                 self.selected_machine = host.id.clone();
                             }
@@ -187,7 +187,7 @@ impl LauncherApp {
                             let dot_col = if adb_dev.is_wireless { p.accent_light } else { p.success };
                             ui.painter().circle_filled(dot_center, 2.5, dot_col);
 
-                            let dev_resp = dev_resp.on_hover_text(adb_tooltip);
+                            let dev_resp = dev_resp.on_hover_ui(|ui| { ui.label(RichText::new(adb_tooltip).size(11.0)); });
                             if dev_resp.clicked() {
                                 self.selected_machine = adb_dev.id.clone();
                             }

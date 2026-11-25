@@ -97,6 +97,18 @@ pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePale
     }
 }
 
+fn ghost_button(ui: &mut Ui, label: impl Into<String>, color: Color32, p: &ThemePalette, enabled: bool) -> egui::Response {
+    let btn = egui::Button::new(RichText::new(label.into()).size(11.5).color(color))
+        .fill(Color32::TRANSPARENT)
+        .stroke(Stroke::NONE)
+        .rounding(Rounding::same(6.0));
+    let prev_hover = ui.visuals().widgets.hovered.weak_bg_fill;
+    ui.visuals_mut().widgets.hovered.weak_bg_fill = p.bg_button_hover;
+    let resp = ui.add_enabled(enabled, btn);
+    ui.visuals_mut().widgets.hovered.weak_bg_fill = prev_hover;
+    resp
+}
+
 fn render_top_bar(
     state: &mut AppsManagerState,
     ui: &mut Ui,
@@ -106,38 +118,46 @@ fn render_top_bar(
 ) {
     Frame::none()
         .fill(p.bg_card)
-        .rounding(Rounding::same(10.0))
+        .rounding(Rounding::same(8.0))
         .inner_margin(egui::Margin::symmetric(12.0, 8.0))
         .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().interact_size.y = 24.0;
+            ui.spacing_mut().button_padding = egui::vec2(8.0, 3.0);
+            ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::NONE;
+            ui.visuals_mut().widgets.hovered.bg_stroke = Stroke::NONE;
+            ui.visuals_mut().widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
+            ui.visuals_mut().widgets.hovered.weak_bg_fill = p.bg_button_hover;
+
+            // Row 1: Title + status on left, search + ghost action buttons on right
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new(format!("{} Local Apps & Packages", crate::lucide::LAYOUT_GRID))
-                        .size(15.0)
+                    RichText::new("Local Apps & Packages")
+                        .size(14.5)
                         .strong()
                         .color(p.text_primary),
                 );
 
-                let count_label = if state.filter == AppFilter::Repos {
+                let count_str = if state.filter == AppFilter::Repos {
                     format!("{} repos", state.repos.len())
+                } else if state.filtered_indices.len() == state.apps.len() {
+                    format!("{} items", state.apps.len())
                 } else {
-                    format!("{} of {}", state.filtered_indices.len(), state.apps.len())
+                    format!("{} of {} items", state.filtered_indices.len(), state.apps.len())
                 };
-                Frame::none()
-                    .fill(p.bg_button)
-                    .rounding(Rounding::same(10.0))
-                    .inner_margin(egui::Margin::symmetric(8.0, 2.0))
-                    .show(ui, |ui| {
-                        ui.label(RichText::new(count_label).size(11.0).color(p.text_muted));
-                    });
-
+                let status_line = if state.status_text.is_empty() {
+                    count_str
+                } else {
+                    format!("{} · {}", count_str, state.status_text)
+                };
                 if state.loading || state.checking_updates {
                     ui.spinner();
                 }
-                if !state.status_text.is_empty() {
-                    ui.label(RichText::new(&state.status_text).size(11.5).color(p.text_muted));
-                }
+                ui.label(RichText::new(status_line).size(11.5).color(p.text_muted));
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+
                     let updatable: Vec<AppEntry> = state
                         .apps
                         .iter()
@@ -153,45 +173,60 @@ fn render_top_bar(
                                 .color(p.accent_text),
                         )
                         .fill(p.success)
-                        .rounding(Rounding::same(8.0));
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(6.0));
                         if ui.add_enabled(!state.task_running, btn).clicked() {
                             *pending_action = Some(AppAction::UpdateAll(updatable));
                         }
                     }
 
-                    let check_btn = egui::Button::new(
-                        RichText::new(format!("{} Check Updates", crate::lucide::SPARKLES))
-                            .size(11.5)
-                            .color(p.text_primary),
+                    if ghost_button(
+                        ui,
+                        format!("{} Check Updates", crate::lucide::SPARKLES),
+                        p.text_secondary,
+                        p,
+                        !state.checking_updates && !state.loading,
                     )
-                    .fill(p.bg_button)
-                    .rounding(Rounding::same(8.0));
-                    if ui.add_enabled(!state.checking_updates && !state.loading, check_btn).clicked() {
+                    .clicked()
+                    {
                         state.trigger_check_updates(ctx);
                     }
 
-                    let refresh_btn = egui::Button::new(
-                        RichText::new(format!("{} Refresh", crate::lucide::REFRESH_CW))
-                            .size(11.5)
-                            .color(p.text_primary),
+                    if ghost_button(
+                        ui,
+                        format!("{} Refresh", crate::lucide::REFRESH_CW),
+                        p.text_secondary,
+                        p,
+                        !state.loading,
                     )
-                    .fill(p.bg_button)
-                    .rounding(Rounding::same(8.0));
-                    if ui.add_enabled(!state.loading, refresh_btn).clicked() {
+                    .clicked()
+                    {
                         state.trigger_discovery(ctx);
                     }
 
+                    // Search box matching File Explorer's "Filter this folder"
                     Frame::none()
                         .fill(p.bg_input)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                        .rounding(Rounding::same(6.0))
+                        .inner_margin(egui::Margin::symmetric(7.0, 3.0))
                         .show(ui, |ui| {
+                            ui.spacing_mut().interact_size.y = 21.0;
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(crate::lucide::SEARCH).size(12.0).color(p.text_muted));
-                                let resp = ui.add(
+                                ui.label(
+                                    RichText::new(crate::lucide::SEARCH)
+                                        .size(11.5)
+                                        .color(p.text_muted),
+                                );
+                                let resp = ui.add_sized(
+                                    [210.0, 21.0],
                                     egui::TextEdit::singleline(&mut state.search_query)
-                                        .hint_text("Filter by name, ID, or description…")
-                                        .desired_width(220.0)
+                                        .hint_text(
+                                            RichText::new("Filter by name, ID, or description…")
+                                                .color(p.text_muted),
+                                        )
+                                        .font(egui::FontId::proportional(11.5))
+                                        .vertical_align(egui::Align::Center)
+                                        .margin(egui::Margin::ZERO)
                                         .frame(false),
                                 );
                                 if resp.changed() {
@@ -200,8 +235,12 @@ fn render_top_bar(
                                 if !state.search_query.is_empty()
                                     && ui
                                         .add(
-                                            egui::Button::new(RichText::new(crate::lucide::X).size(11.0).color(p.text_muted))
-                                                .frame(false),
+                                            egui::Button::new(
+                                                RichText::new(crate::lucide::X)
+                                                    .size(11.0)
+                                                    .color(p.text_muted),
+                                            )
+                                            .frame(false),
                                         )
                                         .clicked()
                                 {
@@ -212,73 +251,48 @@ fn render_top_bar(
                         });
                 });
             });
-        });
-}
 
-fn render_filter_and_sort_bar(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePalette) {
-    ui.horizontal(|ui| {
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            for &f in AppFilter::all() {
-                let active = state.filter == f;
-                let count = if f == AppFilter::Repos {
-                    state.repos.len()
-                } else {
-                    state.apps.iter().filter(|a| a.source.matches_filter(f)).count()
-                };
-                let bg = if active { p.accent } else { p.bg_button };
-                let fg = if active { p.accent_text } else { p.text_secondary };
-                let btn = egui::Button::new(
-                    RichText::new(format!("{} ({})", f.label(), count))
-                        .size(11.5)
-                        .strong()
-                        .color(fg),
-                )
-                .fill(bg)
-                .stroke(Stroke::NONE)
-                .rounding(Rounding::same(14.0));
-                if ui.add(btn).clicked() && state.filter != f {
-                    state.filter = f;
-                    state.mark_filter_dirty();
-                }
-            }
-        });
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(4.0);
 
-        if state.filter != AppFilter::Repos {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // Row 2: Low-profile segmented filter tabs (no redundant Sort bar)
+            ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                let dir_lbl = if state.sort_desc { "Desc ▼" } else { "Asc ▲" };
-                let dir_btn = egui::Button::new(RichText::new(dir_lbl).size(11.0).color(p.text_primary))
-                    .fill(p.bg_button)
-                    .rounding(Rounding::same(8.0));
-                if ui.add(dir_btn).on_hover_text("Toggle sort direction").clicked() {
-                    state.sort_desc = !state.sort_desc;
-                    state.mark_filter_dirty();
-                }
-
-                for &col in AppSortCol::all().iter().rev() {
-                    let active = state.sort_col == col;
+                for &f in AppFilter::all() {
+                    let active = state.filter == f;
+                    let count = if f == AppFilter::Repos {
+                        state.repos.len()
+                    } else {
+                        state.apps.iter().filter(|a| a.source.matches_filter(f)).count()
+                    };
+                    let bg = if active { p.bg_card_active } else { Color32::TRANSPARENT };
+                    let fg = if active { p.text_primary } else { p.text_muted };
+                    let label = match f {
+                        AppFilter::WebApps => format!("Web Apps ({})", count),
+                        _ => format!("{} ({})", f.label(), count),
+                    };
                     let btn = egui::Button::new(
-                        RichText::new(col.label())
-                            .size(11.0)
-                            .color(if active { p.accent_text } else { p.text_secondary }),
+                        RichText::new(label)
+                            .size(11.5)
+                            .strong()
+                            .color(fg),
                     )
-                    .fill(if active { p.accent } else { p.bg_button })
-                    .rounding(Rounding::same(8.0));
-                    if ui.add(btn).clicked() {
-                        if state.sort_col == col {
-                            state.sort_desc = !state.sort_desc;
-                        } else {
-                            state.sort_col = col;
-                            state.sort_desc = matches!(col, AppSortCol::Size | AppSortCol::InstalledDate);
-                        }
+                    .fill(bg)
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding::same(6.0));
+                    if ui.add(btn).clicked() && state.filter != f {
+                        state.filter = f;
                         state.mark_filter_dirty();
                     }
                 }
-                ui.label(RichText::new("Sort:").size(11.0).color(p.text_muted));
             });
-        }
-    });
+        });
+}
+
+fn render_filter_and_sort_bar(_state: &mut AppsManagerState, _ui: &mut Ui, _p: &ThemePalette) {
+    // Filter tabs are now integrated cleanly into Row 2 of the top card;
+    // sorting lives exclusively on the clickable table column headers.
 }
 
 fn cell_ui(ui: &mut Ui, width: f32, height: f32, align_right: bool, add_contents: impl FnOnce(&mut Ui)) {

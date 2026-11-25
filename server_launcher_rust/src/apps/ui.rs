@@ -525,8 +525,10 @@ fn sort_header(
 }
 
 fn render_repos_table(state: &AppsManagerState, ui: &mut Ui, p: &ThemePalette, height: f32) {
+    let sort_id = ui.id().with("repo_sort");
+    let (mut sort, mut descending) = ui.data(|data| data.get_temp::<(usize, bool)>(sort_id)).unwrap_or_default();
     let q = state.search_query.trim().to_lowercase();
-    let filtered: Vec<&RepoEntry> = state
+    let mut filtered: Vec<&RepoEntry> = state
         .repos
         .iter()
         .filter(|r| {
@@ -537,9 +539,20 @@ fn render_repos_table(state: &AppsManagerState, ui: &mut Ui, p: &ThemePalette, h
                 || r.url_or_details.to_lowercase().contains(&q)
         })
         .collect();
+    filtered.sort_by(|a, b| {
+        let primary = match sort {
+            1 => a.source.cmp(&b.source),
+            2 => a.enabled.cmp(&b.enabled),
+            3 => a.url_or_details.cmp(&b.url_or_details),
+            _ => a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()),
+        };
+        let order = primary.then_with(|| a.id.cmp(&b.id));
+        if descending { order.reverse() } else { order }
+    });
+
 
     Frame::none()
-        .fill(p.bg_card)
+        .fill(Color32::TRANSPARENT)
         .rounding(Rounding::same(10.0))
         .inner_margin(egui::Margin::symmetric(12.0, 10.0))
         .show(ui, |ui| {
@@ -547,27 +560,33 @@ fn render_repos_table(state: &AppsManagerState, ui: &mut Ui, p: &ThemePalette, h
             ui.set_width(inner_w);
             ui.set_height((height - 20.0).max(100.0));
 
-            let col_name_w = 220.0;
-            let col_src_w = 90.0;
-            let col_stat_w = 90.0;
-            let col_url_w = (inner_w - col_name_w - col_src_w - col_stat_w - 24.0).max(160.0);
+            let col_name_w = (inner_w * 0.42).clamp(150.0, 560.0);
+            let col_src_w = 78.0;
+            let col_stat_w = 86.0;
+            let col_url_w = (inner_w - col_name_w - col_src_w - col_stat_w - 36.0).max(0.0);
 
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                cell_ui(ui, col_name_w, 22.0, false, |ui| {
-                    ui.label(RichText::new("ID / Name").size(11.0).strong().color(p.text_muted));
+            Frame::none().fill(p.bg_card).rounding(Rounding::same(5.0))
+                .inner_margin(egui::Margin::symmetric(4.0, 0.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        for (index, (label, width)) in [
+                            ("Repository", col_name_w), ("Source", col_src_w),
+                            ("Status", col_stat_w), ("Details", col_url_w),
+                        ].into_iter().enumerate() {
+                            let arrow = if sort != index { "" } else if descending { " ↓" } else { " ↑" };
+                            cell_ui(ui, width, 24.0, false, |ui| {
+                                let text = RichText::new(format!("{label}{arrow}")).size(11.0)
+                                    .color(if sort == index { p.accent } else { p.text_secondary });
+                                if ui.add(egui::Button::new(text).frame(false)).clicked() {
+                                    descending = sort == index && !descending;
+                                    sort = index;
+                                    ui.data_mut(|data| data.insert_temp(sort_id, (sort, descending)));
+                                }
+                            });
+                        }
+                    });
                 });
-                cell_ui(ui, col_src_w, 22.0, false, |ui| {
-                    ui.label(RichText::new("Source").size(11.0).strong().color(p.text_muted));
-                });
-                cell_ui(ui, col_stat_w, 22.0, false, |ui| {
-                    ui.label(RichText::new("Status").size(11.0).strong().color(p.text_muted));
-                });
-                cell_ui(ui, col_url_w, 22.0, false, |ui| {
-                    ui.label(RichText::new("URL / Details").size(11.0).strong().color(p.text_muted));
-                });
-            });
-            ui.separator();
 
             if filtered.is_empty() {
                 ui.centered_and_justified(|ui| {
@@ -587,8 +606,19 @@ fn render_repos_table(state: &AppsManagerState, ui: &mut Ui, p: &ThemePalette, h
                         let repo = filtered[idx];
                         let bg = if idx % 2 == 1 { p.bg_subtle } else { Color32::TRANSPARENT };
                         let row_w = ui.available_width();
-                        let (row_rect, _) =
-                            ui.allocate_exact_size(egui::vec2(row_w, ROW_HEIGHT - 2.0), egui::Sense::hover());
+                        let (row_rect, response) =
+                            ui.allocate_exact_size(egui::vec2(row_w, ROW_HEIGHT - 2.0), egui::Sense::click());
+                        let bg = if response.hovered() { p.bg_button_hover } else { bg };
+                        response.context_menu(|ui| {
+                            if ui.button("Copy repository ID").clicked() {
+                                ui.ctx().copy_text(repo.id.clone());
+                                ui.close_menu();
+                            }
+                            if !repo.url_or_details.is_empty() && ui.button("Copy repository details").clicked() {
+                                ui.ctx().copy_text(repo.url_or_details.clone());
+                                ui.close_menu();
+                            }
+                        });
                         if bg != Color32::TRANSPARENT {
                             ui.painter().rect_filled(row_rect, Rounding::same(6.0), bg);
                         }
@@ -604,7 +634,7 @@ fn render_repos_table(state: &AppsManagerState, ui: &mut Ui, p: &ThemePalette, h
                                     RichText::new(&repo.name).size(12.0).strong().color(p.text_primary),
                                 )
                                 .truncate(),
-                            );
+                            ).on_hover_text(format!("{}\n{}", repo.name, repo.id));
                         });
                         cell_ui(&mut row_ui, col_src_w, 26.0, false, |ui| {
                             ui.label(RichText::new(&repo.source).size(11.5).color(p.accent));
@@ -613,7 +643,7 @@ fn render_repos_table(state: &AppsManagerState, ui: &mut Ui, p: &ThemePalette, h
                             let (sbg, sfg, lbl) = if repo.enabled {
                                 (p.success_subtle, p.success, "Enabled")
                             } else {
-                                (p.danger_subtle, p.danger, "Disabled")
+                                (p.bg_button, p.text_muted, "Disabled")
                             };
                             Frame::none()
                                 .fill(sbg)
@@ -626,7 +656,7 @@ fn render_repos_table(state: &AppsManagerState, ui: &mut Ui, p: &ThemePalette, h
                         cell_ui(&mut row_ui, col_url_w, 26.0, false, |ui| {
                             ui.add(
                                 egui::Label::new(
-                                    RichText::new(&repo.url_or_details).size(11.5).color(p.text_secondary),
+                                    RichText::new(if repo.url_or_details == "System DNF Repository" { &repo.id } else { &repo.url_or_details }).size(11.5).color(p.text_secondary),
                                 )
                                 .truncate(),
                             );

@@ -498,27 +498,22 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     pub(in crate::app) fn render_sensor_hardware_access(&mut self, ui: &mut Ui, host_id: Option<&str>) {
         if host_id.is_some() || !cfg!(target_os = "linux") { return; }
-        let p = self.palette();
         let key = PendingSudoAction::UnlockSensorAccess.key(None);
         let busy = self.systemd_actions_in_flight.lock().unwrap().contains(&key);
-        ui.horizontal_wrapped(|ui| {
-            if ui.add_enabled(!busy, egui::Button::new(if self.sensors_snapshot.hardware_access_unlocked { "Refresh protected sensors" } else { "Unlock hardware sensors" })).hover_tip("Extra metrics only: CPU and RAM usage do not need sudo. This read-only probe reads protected CPU energy, Intel GPU counters and RAM module details; it changes no hardware settings.").clicked() {
-                self.service_action_msg = None;
-                self.queue_systemd_action(PendingSudoAction::UnlockSensorAccess, None, None);
-            }
-            if busy { ui.spinner(); }
-            ui.label(RichText::new("Protected readings are snapshots. Refresh to take another sample.").size(11.0).color(p.text_muted));
-        });
-        if let Some(message) = self.service_action_msg.as_ref().filter(|message| !busy && (message.starts_with("Read-only hardware") || message.starts_with("Error: Hardware probe") || message.starts_with("Error: Could not start hardware"))) {
-            if crate::systemd::needs_sudo_password(message) {
-                ui.label(RichText::new("Unlock sensors to read protected metrics.").size(11.0).color(p.text_muted))
-                    .hover_tip(message);
-            } else {
-                ui.label(RichText::new(message).size(11.0).color(p.text_muted));
-            }
-        }
-        if let Some(error) = &self.sensors_snapshot.hardware_access_error {
-            ui.add(egui::Label::new(RichText::new(error).size(11.0).color(p.warning)).truncate()).hover_tip(error);
+        let label = if self.sensors_snapshot.hardware_access_unlocked {
+            "Refresh protected sensors"
+        } else {
+            "Unlock hardware sensors"
+        };
+        let tooltip = self.sensors_snapshot.hardware_access_error.as_deref()
+            .or_else(|| self.service_action_msg.as_deref().filter(|message| {
+                message.starts_with("Error: Hardware probe")
+                    || message.starts_with("Error: Could not start hardware")
+            }))
+            .unwrap_or("Take a read-only snapshot of protected hardware readings.");
+        if ui.add_enabled(!busy, egui::Button::new(label)).hover_tip(tooltip).clicked() {
+            self.service_action_msg = None;
+            self.queue_systemd_action(PendingSudoAction::UnlockSensorAccess, None, None);
         }
         ui.add_space(6.0);
     }

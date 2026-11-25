@@ -1525,6 +1525,8 @@ pub struct SshHostModalState {
     pending_test: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     pub use_agent: bool,
     pub strict_host_key: bool,
+    rdp: Option<crate::remote_desktop::profile::RdpProfile>,
+    vnc: Option<crate::remote_desktop::profile::VncProfile>,
 }
 
 impl SshHostModalState {
@@ -1544,6 +1546,8 @@ impl SshHostModalState {
         self.pending_test = None;
         self.use_agent = true;
         self.strict_host_key = false;
+        self.rdp = None;
+        self.vnc = None;
     }
 
     pub fn open_edit(&mut self, h: &crate::config::SshRemoteHost) {
@@ -1562,6 +1566,8 @@ impl SshHostModalState {
         self.pending_test = None;
         self.use_agent = h.use_agent;
         self.strict_host_key = h.strict_host_key;
+        self.rdp = h.rdp.clone();
+        self.vnc = h.vnc.clone();
     }
 }
 
@@ -1828,6 +1834,8 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                         remote_cwd: state.remote_cwd.clone(),
                         use_agent: state.use_agent,
                         strict_host_key: state.strict_host_key,
+                        rdp: state.rdp.clone(),
+                        vnc: state.vnc.clone(),
                     };
                     let (sender, receiver) = std::sync::mpsc::channel();
                     state.test_result = None;
@@ -1902,6 +1910,8 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                             remote_cwd: state.remote_cwd.trim().to_string(),
                             use_agent: state.use_agent,
                             strict_host_key: state.strict_host_key,
+                            rdp: state.rdp.clone(),
+                            vnc: state.vnc.clone(),
                         };
 
                         action = ModalAction::SaveSshHost(host_obj, state.editing_id.clone());
@@ -3552,6 +3562,8 @@ mod tests {
             remote_cwd: "".to_string(),
             use_agent: true,
             strict_host_key: false,
+            rdp: None,
+            vnc: None,
         };
         modal.open_for_host(&host);
         assert!(modal.open);
@@ -3580,6 +3592,8 @@ mod tests {
             remote_cwd: "".to_string(),
             use_agent: true,
             strict_host_key: false,
+            rdp: None,
+            vnc: None,
         };
         modal.open_for_host(&host);
         assert!(modal.open);

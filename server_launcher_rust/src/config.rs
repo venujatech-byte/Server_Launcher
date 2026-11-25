@@ -100,6 +100,10 @@ pub struct SshRemoteHost {
     pub use_agent: bool,
     #[serde(default)]
     pub strict_host_key: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) rdp: Option<crate::remote_desktop::profile::RdpProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) vnc: Option<crate::remote_desktop::profile::VncProfile>,
 }
 
 fn ssh_agent_default() -> bool {

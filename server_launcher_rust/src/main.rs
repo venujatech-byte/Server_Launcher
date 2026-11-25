@@ -6,6 +6,7 @@ mod app;
 mod config;
 mod modals;
 mod remote;
+mod remote_desktop;
 mod scanner;
 mod service;
 mod tauri_app;

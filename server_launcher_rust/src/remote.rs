@@ -595,6 +595,8 @@ pub fn parse_ssh_config_str(content: &str, home: &std::path::Path) -> Vec<SshRem
                     remote_cwd: String::new(),
                     use_agent: true,
                     strict_host_key: false,
+                    rdp: None,
+                    vnc: None,
                 });
             }
         }

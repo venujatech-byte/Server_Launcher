@@ -125,3 +125,20 @@ axes. Extra buttons, IME, host-key shortcuts and platform keyboard capture
 are pending. Input mapping and focus release were tested in-process.
 Synthetic desktop input did not reach the loopback peer in the X11 smoke
 test, so end-to-end input behavior remains unverified.
+
+## Native RDP transport
+
+The viewer uses the blocking adapter matching [IronRDP 0.17](https://docs.rs/crate/ironrdp/0.17.0)
+inside its own process. The worker negotiates NLA by default and supports an
+explicit TLS selection. It verifies CA trust and the original host name before
+CredSSP or graphical logon, including when SSH supplies the underlying byte
+stream. The Rustls provider is chosen explicitly and TLS resumption is disabled.
+Certificate exceptions and per-host fingerprint prompts are pending. RD Gateway,
+Kerberos/KDC requests, and legacy unencrypted RDP are not accepted. IronRDP holds
+its own copy of the password during connection setup. The launcher zeroizes
+its own working copy and does not log connector errors or credentials.
+
+Initial dimensions are validated before allocating the decoded framebuffer.
+Damage from the graphics stage feeds the common partial texture renderer.
+Reactivation, input, display control, and redirection channels are separate work.
+IronRDP and its blocking adapter are available under MIT or Apache-2.0.

@@ -6,6 +6,11 @@ authors = ["Venuka Silva"]
 description = "Cross-platform developer server launcher for Linux & Windows written in Rust"
 
 [dependencies]
+ironrdp = { version = "=0.17.0", default-features = false, features = ["connector", "graphics", "pdu", "session"] }
+ironrdp-blocking = "=0.10.0"
+rustls = { version = "0.23", default-features = false, features = ["std", "ring", "tls12"] }
+rustls-native-certs = "0.8"
+x509-cert = { version = "0.2", default-features = false, features = ["std"] }
 sha2 = "0.10"
 tempfile = "3"
 eframe = { version = "0.29", default-features = true }

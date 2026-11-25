@@ -35,13 +35,11 @@ pub(crate) fn run(
         .and_then(|host| host.vnc.as_ref())
         .filter(|_| protocol == DesktopProtocol::Vnc)
         .map_or(Scaling::Fit, |profile| profile.scaling);
-    let vnc_host = profile
-        .filter(|_| !test_pattern && protocol == DesktopProtocol::Vnc)
-        .cloned();
-    let view_only = vnc_host
+    let viewer_host = profile.filter(|_| !test_pattern).cloned();
+    let view_only = viewer_host
         .as_ref()
         .and_then(|host| host.vnc.as_ref())
-        .is_some_and(|profile| profile.view_only);
+        .is_some_and(|profile| protocol == DesktopProtocol::Vnc && profile.view_only);
     let palette = ThemeMode::from_id_str(theme).palette();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -83,7 +81,10 @@ pub(crate) fn run(
                 closed,
                 message,
                 framebuffer,
-                connection: vnc_host.map(|host| Connection::start(host, cc.egui_ctx.clone())),
+                connection: viewer_host.map(|host| match protocol {
+                    DesktopProtocol::Rdp => super::rdp::start(host, cc.egui_ctx.clone()),
+                    DesktopProtocol::Vnc => Connection::start(host, cc.egui_ctx.clone()),
+                }),
                 texture: None,
                 scaling,
                 fullscreen: false,

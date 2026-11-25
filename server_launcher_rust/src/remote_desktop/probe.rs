@@ -86,7 +86,7 @@ fn invalid(reason: &str) -> io::Error {
 
 fn rdp(stream: &mut (impl Read + Write), security: RdpSecurity) -> io::Result<String> {
     let offered: u8 = match security {
-        RdpSecurity::Auto | RdpSecurity::Nla => 3,
+        RdpSecurity::Auto | RdpSecurity::Nla => 2,
         RdpSecurity::Tls => 1,
         RdpSecurity::Rdp => 0,
     };
@@ -128,7 +128,7 @@ fn rdp(stream: &mut (impl Read + Write), security: RdpSecurity) -> io::Result<St
     let protocol = u32::from_le_bytes([body[11], body[12], body[13], body[14]]);
     match (body[7], protocol, security) {
         (2, 2, RdpSecurity::Auto | RdpSecurity::Nla) => Ok("RDP endpoint agreed to NLA".into()),
-        (2, 1, RdpSecurity::Auto | RdpSecurity::Tls) => Ok("RDP endpoint agreed to TLS".into()),
+        (2, 1, RdpSecurity::Tls) => Ok("RDP endpoint agreed to TLS".into()),
         (3, 5, _) => Err(invalid("the server requires NLA")),
         (3, _, _) => Err(invalid(&format!(
             "the server rejected RDP negotiation (code {protocol})"
@@ -347,7 +347,8 @@ mod tests {
         assert!(rdp(&mut Peer::new(&reply), RdpSecurity::Nla).is_ok());
         reply[15] = 1;
         assert!(rdp(&mut Peer::new(&reply), RdpSecurity::Nla).is_err());
-        assert!(rdp(&mut Peer::new(&reply), RdpSecurity::Auto).is_ok());
+        assert!(rdp(&mut Peer::new(&reply), RdpSecurity::Auto).is_err());
+        assert!(rdp(&mut Peer::new(&reply), RdpSecurity::Tls).is_ok());
         reply[3] = 255;
         assert!(rdp(&mut Peer::new(&reply), RdpSecurity::Auto).is_err());
     }

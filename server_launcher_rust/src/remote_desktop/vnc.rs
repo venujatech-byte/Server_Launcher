@@ -57,16 +57,26 @@ pub(crate) struct Connection {
 
 impl Connection {
     pub(crate) fn start(host: SshRemoteHost, ctx: egui::Context) -> Arc<Mutex<Self>> {
+        Self::start_worker("Connecting to VNC…", ctx, move |state, ctx| {
+            run(&host, state, ctx)
+        })
+    }
+
+    pub(crate) fn start_worker(
+        initial_status: &str,
+        ctx: egui::Context,
+        run: impl FnOnce(&Mutex<Self>, &egui::Context) -> io::Result<()> + Send + 'static,
+    ) -> Arc<Mutex<Self>> {
         let state = Arc::new(Mutex::new(Self {
             framebuffer: Framebuffer::default(),
-            status: "Connecting to VNC…".into(),
+            status: initial_status.into(),
             connected: false,
             input: None,
             input_overflow: Arc::new(AtomicBool::new(false)),
         }));
         let worker = state.clone();
         std::thread::spawn(move || {
-            let result = run(&host, &worker, &ctx);
+            let result = run(&worker, &ctx);
             if let Err(error) = result {
                 let mut state = worker.lock().unwrap();
                 state.connected = false;

@@ -159,7 +159,7 @@ pub(crate) trait InputSocket: Write + Send {
     fn disconnect(&self);
 }
 
-pub(crate) trait DesktopStream: Read + Write {
+pub(crate) trait DesktopStream: Read + Write + Sync {
     fn input_socket(&self) -> io::Result<Box<dyn InputSocket>>;
 }
 

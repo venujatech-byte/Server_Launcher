@@ -1,4 +1,7 @@
-use super::actions::{format_bytes, open_folder_in_host, populate_data_path_sizes, stream_command_output};
+use super::actions::{
+    format_bytes, format_unix_timestamp, open_folder_in_host, path_mtime,
+    populate_data_path_sizes, stream_command_output,
+};
 use super::model::{AppDataPath, AppEntry, AppSource, AppsEvent, ClearDataMode, RepoEntry};
 use eframe::egui;
 use std::collections::{HashMap, HashSet};
@@ -268,7 +271,12 @@ fn discover_desktop_entries() -> Vec<AppEntry> {
                 AppSource::Desktop
             };
 
-            let dedup_key = format!("{}:{}", if is_pwa { "pwa" } else { "desktop" }, file_name);
+            let app_id = extract_flag_value(&exec_str, "--app-id=").unwrap_or_else(|| file_name.clone());
+            let dedup_key = if is_pwa {
+                format!("pwa:{}", app_id)
+            } else {
+                format!("desktop:{}", file_name)
+            };
             if !seen_ids.insert(dedup_key) {
                 continue;
             }
@@ -281,9 +289,12 @@ fn discover_desktop_entries() -> Vec<AppEntry> {
 
             let cleaned_exec = clean_desktop_exec(&exec_str);
             let can_launch = !cleaned_exec.is_empty();
+            let (installed_date, installed_timestamp) = path_mtime(&path)
+                .map(|(d, t)| (Some(d), Some(t)))
+                .unwrap_or((None, None));
 
             apps.push(AppEntry {
-                id: extract_flag_value(&exec_str, "--app-id=").unwrap_or_else(|| file_name.clone()),
+                id: app_id,
                 name: app_name,
                 source,
                 version: "—".to_string(),
@@ -305,6 +316,8 @@ fn discover_desktop_entries() -> Vec<AppEntry> {
                     None
                 },
                 desktop_file: Some(path.display().to_string()),
+                installed_date,
+                installed_timestamp,
                 update_available: None,
                 user_installed: is_user_dir,
                 can_launch,
@@ -389,6 +402,15 @@ fn discover_flatpaks() -> Vec<AppEntry> {
             }
         }
 
+        let (installed_date, installed_timestamp) = home
+            .as_ref()
+            .filter(|_| installation == "user")
+            .map(|h| h.join(".local/share/flatpak/app").join(&app_id))
+            .or_else(|| Some(PathBuf::from("/var/lib/flatpak/app").join(&app_id)))
+            .and_then(|p| path_mtime(&p))
+            .map(|(d, t)| (Some(d), Some(t)))
+            .unwrap_or((None, None));
+
         apps.push(AppEntry {
             id: app_id.clone(),
             name,
@@ -404,6 +426,8 @@ fn discover_flatpaks() -> Vec<AppEntry> {
             exec_cmd: Some(format!("flatpak run {}", app_id)),
             uninstall_cmd: None,
             desktop_file: None,
+            installed_date,
+            installed_timestamp,
             update_available: None,
             user_installed: installation == "user",
             can_launch: true,
@@ -439,7 +463,7 @@ fn discover_rpm_dnf() -> Vec<AppEntry> {
         .args([
             "-qa",
             "--qf",
-            "%{NAME}\t%{VERSION}-%{RELEASE}\t%{SIZE}\t%{SUMMARY}\n",
+            "%{NAME}\t%{VERSION}-%{RELEASE}\t%{SIZE}\t%{INSTALLTIME}\t%{SUMMARY}\n",
         ])
         .output()
     else {
@@ -458,7 +482,9 @@ fn discover_rpm_dnf() -> Vec<AppEntry> {
         let name = cols[0].trim().to_string();
         let version = cols[1].trim().to_string();
         let size_bytes = cols.get(2).and_then(|s| s.trim().parse::<u64>().ok());
-        let summary = cols.get(3).map(|s| s.trim()).unwrap_or("").to_string();
+        let install_ts = cols.get(3).and_then(|s| s.trim().parse::<i64>().ok());
+        let installed_date = install_ts.map(format_unix_timestamp);
+        let summary = cols.get(4).map(|s| s.trim()).unwrap_or("").to_string();
         let is_user = user_installed.contains(&name);
 
         apps.push(AppEntry {
@@ -480,6 +506,8 @@ fn discover_rpm_dnf() -> Vec<AppEntry> {
             exec_cmd: None,
             uninstall_cmd: None,
             desktop_file: None,
+            installed_date,
+            installed_timestamp: install_ts,
             update_available: None,
             user_installed: is_user,
             can_launch: false,
@@ -521,6 +549,11 @@ fn discover_apt_dpkg() -> Vec<AppEntry> {
             .map(|kb| kb.saturating_mul(1024));
         let summary = cols.get(3).map(|s| s.trim()).unwrap_or("").to_string();
 
+        let (installed_date, installed_timestamp) =
+            path_mtime(&PathBuf::from(format!("/var/lib/dpkg/info/{}.list", name)))
+                .map(|(d, t)| (Some(d), Some(t)))
+                .unwrap_or((None, None));
+
         apps.push(AppEntry {
             id: name.clone(),
             name: name.clone(),
@@ -536,6 +569,8 @@ fn discover_apt_dpkg() -> Vec<AppEntry> {
             exec_cmd: None,
             uninstall_cmd: None,
             desktop_file: None,
+            installed_date,
+            installed_timestamp,
             update_available: None,
             user_installed: true,
             can_launch: false,
@@ -591,6 +626,8 @@ fn discover_pacman() -> Vec<AppEntry> {
             exec_cmd: None,
             uninstall_cmd: None,
             desktop_file: None,
+            installed_date: None,
+            installed_timestamp: None,
             update_available: None,
             user_installed: is_user,
             can_launch: false,
@@ -640,6 +677,8 @@ fn discover_snaps() -> Vec<AppEntry> {
             exec_cmd: Some(format!("snap run {}", name)),
             uninstall_cmd: None,
             desktop_file: None,
+            installed_date: None,
+            installed_timestamp: None,
             update_available: None,
             user_installed: true,
             can_launch: true,
@@ -932,6 +971,44 @@ pub fn resolve_details(app: AppEntry, tx: Sender<AppsEvent>, ctx: egui::Context)
             };
         }
 
+        let description = match app.source {
+            AppSource::DnfRpm => Command::new("rpm")
+                .args(["-qi", &app.id])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| parse_rpm_description(&String::from_utf8_lossy(&o.stdout))),
+            AppSource::AptDpkg => Command::new("dpkg-query")
+                .args(["-s", &app.id])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| parse_dpkg_description(&String::from_utf8_lossy(&o.stdout))),
+            AppSource::Pacman => Command::new("pacman")
+                .args(["-Qi", &app.id])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| {
+                    let s = String::from_utf8_lossy(&o.stdout);
+                    s.lines()
+                        .find(|l| l.starts_with("Description"))
+                        .and_then(|l| l.split_once(':').map(|(_, v)| v.trim().to_string()))
+                }),
+            AppSource::Flatpak => Command::new("flatpak")
+                .args(["info", &app.id])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| {
+                    let s = String::from_utf8_lossy(&o.stdout);
+                    s.lines()
+                        .find(|l| l.contains(" - "))
+                        .map(|l| l.trim().to_string())
+                }),
+            _ => None,
+        };
+
         let mut data_paths = app.data_paths.clone();
         populate_data_path_sizes(&mut data_paths);
 
@@ -939,10 +1016,53 @@ pub fn resolve_details(app: AppEntry, tx: Sender<AppsEvent>, ctx: egui::Context)
             id: app.id,
             source: app.source,
             install_location,
+            description,
+            installed_date: app.installed_date,
+            installed_timestamp: app.installed_timestamp,
             data_paths,
         });
         ctx.request_repaint();
     });
+}
+
+fn parse_rpm_description(text: &str) -> Option<String> {
+    let mut in_desc = false;
+    let mut lines = Vec::new();
+    for line in text.lines() {
+        if line.starts_with("Description") {
+            in_desc = true;
+            continue;
+        }
+        if in_desc {
+            lines.push(line.trim());
+        }
+    }
+    let joined = lines.join(" ").trim().to_string();
+    if joined.is_empty() { None } else { Some(joined) }
+}
+
+fn parse_dpkg_description(text: &str) -> Option<String> {
+    let mut in_desc = false;
+    let mut lines = Vec::new();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("Description:") {
+            in_desc = true;
+            lines.push(rest.trim());
+            continue;
+        }
+        if in_desc {
+            if line.starts_with(' ') || line.starts_with('\t') {
+                let t = line.trim();
+                if t != "." {
+                    lines.push(t);
+                }
+            } else {
+                break;
+            }
+        }
+    }
+    let joined = lines.join(" ").trim().to_string();
+    if joined.is_empty() { None } else { Some(joined) }
 }
 
 fn pick_primary_install_path(file_list: &str) -> Option<String> {

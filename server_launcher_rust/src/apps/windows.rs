@@ -1,4 +1,6 @@
-use super::actions::{format_bytes, open_folder_in_host, populate_data_path_sizes, stream_command_output};
+use super::actions::{
+    format_bytes, open_folder_in_host, path_mtime, populate_data_path_sizes, stream_command_output,
+};
 use super::model::{AppDataPath, AppEntry, AppSource, AppsEvent, ClearDataMode, RepoEntry};
 use eframe::egui;
 use std::collections::{HashMap, HashSet};
@@ -85,6 +87,20 @@ fn find_win32_data_paths(name: &str, publisher: &str) -> Vec<AppDataPath> {
     out
 }
 
+fn parse_win_install_date(raw: &str) -> (Option<String>, Option<i64>) {
+    let s = raw.trim();
+    if s.len() == 8 && s.chars().all(|c| c.is_ascii_digit()) {
+        if let Ok(naive) = chrono::NaiveDate::parse_from_str(s, "%Y%m%d") {
+            let formatted = naive.format("%Y-%m-%d").to_string();
+            let ts = naive
+                .and_hms_opt(0, 0, 0)
+                .map(|dt| dt.and_utc().timestamp());
+            return (Some(formatted), ts);
+        }
+    }
+    (None, None)
+}
+
 fn discover_registry_win32() -> Vec<AppEntry> {
     let ps = r#"
 $paths = @(
@@ -94,7 +110,7 @@ $paths = @(
 )
 Get-ItemProperty $paths -ErrorAction SilentlyContinue |
   Where-Object { $_.DisplayName -and -not $_.SystemComponent } |
-  Select-Object DisplayName, DisplayVersion, Publisher, InstallLocation, UninstallString, EstimatedSize |
+  Select-Object DisplayName, DisplayVersion, Publisher, InstallLocation, UninstallString, EstimatedSize, InstallDate |
   ConvertTo-Json -Compress
 "#;
     let Some(val) = run_powershell_json(ps) else {
@@ -125,6 +141,7 @@ Get-ItemProperty $paths -ErrorAction SilentlyContinue |
             .get("EstimatedSize")
             .and_then(|x| x.as_u64())
             .map(|kb| kb.saturating_mul(1024));
+        let (installed_date, installed_timestamp) = parse_win_install_date(&json_str(&item, "InstallDate"));
 
         let data_paths = find_win32_data_paths(&name, &publisher);
         let can_uninstall = uninstall_str.is_some();
@@ -148,6 +165,8 @@ Get-ItemProperty $paths -ErrorAction SilentlyContinue |
             exec_cmd: None,
             uninstall_cmd: uninstall_str,
             desktop_file: None,
+            installed_date,
+            installed_timestamp,
             update_available: None,
             user_installed: true,
             can_launch: false,
@@ -210,6 +229,12 @@ Get-AppxPackage |
             None
         };
 
+        let (installed_date, installed_timestamp) = install_loc
+            .as_deref()
+            .and_then(|l| path_mtime(Path::new(l)))
+            .map(|(d, t)| (Some(d), Some(t)))
+            .unwrap_or((None, None));
+
         apps.push(AppEntry {
             id: full_name.clone(),
             name,
@@ -229,6 +254,8 @@ Get-AppxPackage |
             exec_cmd: exec_cmd.clone(),
             uninstall_cmd: Some(full_name),
             desktop_file: None,
+            installed_date,
+            installed_timestamp,
             update_available: None,
             user_installed: true,
             can_launch: exec_cmd.is_some(),
@@ -298,6 +325,8 @@ fn discover_winget() -> Vec<AppEntry> {
             exec_cmd: None,
             uninstall_cmd: None,
             desktop_file: None,
+            installed_date: None,
+            installed_timestamp: None,
             update_available: None,
             user_installed: true,
             can_launch: false,
@@ -333,6 +362,8 @@ fn discover_scoop_and_choco() -> Vec<AppEntry> {
                             exec_cmd: None,
                             uninstall_cmd: None,
                             desktop_file: None,
+                            installed_date: None,
+                            installed_timestamp: None,
                             update_available: None,
                             user_installed: true,
                             can_launch: false,
@@ -367,6 +398,8 @@ fn discover_scoop_and_choco() -> Vec<AppEntry> {
                             exec_cmd: None,
                             uninstall_cmd: None,
                             desktop_file: None,
+                            installed_date: None,
+                            installed_timestamp: None,
                             update_available: None,
                             user_installed: true,
                             can_launch: false,
@@ -408,6 +441,9 @@ fn discover_windows_pwas() -> Vec<AppEntry> {
                 .unwrap_or("Web App")
                 .to_string();
             let path_str = p.display().to_string();
+            let (installed_date, installed_timestamp) = path_mtime(&p)
+                .map(|(d, t)| (Some(d), Some(t)))
+                .unwrap_or((None, None));
             apps.push(AppEntry {
                 id: path_str.clone(),
                 name,
@@ -423,6 +459,8 @@ fn discover_windows_pwas() -> Vec<AppEntry> {
                 exec_cmd: Some(path_str.clone()),
                 uninstall_cmd: Some(path_str.clone()),
                 desktop_file: Some(path_str),
+                installed_date,
+                installed_timestamp,
                 update_available: None,
                 user_installed: true,
                 can_launch: true,
@@ -544,6 +582,9 @@ pub fn resolve_details(app: AppEntry, tx: Sender<AppsEvent>, ctx: egui::Context)
             id: app.id,
             source: app.source,
             install_location: app.install_location,
+            description: None,
+            installed_date: app.installed_date,
+            installed_timestamp: app.installed_timestamp,
             data_paths,
         });
         ctx.request_repaint();

@@ -100,6 +100,29 @@ pub enum AppSortCol {
     Source,
     Version,
     Size,
+    InstalledDate,
+}
+
+impl AppSortCol {
+    pub fn all() -> &'static [AppSortCol] {
+        &[
+            AppSortCol::Name,
+            AppSortCol::Source,
+            AppSortCol::Version,
+            AppSortCol::Size,
+            AppSortCol::InstalledDate,
+        ]
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            AppSortCol::Name => "Name",
+            AppSortCol::Source => "Source",
+            AppSortCol::Version => "Version",
+            AppSortCol::Size => "Size",
+            AppSortCol::InstalledDate => "Installed",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -126,6 +149,8 @@ pub struct AppEntry {
     pub exec_cmd: Option<String>,
     pub uninstall_cmd: Option<String>,
     pub desktop_file: Option<String>,
+    pub installed_date: Option<String>,
+    pub installed_timestamp: Option<i64>,
     pub update_available: Option<String>,
     pub user_installed: bool,
     pub can_launch: bool,
@@ -178,6 +203,9 @@ pub enum AppsEvent {
         id: String,
         source: AppSource,
         install_location: Option<String>,
+        description: Option<String>,
+        installed_date: Option<String>,
+        installed_timestamp: Option<i64>,
         data_paths: Vec<AppDataPath>,
     },
     TaskStarted {

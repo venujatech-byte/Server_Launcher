@@ -47,6 +47,25 @@ pub fn format_bytes(bytes: u64) -> String {
     }
 }
 
+pub fn format_unix_timestamp(ts: i64) -> String {
+    if ts <= 0 {
+        return "—".to_string();
+    }
+    if let Some(dt) = chrono::DateTime::from_timestamp(ts, 0) {
+        let local: chrono::DateTime<chrono::Local> = dt.with_timezone(&chrono::Local);
+        return local.format("%Y-%m-%d").to_string();
+    }
+    "—".to_string()
+}
+
+pub fn path_mtime(path: &Path) -> Option<(String, i64)> {
+    let meta = std::fs::metadata(path).ok()?;
+    let modified = meta.modified().ok()?;
+    let dur = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+    let ts = dur.as_secs() as i64;
+    Some((format_unix_timestamp(ts), ts))
+}
+
 pub fn populate_data_path_sizes(paths: &mut [AppDataPath]) {
     for dp in paths.iter_mut() {
         if dp.path.exists() {

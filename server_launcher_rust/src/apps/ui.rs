@@ -30,15 +30,14 @@ pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePale
 
     let mut pending_action: Option<AppAction> = None;
 
-    // Main vertical layout: Top Bar -> Filter Pills -> (Split Table + Inspector) -> Task Drawer
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 8.0;
 
         render_top_bar(state, ui, p, &ctx, &mut pending_action);
-        render_filter_pills(state, ui, p);
+        render_filter_and_sort_bar(state, ui, p);
 
-        let drawer_h = if state.log_drawer_open { 165.0 } else { 30.0 };
-        let main_h = (ui.available_height() - drawer_h - 8.0).max(160.0);
+        let drawer_h = if state.log_drawer_open { 165.0 } else { 32.0 };
+        let main_h = (ui.available_height() - drawer_h - 8.0).max(180.0);
 
         ui.allocate_ui_with_layout(
             egui::vec2(ui.available_width(), main_h),
@@ -46,12 +45,18 @@ pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePale
             |ui| {
                 ui.set_height(main_h);
                 if state.filter == AppFilter::Repos {
-                    render_repos_table(state, ui, p, main_h);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), main_h),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            render_repos_table(state, ui, p, main_h);
+                        },
+                    );
                 } else {
                     let has_inspector = state.selected_key.is_some();
-                    let inspector_w = if has_inspector { 330.0 } else { 0.0 };
+                    let inspector_w = if has_inspector { 340.0 } else { 0.0 };
                     let gap = if has_inspector { 10.0 } else { 0.0 };
-                    let table_w = (ui.available_width() - inspector_w - gap).max(300.0);
+                    let table_w = (ui.available_width() - inspector_w - gap).max(320.0);
 
                     ui.allocate_ui_with_layout(
                         egui::vec2(table_w, main_h),
@@ -63,7 +68,20 @@ pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePale
 
                     if has_inspector {
                         ui.add_space(gap);
-                        render_inspector_panel(state, ui, p, inspector_w, main_h, &mut pending_action);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(inspector_w, main_h),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                render_inspector_panel(
+                                    state,
+                                    ui,
+                                    p,
+                                    inspector_w,
+                                    main_h,
+                                    &mut pending_action,
+                                );
+                            },
+                        );
                     }
                 }
             },
@@ -163,7 +181,6 @@ fn render_top_bar(
                         state.trigger_discovery(ctx);
                     }
 
-                    // Search box
                     Frame::none()
                         .fill(p.bg_input)
                         .rounding(Rounding::same(8.0))
@@ -198,33 +215,82 @@ fn render_top_bar(
         });
 }
 
-fn render_filter_pills(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePalette) {
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-        for &f in AppFilter::all() {
-            let active = state.filter == f;
-            let count = if f == AppFilter::Repos {
-                state.repos.len()
-            } else {
-                state.apps.iter().filter(|a| a.source.matches_filter(f)).count()
-            };
-            let bg = if active { p.accent } else { p.bg_button };
-            let fg = if active { p.accent_text } else { p.text_secondary };
-            let btn = egui::Button::new(
-                RichText::new(format!("{} ({})", f.label(), count))
-                    .size(11.5)
-                    .strong()
-                    .color(fg),
-            )
-            .fill(bg)
-            .stroke(Stroke::NONE)
-            .rounding(Rounding::same(14.0));
-            if ui.add(btn).clicked() && state.filter != f {
-                state.filter = f;
-                state.mark_filter_dirty();
+fn render_filter_and_sort_bar(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePalette) {
+    ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            for &f in AppFilter::all() {
+                let active = state.filter == f;
+                let count = if f == AppFilter::Repos {
+                    state.repos.len()
+                } else {
+                    state.apps.iter().filter(|a| a.source.matches_filter(f)).count()
+                };
+                let bg = if active { p.accent } else { p.bg_button };
+                let fg = if active { p.accent_text } else { p.text_secondary };
+                let btn = egui::Button::new(
+                    RichText::new(format!("{} ({})", f.label(), count))
+                        .size(11.5)
+                        .strong()
+                        .color(fg),
+                )
+                .fill(bg)
+                .stroke(Stroke::NONE)
+                .rounding(Rounding::same(14.0));
+                if ui.add(btn).clicked() && state.filter != f {
+                    state.filter = f;
+                    state.mark_filter_dirty();
+                }
             }
+        });
+
+        if state.filter != AppFilter::Repos {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let dir_lbl = if state.sort_desc { "Desc ▼" } else { "Asc ▲" };
+                let dir_btn = egui::Button::new(RichText::new(dir_lbl).size(11.0).color(p.text_primary))
+                    .fill(p.bg_button)
+                    .rounding(Rounding::same(8.0));
+                if ui.add(dir_btn).on_hover_text("Toggle sort direction").clicked() {
+                    state.sort_desc = !state.sort_desc;
+                    state.mark_filter_dirty();
+                }
+
+                for &col in AppSortCol::all().iter().rev() {
+                    let active = state.sort_col == col;
+                    let btn = egui::Button::new(
+                        RichText::new(col.label())
+                            .size(11.0)
+                            .color(if active { p.accent_text } else { p.text_secondary }),
+                    )
+                    .fill(if active { p.accent } else { p.bg_button })
+                    .rounding(Rounding::same(8.0));
+                    if ui.add(btn).clicked() {
+                        if state.sort_col == col {
+                            state.sort_desc = !state.sort_desc;
+                        } else {
+                            state.sort_col = col;
+                            state.sort_desc = matches!(col, AppSortCol::Size | AppSortCol::InstalledDate);
+                        }
+                        state.mark_filter_dirty();
+                    }
+                }
+                ui.label(RichText::new("Sort:").size(11.0).color(p.text_muted));
+            });
         }
     });
+}
+
+fn cell_ui(ui: &mut Ui, width: f32, height: f32, align_right: bool, add_contents: impl FnOnce(&mut Ui)) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let layout = if align_right {
+        egui::Layout::right_to_left(egui::Align::Center)
+    } else {
+        egui::Layout::left_to_right(egui::Align::Center)
+    };
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout));
+    child.set_clip_rect(rect.intersect(ui.clip_rect()));
+    add_contents(&mut child);
 }
 
 fn render_apps_table(
@@ -240,29 +306,29 @@ fn render_apps_table(
         .rounding(Rounding::same(10.0))
         .inner_margin(egui::Margin::symmetric(10.0, 8.0))
         .show(ui, |ui| {
-            ui.set_width((width - 20.0).max(200.0));
-            ui.set_height((height - 16.0).max(100.0));
+            let inner_w = (width - 20.0).max(260.0);
+            ui.set_width(inner_w);
+            ui.set_height((height - 16.0).max(120.0));
 
-            // Sortable header
+            let col_source_w = 96.0;
+            let col_ver_w = 135.0;
+            let col_size_w = 74.0;
+            let col_date_w = 88.0;
+            let col_actions_w = 112.0;
+            let col_name_w = (inner_w - col_source_w - col_ver_w - col_size_w - col_date_w - col_actions_w - 28.0)
+                .max(120.0);
+
+            // Header row
             ui.horizontal(|ui| {
-                let avail = ui.available_width();
-                let col_source_w = 100.0;
-                let col_ver_w = 130.0;
-                let col_size_w = 80.0;
-                let col_actions_w = 135.0;
-                let col_name_w = (avail - col_source_w - col_ver_w - col_size_w - col_actions_w - 32.0).max(140.0);
-
+                ui.spacing_mut().item_spacing.x = 4.0;
                 sort_header(state, ui, p, "Name", AppSortCol::Name, col_name_w);
                 sort_header(state, ui, p, "Source", AppSortCol::Source, col_source_w);
                 sort_header(state, ui, p, "Version", AppSortCol::Version, col_ver_w);
                 sort_header(state, ui, p, "Size", AppSortCol::Size, col_size_w);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(col_actions_w, 22.0),
-                    egui::Layout::right_to_left(egui::Align::Center),
-                    |ui| {
-                        ui.label(RichText::new("Actions").size(11.0).strong().color(p.text_muted));
-                    },
-                );
+                sort_header(state, ui, p, "Installed", AppSortCol::InstalledDate, col_date_w);
+                cell_ui(ui, col_actions_w, 22.0, true, |ui| {
+                    ui.label(RichText::new("Actions").size(11.0).strong().color(p.text_muted));
+                });
             });
             ui.separator();
 
@@ -285,13 +351,7 @@ fn render_apps_table(
                 .max_height(scroll_h)
                 .auto_shrink([false, false])
                 .show_rows(ui, ROW_HEIGHT, total_rows, |ui, row_range| {
-                    let avail = ui.available_width();
-                    let col_source_w = 100.0;
-                    let col_ver_w = 130.0;
-                    let col_size_w = 80.0;
-                    let col_actions_w = 135.0;
-                    let col_name_w = (avail - col_source_w - col_ver_w - col_size_w - col_actions_w - 32.0).max(140.0);
-
+                    ui.spacing_mut().item_spacing.y = 2.0;
                     for idx_pos in row_range {
                         let app_idx = state.filtered_indices[idx_pos];
                         let app = state.apps[app_idx].clone();
@@ -308,132 +368,137 @@ fn render_apps_table(
                             Color32::TRANSPARENT
                         };
 
-                        let resp = Frame::none()
-                            .fill(row_bg)
-                            .rounding(Rounding::same(6.0))
-                            .inner_margin(egui::Margin::symmetric(4.0, 4.0))
-                            .show(ui, |ui| {
-                                ui.set_min_height(ROW_HEIGHT - 8.0);
-                                ui.horizontal(|ui| {
-                                    // Name + update badge
-                                    ui.allocate_ui_with_layout(
-                                        egui::vec2(col_name_w, 24.0),
-                                        egui::Layout::left_to_right(egui::Align::Center),
-                                        |ui| {
-                                            ui.add(
-                                                egui::Label::new(
-                                                    RichText::new(&app.name).size(12.5).strong().color(p.text_primary),
-                                                )
-                                                .truncate(),
-                                            );
-                                            if let Some(ref new_v) = app.update_available {
-                                                Frame::none()
-                                                    .fill(p.success_subtle)
-                                                    .rounding(Rounding::same(6.0))
-                                                    .inner_margin(egui::Margin::symmetric(5.0, 1.0))
-                                                    .show(ui, |ui| {
-                                                        ui.label(
-                                                            RichText::new(format!("-> {}", new_v))
-                                                                .size(10.0)
-                                                                .color(p.success),
-                                                        );
-                                                    });
-                                            }
-                                        },
-                                    );
-
-                                    // Source badge
-                                    ui.allocate_ui_with_layout(
-                                        egui::vec2(col_source_w, 24.0),
-                                        egui::Layout::left_to_right(egui::Align::Center),
-                                        |ui| {
-                                            let (sbg, sfg) = source_badge_colors(app.source, p);
-                                            Frame::none()
-                                                .fill(sbg)
-                                                .rounding(Rounding::same(6.0))
-                                                .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                                .show(ui, |ui| {
-                                                    ui.label(RichText::new(app.source.label()).size(10.5).color(sfg));
-                                                });
-                                        },
-                                    );
-
-                                    // Version
-                                    ui.allocate_ui_with_layout(
-                                        egui::vec2(col_ver_w, 24.0),
-                                        egui::Layout::left_to_right(egui::Align::Center),
-                                        |ui| {
-                                            ui.add(
-                                                egui::Label::new(
-                                                    RichText::new(&app.version).size(11.5).color(p.text_secondary),
-                                                )
-                                                .truncate(),
-                                            );
-                                        },
-                                    );
-
-                                    // Size
-                                    ui.allocate_ui_with_layout(
-                                        egui::vec2(col_size_w, 24.0),
-                                        egui::Layout::left_to_right(egui::Align::Center),
-                                        |ui| {
-                                            ui.label(RichText::new(&app.size_display).size(11.5).color(p.text_muted));
-                                        },
-                                    );
-
-                                    // Quick actions
-                                    ui.allocate_ui_with_layout(
-                                        egui::vec2(col_actions_w, 24.0),
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            if app.can_uninstall {
-                                                let btn = egui::Button::new(
-                                                    RichText::new(crate::lucide::TRASH).size(12.0).color(p.danger),
-                                                )
-                                                .fill(p.bg_button)
-                                                .rounding(Rounding::same(6.0));
-                                                if ui
-                                                    .add_enabled(!state.task_running, btn)
-                                                    .on_hover_text("Uninstall")
-                                                    .clicked()
-                                                {
-                                                    state.confirm_uninstall = Some(app.clone());
-                                                }
-                                            }
-                                            if app.can_update {
-                                                let btn = egui::Button::new(
-                                                    RichText::new(crate::lucide::DOWNLOAD).size(12.0).color(p.accent),
-                                                )
-                                                .fill(p.bg_button)
-                                                .rounding(Rounding::same(6.0));
-                                                if ui
-                                                    .add_enabled(!state.task_running, btn)
-                                                    .on_hover_text("Update")
-                                                    .clicked()
-                                                {
-                                                    *pending_action = Some(AppAction::Update(app.clone()));
-                                                }
-                                            }
-                                            if app.can_launch {
-                                                let btn = egui::Button::new(
-                                                    RichText::new(crate::lucide::PLAY).size(12.0).color(p.success),
-                                                )
-                                                .fill(p.bg_button)
-                                                .rounding(Rounding::same(6.0));
-                                                if ui.add(btn).on_hover_text("Launch").clicked() {
-                                                    *pending_action = Some(AppAction::Launch(app.clone()));
-                                                }
-                                            }
-                                        },
-                                    );
-                                });
-                            })
-                            .response;
-
-                        if resp.interact(egui::Sense::click()).clicked() {
-                            state.selected_key = Some((app.id.clone(), app.source));
-                            *pending_action = Some(AppAction::ResolveDetails(app));
+                        let row_w = ui.available_width();
+                        let (row_rect, _) =
+                            ui.allocate_exact_size(egui::vec2(row_w, ROW_HEIGHT - 2.0), egui::Sense::hover());
+                        if row_bg != Color32::TRANSPARENT {
+                            ui.painter().rect_filled(row_rect, Rounding::same(6.0), row_bg);
                         }
+
+                        // Left info area is clickable to select row (never overlaps action buttons!)
+                        let info_w = (row_w - col_actions_w - 8.0).max(120.0);
+                        let info_rect = egui::Rect::from_min_size(
+                            row_rect.min,
+                            egui::vec2(info_w, row_rect.height()),
+                        );
+                        let info_resp = ui.interact(
+                            info_rect,
+                            egui::Id::new(("app_row_sel", idx_pos)),
+                            egui::Sense::click(),
+                        );
+                        if info_resp.hovered() && !is_selected {
+                            ui.painter().rect_filled(row_rect, Rounding::same(6.0), p.bg_card_hover);
+                        }
+                        if info_resp.clicked() {
+                            state.selected_key = Some((app.id.clone(), app.source));
+                            *pending_action = Some(AppAction::ResolveDetails(app.clone()));
+                        }
+
+                        let mut row_ui = ui.new_child(
+                            egui::UiBuilder::new()
+                                .max_rect(row_rect.shrink2(egui::vec2(4.0, 2.0)))
+                                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                        );
+                        row_ui.spacing_mut().item_spacing.x = 4.0;
+
+                        // Name + Update badge
+                        cell_ui(&mut row_ui, col_name_w, 26.0, false, |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(&app.name).size(12.5).strong().color(p.text_primary),
+                                )
+                                .truncate(),
+                            );
+                            if let Some(ref new_v) = app.update_available {
+                                Frame::none()
+                                    .fill(p.success_subtle)
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(5.0, 1.0))
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            RichText::new(format!("-> {}", new_v))
+                                                .size(10.0)
+                                                .color(p.success),
+                                        );
+                                    });
+                            }
+                        });
+
+                        // Source badge
+                        cell_ui(&mut row_ui, col_source_w, 26.0, false, |ui| {
+                            let (sbg, sfg) = source_badge_colors(app.source, p);
+                            Frame::none()
+                                .fill(sbg)
+                                .rounding(Rounding::same(6.0))
+                                .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new(app.source.label()).size(10.5).color(sfg));
+                                });
+                        });
+
+                        // Version
+                        cell_ui(&mut row_ui, col_ver_w, 26.0, false, |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(&app.version).size(11.5).color(p.text_secondary),
+                                )
+                                .truncate(),
+                            );
+                        });
+
+                        // Size
+                        cell_ui(&mut row_ui, col_size_w, 26.0, false, |ui| {
+                            ui.label(RichText::new(&app.size_display).size(11.5).color(p.text_muted));
+                        });
+
+                        // Installed Date
+                        cell_ui(&mut row_ui, col_date_w, 26.0, false, |ui| {
+                            let d = app.installed_date.as_deref().unwrap_or("—");
+                            ui.label(RichText::new(d).size(11.0).color(p.text_muted));
+                        });
+
+                        // Actions (isolated from row click!)
+                        cell_ui(&mut row_ui, col_actions_w, 26.0, true, |ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            if app.can_uninstall {
+                                let btn = egui::Button::new(
+                                    RichText::new(crate::lucide::TRASH).size(12.0).color(p.danger),
+                                )
+                                .fill(p.bg_button)
+                                .rounding(Rounding::same(6.0));
+                                if ui
+                                    .add_enabled(!state.task_running, btn)
+                                    .on_hover_text("Uninstall")
+                                    .clicked()
+                                {
+                                    state.confirm_uninstall = Some(app.clone());
+                                }
+                            }
+                            if app.can_update {
+                                let btn = egui::Button::new(
+                                    RichText::new(crate::lucide::DOWNLOAD).size(12.0).color(p.accent),
+                                )
+                                .fill(p.bg_button)
+                                .rounding(Rounding::same(6.0));
+                                if ui
+                                    .add_enabled(!state.task_running, btn)
+                                    .on_hover_text("Update")
+                                    .clicked()
+                                {
+                                    *pending_action = Some(AppAction::Update(app.clone()));
+                                }
+                            }
+                            if app.can_launch {
+                                let btn = egui::Button::new(
+                                    RichText::new(crate::lucide::PLAY).size(12.0).color(p.success),
+                                )
+                                .fill(p.bg_button)
+                                .rounding(Rounding::same(6.0));
+                                if ui.add(btn).on_hover_text("Launch").clicked() {
+                                    *pending_action = Some(AppAction::Launch(app.clone()));
+                                }
+                            }
+                        });
                     }
                 });
         });
@@ -453,28 +518,24 @@ fn sort_header(
     } else {
         ""
     };
-    ui.allocate_ui_with_layout(
-        egui::vec2(width, 22.0),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            let btn = egui::Button::new(
-                RichText::new(format!("{}{}", label, arrow))
-                    .size(11.0)
-                    .strong()
-                    .color(if active { p.accent } else { p.text_muted }),
-            )
-            .frame(false);
-            if ui.add(btn).clicked() {
-                if state.sort_col == col {
-                    state.sort_desc = !state.sort_desc;
-                } else {
-                    state.sort_col = col;
-                    state.sort_desc = false;
-                }
-                state.mark_filter_dirty();
+    cell_ui(ui, width, 22.0, false, |ui| {
+        let btn = egui::Button::new(
+            RichText::new(format!("{}{}", label, arrow))
+                .size(11.0)
+                .strong()
+                .color(if active { p.accent } else { p.text_muted }),
+        )
+        .frame(false);
+        if ui.add(btn).clicked() {
+            if state.sort_col == col {
+                state.sort_desc = !state.sort_desc;
+            } else {
+                state.sort_col = col;
+                state.sort_desc = matches!(col, AppSortCol::Size | AppSortCol::InstalledDate);
             }
-        },
-    );
+            state.mark_filter_dirty();
+        }
+    });
 }
 
 fn render_repos_table(state: &AppsManagerState, ui: &mut Ui, p: &ThemePalette, height: f32) {
@@ -496,17 +557,29 @@ fn render_repos_table(state: &AppsManagerState, ui: &mut Ui, p: &ThemePalette, h
         .rounding(Rounding::same(10.0))
         .inner_margin(egui::Margin::symmetric(12.0, 10.0))
         .show(ui, |ui| {
-            ui.set_width(ui.available_width());
+            let inner_w = ui.available_width();
+            ui.set_width(inner_w);
             ui.set_height((height - 20.0).max(100.0));
 
+            let col_name_w = 220.0;
+            let col_src_w = 90.0;
+            let col_stat_w = 90.0;
+            let col_url_w = (inner_w - col_name_w - col_src_w - col_stat_w - 24.0).max(160.0);
+
             ui.horizontal(|ui| {
-                ui.label(RichText::new("ID / Name").size(11.0).strong().color(p.text_muted));
-                ui.add_space(160.0);
-                ui.label(RichText::new("Source").size(11.0).strong().color(p.text_muted));
-                ui.add_space(50.0);
-                ui.label(RichText::new("Status").size(11.0).strong().color(p.text_muted));
-                ui.add_space(50.0);
-                ui.label(RichText::new("URL / Details").size(11.0).strong().color(p.text_muted));
+                ui.spacing_mut().item_spacing.x = 4.0;
+                cell_ui(ui, col_name_w, 22.0, false, |ui| {
+                    ui.label(RichText::new("ID / Name").size(11.0).strong().color(p.text_muted));
+                });
+                cell_ui(ui, col_src_w, 22.0, false, |ui| {
+                    ui.label(RichText::new("Source").size(11.0).strong().color(p.text_muted));
+                });
+                cell_ui(ui, col_stat_w, 22.0, false, |ui| {
+                    ui.label(RichText::new("Status").size(11.0).strong().color(p.text_muted));
+                });
+                cell_ui(ui, col_url_w, 22.0, false, |ui| {
+                    ui.label(RichText::new("URL / Details").size(11.0).strong().color(p.text_muted));
+                });
             });
             ui.separator();
 
@@ -526,57 +599,51 @@ fn render_repos_table(state: &AppsManagerState, ui: &mut Ui, p: &ThemePalette, h
                     for idx in row_range {
                         let repo = filtered[idx];
                         let bg = if idx % 2 == 1 { p.bg_subtle } else { Color32::TRANSPARENT };
-                        Frame::none()
-                            .fill(bg)
-                            .rounding(Rounding::same(6.0))
-                            .inner_margin(egui::Margin::symmetric(6.0, 4.0))
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.allocate_ui_with_layout(
-                                        egui::vec2(210.0, 24.0),
-                                        egui::Layout::left_to_right(egui::Align::Center),
-                                        |ui| {
-                                            ui.add(
-                                                egui::Label::new(
-                                                    RichText::new(&repo.name).size(12.0).strong().color(p.text_primary),
-                                                )
-                                                .truncate(),
-                                            );
-                                        },
-                                    );
-                                    ui.allocate_ui_with_layout(
-                                        egui::vec2(90.0, 24.0),
-                                        egui::Layout::left_to_right(egui::Align::Center),
-                                        |ui| {
-                                            ui.label(RichText::new(&repo.source).size(11.5).color(p.accent));
-                                        },
-                                    );
-                                    ui.allocate_ui_with_layout(
-                                        egui::vec2(85.0, 24.0),
-                                        egui::Layout::left_to_right(egui::Align::Center),
-                                        |ui| {
-                                            let (sbg, sfg, lbl) = if repo.enabled {
-                                                (p.success_subtle, p.success, "Enabled")
-                                            } else {
-                                                (p.danger_subtle, p.danger, "Disabled")
-                                            };
-                                            Frame::none()
-                                                .fill(sbg)
-                                                .rounding(Rounding::same(6.0))
-                                                .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                                .show(ui, |ui| {
-                                                    ui.label(RichText::new(lbl).size(10.5).color(sfg));
-                                                });
-                                        },
-                                    );
-                                    ui.add(
-                                        egui::Label::new(
-                                            RichText::new(&repo.url_or_details).size(11.5).color(p.text_secondary),
-                                        )
-                                        .truncate(),
-                                    );
+                        let row_w = ui.available_width();
+                        let (row_rect, _) =
+                            ui.allocate_exact_size(egui::vec2(row_w, ROW_HEIGHT - 2.0), egui::Sense::hover());
+                        if bg != Color32::TRANSPARENT {
+                            ui.painter().rect_filled(row_rect, Rounding::same(6.0), bg);
+                        }
+                        let mut row_ui = ui.new_child(
+                            egui::UiBuilder::new()
+                                .max_rect(row_rect.shrink2(egui::vec2(4.0, 2.0)))
+                                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                        );
+                        row_ui.spacing_mut().item_spacing.x = 4.0;
+                        cell_ui(&mut row_ui, col_name_w, 26.0, false, |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(&repo.name).size(12.0).strong().color(p.text_primary),
+                                )
+                                .truncate(),
+                            );
+                        });
+                        cell_ui(&mut row_ui, col_src_w, 26.0, false, |ui| {
+                            ui.label(RichText::new(&repo.source).size(11.5).color(p.accent));
+                        });
+                        cell_ui(&mut row_ui, col_stat_w, 26.0, false, |ui| {
+                            let (sbg, sfg, lbl) = if repo.enabled {
+                                (p.success_subtle, p.success, "Enabled")
+                            } else {
+                                (p.danger_subtle, p.danger, "Disabled")
+                            };
+                            Frame::none()
+                                .fill(sbg)
+                                .rounding(Rounding::same(6.0))
+                                .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new(lbl).size(10.5).color(sfg));
                                 });
-                            });
+                        });
+                        cell_ui(&mut row_ui, col_url_w, 26.0, false, |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(&repo.url_or_details).size(11.5).color(p.text_secondary),
+                                )
+                                .truncate(),
+                            );
+                        });
                     }
                 });
         });
@@ -606,71 +673,103 @@ fn render_inspector_panel(
     Frame::none()
         .fill(p.bg_card)
         .rounding(Rounding::same(10.0))
-        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
         .show(ui, |ui| {
-            ui.set_width((width - 24.0).max(200.0));
-            ui.set_height((height - 20.0).max(100.0));
+            let inner_w = (width - 28.0).max(200.0);
+            ui.set_width(inner_w);
+            ui.set_height((height - 24.0).max(120.0));
 
+            // Header bar with app name and close button
+            ui.horizontal(|ui| {
+                ui.set_width(inner_w);
+                ui.add(
+                    egui::Label::new(RichText::new(&app.name).size(15.5).strong().color(p.text_primary))
+                        .truncate(),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new(crate::lucide::X).size(12.0).color(p.text_muted))
+                                .frame(false),
+                        )
+                        .clicked()
+                    {
+                        state.selected_key = None;
+                    }
+                });
+            });
+
+            ui.add_space(4.0);
+            let (sbg, sfg) = source_badge_colors(app.source, p);
+            ui.horizontal_wrapped(|ui| {
+                Frame::none()
+                    .fill(sbg)
+                    .rounding(Rounding::same(6.0))
+                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(app.source.label()).size(10.5).color(sfg));
+                    });
+                ui.label(RichText::new(&app.version).size(11.5).color(p.text_secondary));
+                if !app.size_display.is_empty() && app.size_display != "—" {
+                    ui.label(RichText::new(format!("· {}", app.size_display)).size(11.5).color(p.text_muted));
+                }
+            });
+
+            if let Some(ref new_ver) = app.update_available {
+                ui.add_space(6.0);
+                Frame::none()
+                    .fill(p.success_subtle)
+                    .rounding(Rounding::same(8.0))
+                    .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new(format!("Update available: {}", new_ver))
+                                .size(11.5)
+                                .strong()
+                                .color(p.success),
+                        );
+                    });
+            }
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            let scroll_h = (ui.available_height() - 78.0).max(80.0);
             egui::ScrollArea::vertical()
                 .id_salt("apps_inspector_scroll")
+                .max_height(scroll_h)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::Label::new(RichText::new(&app.name).size(15.0).strong().color(p.text_primary))
-                                .wrap(),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui
-                                .add(egui::Button::new(RichText::new(crate::lucide::X).size(12.0)).frame(false))
-                                .clicked()
-                            {
-                                state.selected_key = None;
-                            }
+                    ui.set_width(inner_w);
+
+                    // Description Card (always shown prominently)
+                    ui.label(RichText::new("Description").size(11.0).strong().color(p.text_muted));
+                    ui.add_space(3.0);
+                    Frame::none()
+                        .fill(p.bg_subtle)
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                        .show(ui, |ui| {
+                            ui.set_width((inner_w - 20.0).max(160.0));
+                            let desc = if app.description.trim().is_empty() {
+                                "No description provided for this package."
+                            } else {
+                                app.description.trim()
+                            };
+                            ui.add(egui::Label::new(RichText::new(desc).size(12.0).color(p.text_primary)).wrap());
                         });
-                    });
-
-                    let (sbg, sfg) = source_badge_colors(app.source, p);
-                    ui.horizontal(|ui| {
-                        Frame::none()
-                            .fill(sbg)
-                            .rounding(Rounding::same(6.0))
-                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                            .show(ui, |ui| {
-                                ui.label(RichText::new(app.source.label()).size(10.5).color(sfg));
-                            });
-                        ui.label(RichText::new(&app.version).size(11.5).color(p.text_secondary));
-                        if !app.size_display.is_empty() && app.size_display != "—" {
-                            ui.label(RichText::new(format!("· {}", app.size_display)).size(11.5).color(p.text_muted));
-                        }
-                    });
-
-                    if let Some(ref new_ver) = app.update_available {
-                        ui.add_space(6.0);
-                        Frame::none()
-                            .fill(p.success_subtle)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                            .show(ui, |ui| {
-                                ui.label(
-                                    RichText::new(format!("Update available: {}", new_ver))
-                                        .size(11.5)
-                                        .strong()
-                                        .color(p.success),
-                                );
-                            });
-                    }
-
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(6.0);
+                    ui.add_space(10.0);
 
                     inspector_field(ui, p, "Package / App ID", &app.id);
+                    inspector_field(
+                        ui,
+                        p,
+                        "Installed Date",
+                        app.installed_date.as_deref().unwrap_or("Unknown"),
+                    );
                     if !app.publisher_or_origin.is_empty() {
                         inspector_field(ui, p, "Origin / Publisher", &app.publisher_or_origin);
-                    }
-                    if !app.description.is_empty() {
-                        inspector_field(ui, p, "Description", &app.description);
                     }
 
                     let loc_text = app
@@ -681,89 +780,100 @@ fn render_inspector_panel(
                     inspector_field(ui, p, "Install Location", loc_text);
 
                     // Data Paths
-                    ui.add_space(4.0);
                     ui.label(RichText::new("App Data Folders").size(11.0).strong().color(p.text_muted));
+                    ui.add_space(2.0);
                     if app.data_paths.is_empty() {
-                        ui.label(RichText::new("No verified user data folders found.").size(11.5).color(p.text_muted));
+                        ui.label(
+                            RichText::new("No verified user data folders found.")
+                                .size(11.5)
+                                .color(p.text_muted),
+                        );
                     } else {
                         for dp in &app.data_paths {
                             let sz = dp.size_bytes.map(format_bytes).unwrap_or_else(|| "…".to_string());
-                            ui.label(
-                                RichText::new(format!("• {} ({}): {}", dp.label, sz, dp.path.display()))
-                                    .size(11.0)
-                                    .color(p.text_secondary),
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(format!("• {} ({}): {}", dp.label, sz, dp.path.display()))
+                                        .size(11.0)
+                                        .color(p.text_secondary),
+                                )
+                                .wrap(),
                             );
                         }
                     }
-
-                    ui.add_space(12.0);
-                    ui.separator();
-                    ui.add_space(8.0);
-
-                    // Action Buttons
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                        if app.can_launch {
-                            let btn = egui::Button::new(
-                                RichText::new(format!("{} Launch", crate::lucide::PLAY)).size(12.0).color(p.accent_text),
-                            )
-                            .fill(p.success)
-                            .rounding(Rounding::same(8.0));
-                            if ui.add(btn).clicked() {
-                                *pending_action = Some(AppAction::Launch(app.clone()));
-                            }
-                        }
-
-                        if app.can_update {
-                            let btn = egui::Button::new(
-                                RichText::new(format!("{} Update", crate::lucide::DOWNLOAD)).size(12.0).color(p.accent_text),
-                            )
-                            .fill(p.accent)
-                            .rounding(Rounding::same(8.0));
-                            if ui.add_enabled(!state.task_running, btn).clicked() {
-                                *pending_action = Some(AppAction::Update(app.clone()));
-                            }
-                        }
-
-                        let has_loc = app.install_location.is_some() || app.desktop_file.is_some();
-                        let open_btn = egui::Button::new(
-                            RichText::new(format!("{} Open Location", crate::lucide::FOLDER_OPEN))
-                                .size(12.0)
-                                .color(p.text_primary),
-                        )
-                        .fill(p.bg_button)
-                        .rounding(Rounding::same(8.0));
-                        if ui.add_enabled(has_loc, open_btn).clicked() {
-                            *pending_action = Some(AppAction::OpenLocation(app.clone()));
-                        }
-
-                        if !app.data_paths.is_empty() {
-                            let clear_btn = egui::Button::new(
-                                RichText::new(format!("{} Clear Data", crate::lucide::LAYERS))
-                                    .size(12.0)
-                                    .color(p.warning),
-                            )
-                            .fill(p.warning_subtle)
-                            .rounding(Rounding::same(8.0));
-                            if ui.add_enabled(!state.task_running, clear_btn).clicked() {
-                                state.confirm_clear_data = Some((app.clone(), ClearDataMode::CacheOnly));
-                            }
-                        }
-
-                        if app.can_uninstall {
-                            let uninst_btn = egui::Button::new(
-                                RichText::new(format!("{} Uninstall", crate::lucide::TRASH))
-                                    .size(12.0)
-                                    .color(p.danger),
-                            )
-                            .fill(p.danger_subtle)
-                            .rounding(Rounding::same(8.0));
-                            if ui.add_enabled(!state.task_running, uninst_btn).clicked() {
-                                state.confirm_uninstall = Some(app.clone());
-                            }
-                        }
-                    });
                 });
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            // Action Buttons pinned at bottom of inspector
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                if app.can_launch {
+                    let btn = egui::Button::new(
+                        RichText::new(format!("{} Launch", crate::lucide::PLAY))
+                            .size(12.0)
+                            .color(p.accent_text),
+                    )
+                    .fill(p.success)
+                    .rounding(Rounding::same(8.0));
+                    if ui.add(btn).clicked() {
+                        *pending_action = Some(AppAction::Launch(app.clone()));
+                    }
+                }
+
+                if app.can_update {
+                    let btn = egui::Button::new(
+                        RichText::new(format!("{} Update", crate::lucide::DOWNLOAD))
+                            .size(12.0)
+                            .color(p.accent_text),
+                    )
+                    .fill(p.accent)
+                    .rounding(Rounding::same(8.0));
+                    if ui.add_enabled(!state.task_running, btn).clicked() {
+                        *pending_action = Some(AppAction::Update(app.clone()));
+                    }
+                }
+
+                let has_loc = app.install_location.is_some() || app.desktop_file.is_some();
+                let open_btn = egui::Button::new(
+                    RichText::new(format!("{} Open Folder", crate::lucide::FOLDER_OPEN))
+                        .size(12.0)
+                        .color(p.text_primary),
+                )
+                .fill(p.bg_button)
+                .rounding(Rounding::same(8.0));
+                if ui.add_enabled(has_loc, open_btn).clicked() {
+                    *pending_action = Some(AppAction::OpenLocation(app.clone()));
+                }
+
+                if !app.data_paths.is_empty() {
+                    let clear_btn = egui::Button::new(
+                        RichText::new(format!("{} Clear Data", crate::lucide::LAYERS))
+                            .size(12.0)
+                            .color(p.warning),
+                    )
+                    .fill(p.warning_subtle)
+                    .rounding(Rounding::same(8.0));
+                    if ui.add_enabled(!state.task_running, clear_btn).clicked() {
+                        state.confirm_clear_data = Some((app.clone(), ClearDataMode::CacheOnly));
+                    }
+                }
+
+                if app.can_uninstall {
+                    let uninst_btn = egui::Button::new(
+                        RichText::new(format!("{} Uninstall", crate::lucide::TRASH))
+                            .size(12.0)
+                            .color(p.danger),
+                    )
+                    .fill(p.danger_subtle)
+                    .rounding(Rounding::same(8.0));
+                    if ui.add_enabled(!state.task_running, uninst_btn).clicked() {
+                        state.confirm_uninstall = Some(app.clone());
+                    }
+                }
+            });
         });
 }
 

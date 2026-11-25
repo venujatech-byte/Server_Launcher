@@ -204,11 +204,25 @@ impl AppsManagerState {
                     id,
                     source,
                     install_location,
+                    description,
+                    installed_date,
+                    installed_timestamp,
                     data_paths,
                 } => {
                     if let Some(app) = self.apps.iter_mut().find(|a| a.id == id && a.source == source) {
                         if install_location.is_some() {
                             app.install_location = install_location;
+                        }
+                        if let Some(desc) = description {
+                            if !desc.is_empty() {
+                                app.description = desc;
+                            }
+                        }
+                        if installed_date.is_some() {
+                            app.installed_date = installed_date;
+                        }
+                        if installed_timestamp.is_some() {
+                            app.installed_timestamp = installed_timestamp;
                         }
                         app.data_paths = data_paths;
                     }
@@ -288,6 +302,10 @@ impl AppsManagerState {
                 AppSortCol::Source => a.source.label().cmp(b.source.label()),
                 AppSortCol::Version => a.version.cmp(&b.version),
                 AppSortCol::Size => a.size_bytes.unwrap_or(0).cmp(&b.size_bytes.unwrap_or(0)),
+                AppSortCol::InstalledDate => a
+                    .installed_timestamp
+                    .unwrap_or(0)
+                    .cmp(&b.installed_timestamp.unwrap_or(0)),
             };
             if desc { ord.reverse() } else { ord }
         });

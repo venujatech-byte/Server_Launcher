@@ -29,7 +29,6 @@ pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePale
         ui.spacing_mut().item_spacing.y = 8.0;
 
         render_top_bar(state, ui, p, &ctx, &mut pending_action);
-        render_filter_and_sort_bar(state, ui, p);
 
         let drawer_h = if state.log_drawer_open { 132.0 } else { 30.0 };
         let main_h = (ui.available_height() - drawer_h - 8.0).max(200.0);
@@ -53,8 +52,8 @@ pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePale
                         },
                     );
                 } else {
-                    let inspector_w = (total_w * 0.30).clamp(280.0, 380.0);
-                    let table_w = (total_w - inspector_w - 1.0).max(300.0);
+                    let inspector_w = (total_w * 0.33).min(380.0);
+                    let table_w = (total_w - inspector_w - 1.0).max(0.0);
 
                     ui.allocate_ui_with_layout(
                         egui::vec2(total_w, main_h),
@@ -136,7 +135,7 @@ fn render_top_bar(
             ui.visuals_mut().widgets.hovered.weak_bg_fill = p.bg_button_hover;
 
             // Row 1: Title + status on left, search + ghost action buttons on right
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(
                     RichText::new("Local Apps & Packages")
                         .size(14.5)
@@ -161,7 +160,7 @@ fn render_top_bar(
                 }
                 ui.label(RichText::new(status_line).size(11.5).color(p.text_muted));
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
 
                     let updatable: Vec<AppEntry> = state
@@ -181,7 +180,7 @@ fn render_top_bar(
                         .fill(p.success)
                         .stroke(Stroke::NONE)
                         .rounding(Rounding::same(6.0));
-                        if ui.add_enabled(!state.task_running, btn).clicked() {
+                        if ui.add_enabled(!state.task_running && !state.loading && !state.checking_updates, btn).clicked() {
                             *pending_action = Some(AppAction::UpdateAll(updatable));
                         }
                     }
@@ -191,7 +190,7 @@ fn render_top_bar(
                         format!("{} Check Updates", crate::lucide::SPARKLES),
                         p.text_secondary,
                         p,
-                        !state.checking_updates && !state.loading,
+                        !state.checking_updates && !state.loading && !state.task_running,
                     )
                     .clicked()
                     {
@@ -203,7 +202,7 @@ fn render_top_bar(
                         format!("{} Refresh", crate::lucide::REFRESH_CW),
                         p.text_secondary,
                         p,
-                        !state.loading,
+                        !state.loading && !state.checking_updates && !state.task_running,
                     )
                     .clicked()
                     {
@@ -258,9 +257,7 @@ fn render_top_bar(
                 });
             });
 
-            ui.add_space(6.0);
-            ui.separator();
-            ui.add_space(4.0);
+            ui.add_space(5.0);
 
             // Row 2: Low-profile segmented filter tabs (no redundant Sort bar)
             ui.horizontal_wrapped(|ui| {
@@ -296,11 +293,6 @@ fn render_top_bar(
         });
 }
 
-fn render_filter_and_sort_bar(_state: &mut AppsManagerState, _ui: &mut Ui, _p: &ThemePalette) {
-    // Filter tabs are now integrated cleanly into Row 2 of the top card;
-    // sorting lives exclusively on the clickable table column headers.
-}
-
 fn cell_ui(ui: &mut Ui, width: f32, height: f32, align_right: bool, add_contents: impl FnOnce(&mut Ui)) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     let layout = if align_right {
@@ -329,16 +321,18 @@ fn render_apps_table(
             ui.set_width(inner_w);
             ui.set_height((height - 16.0).max(120.0));
 
-            let col_source_w = 88.0;
-            let col_ver_w = 130.0;
-            let col_size_w = 72.0;
-            let col_date_w = 84.0;
+            let scale = ((inner_w - 202.0) / 374.0).clamp(0.0, 1.0);
+            let col_source_w = 88.0 * scale;
+            let col_ver_w = 130.0 * scale;
+            let col_size_w = 72.0 * scale;
+            let col_date_w = 84.0 * scale;
             let col_actions_w = 84.0;
-            let col_name_w = (inner_w - col_source_w - col_ver_w - col_size_w - col_date_w - col_actions_w - 24.0)
-                .max(120.0);
+            let col_name_w = (inner_w - col_source_w - col_ver_w - col_size_w - col_date_w - col_actions_w - 38.0)
+                .max(0.0);
 
             // Header row matching File Explorer
-            ui.horizontal(|ui| {
+            Frame::none().fill(p.bg_subtle).rounding(Rounding::same(4.0))
+                .inner_margin(egui::Margin::symmetric(6.0, 0.0)).show(ui, |ui| ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 sort_header(state, ui, p, "Name", AppSortCol::Name, col_name_w);
                 sort_header(state, ui, p, "Source", AppSortCol::Source, col_source_w);
@@ -346,8 +340,7 @@ fn render_apps_table(
                 sort_header(state, ui, p, "Size", AppSortCol::Size, col_size_w);
                 sort_header(state, ui, p, "Installed", AppSortCol::InstalledDate, col_date_w);
                 cell_ui(ui, col_actions_w, 22.0, true, |_ui| {});
-            });
-            ui.separator();
+            }));
 
             let total_rows = state.filtered_indices.len();
             if total_rows == 0 {
@@ -363,12 +356,12 @@ fn render_apps_table(
             }
 
             let scroll_h = ui.available_height().max(80.0);
+            ui.spacing_mut().item_spacing.y = 1.0;
             egui::ScrollArea::vertical()
                 .id_salt("apps_virtual_table")
                 .max_height(scroll_h)
                 .auto_shrink([false, false])
-                .show_rows(ui, ROW_HEIGHT, total_rows, |ui, row_range| {
-                    ui.spacing_mut().item_spacing.y = 1.0;
+                .show_rows(ui, ROW_HEIGHT - 1.0, total_rows, |ui, row_range| {
                     for idx_pos in row_range {
                         let app_idx = state.filtered_indices[idx_pos];
                         let app = state.apps[app_idx].clone();
@@ -396,7 +389,7 @@ fn render_apps_table(
                         );
                         let info_resp = ui.interact(
                             info_rect,
-                            egui::Id::new(("app_row_sel", idx_pos)),
+                            egui::Id::new(("app_row_sel", &app.id, app.source)),
                             egui::Sense::click(),
                         );
                         if info_resp.clicked() {
@@ -448,7 +441,7 @@ fn render_apps_table(
                                     RichText::new(&app.version).size(11.5).color(p.text_secondary),
                                 )
                                 .truncate(),
-                            );
+                            ).on_hover_text(&app.version);
                         });
 
                         // Size
@@ -582,11 +575,12 @@ fn render_repos_table(state: &AppsManagerState, ui: &mut Ui, p: &ThemePalette, h
             }
 
             let scroll_h = ui.available_height().max(80.0);
+            ui.spacing_mut().item_spacing.y = 2.0;
             egui::ScrollArea::vertical()
                 .id_salt("repos_virtual_table")
                 .max_height(scroll_h)
                 .auto_shrink([false, false])
-                .show_rows(ui, ROW_HEIGHT, filtered.len(), |ui, row_range| {
+                .show_rows(ui, ROW_HEIGHT - 2.0, filtered.len(), |ui, row_range| {
                     for idx in row_range {
                         let repo = filtered[idx];
                         let bg = if idx % 2 == 1 { p.bg_subtle } else { Color32::TRANSPARENT };
@@ -723,7 +717,7 @@ fn render_inspector_panel(
             .find(|a| a.id == key.0 && a.source == key.1)
             .cloned()
     });
-    if state.selected_key.is_some() && selected_app.is_none() {
+    if state.selected_key.is_some() && selected_app.is_none() && !state.loading {
         state.selected_key = None;
     }
 
@@ -732,7 +726,7 @@ fn render_inspector_panel(
         .rounding(Rounding::ZERO)
         .inner_margin(egui::Margin::same(16.0))
         .show(ui, |ui| {
-            let inner_w = (width - 32.0).max(200.0);
+            let inner_w = (width - 32.0).max(0.0);
             ui.set_width(inner_w);
             ui.set_height((height - 32.0).max(120.0));
 
@@ -960,7 +954,7 @@ fn render_inspector_panel(
                     .fill(p.accent)
                     .stroke(Stroke::NONE)
                     .rounding(Rounding::same(6.0));
-                    if ui.add_enabled(!state.task_running, btn).clicked() {
+                    if ui.add_enabled(!state.task_running && !state.loading && !state.checking_updates, btn).clicked() {
                         *pending_action = Some(AppAction::Update(app.clone()));
                     }
                 }
@@ -987,7 +981,7 @@ fn render_inspector_panel(
                     .fill(p.warning_subtle)
                     .stroke(Stroke::NONE)
                     .rounding(Rounding::same(6.0));
-                    if ui.add_enabled(!state.task_running, clear_btn).clicked() {
+                    if ui.add_enabled(!state.task_running && !state.loading && !state.checking_updates, clear_btn).clicked() {
                         state.confirm_clear_data = Some((app.clone(), ClearDataMode::CacheOnly));
                     }
                 }
@@ -1001,7 +995,7 @@ fn render_inspector_panel(
                     .fill(p.danger_subtle)
                     .stroke(Stroke::NONE)
                     .rounding(Rounding::same(6.0));
-                    if ui.add_enabled(!state.task_running, uninst_btn).clicked() {
+                    if ui.add_enabled(!state.task_running && !state.loading && !state.checking_updates, uninst_btn).clicked() {
                         state.confirm_uninstall = Some(app.clone());
                     }
                 }

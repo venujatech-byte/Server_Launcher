@@ -74,6 +74,7 @@ impl AppsManagerState {
         self.loading = true;
         self.status_text = "Discovering installed apps & packages…".to_string();
         self.apps.clear();
+        self.filtered_indices.clear();
         self.repos.clear();
         self.resolved_keys.clear();
         self.dirty_filter = true;
@@ -85,7 +86,7 @@ impl AppsManagerState {
     }
 
     pub fn trigger_check_updates(&mut self, ctx: &egui::Context) {
-        if self.checking_updates {
+        if self.checking_updates || self.loading || self.task_running {
             return;
         }
         self.checking_updates = true;
@@ -134,36 +135,40 @@ impl AppsManagerState {
                 }
             }
             AppAction::Update(app) => {
-                if self.task_running {
+                if self.task_running || self.loading || self.checking_updates {
                     return;
                 }
+                self.task_running = true;
                 #[cfg(target_os = "linux")]
                 linux::run_update(app, self.tx.clone(), ctx.clone());
                 #[cfg(target_os = "windows")]
                 windows::run_update(app, self.tx.clone(), ctx.clone());
             }
             AppAction::UpdateAll(apps) => {
-                if self.task_running || apps.is_empty() {
+                if self.task_running || self.loading || self.checking_updates || apps.is_empty() {
                     return;
                 }
+                self.task_running = true;
                 #[cfg(target_os = "linux")]
                 linux::run_update_all(apps, self.tx.clone(), ctx.clone());
                 #[cfg(target_os = "windows")]
                 windows::run_update_all(apps, self.tx.clone(), ctx.clone());
             }
             AppAction::Uninstall(app) => {
-                if self.task_running {
+                if self.task_running || self.loading || self.checking_updates {
                     return;
                 }
+                self.task_running = true;
                 #[cfg(target_os = "linux")]
                 linux::run_uninstall(app, self.tx.clone(), ctx.clone());
                 #[cfg(target_os = "windows")]
                 windows::run_uninstall(app, self.tx.clone(), ctx.clone());
             }
             AppAction::ClearData { app, mode } => {
-                if self.task_running {
+                if self.task_running || self.loading || self.checking_updates {
                     return;
                 }
+                self.task_running = true;
                 #[cfg(target_os = "linux")]
                 linux::run_clear_data(app, mode, self.tx.clone(), ctx.clone());
                 #[cfg(target_os = "windows")]
@@ -195,9 +200,7 @@ impl AppsManagerState {
                 AppsEvent::UpdatesChecked { updates, status } => {
                     self.checking_updates = false;
                     for app in &mut self.apps {
-                        if let Some(new_ver) = updates.get(&app.id) {
-                            app.update_available = Some(new_ver.clone());
-                        }
+                        app.update_available = updates.get(&app.id).cloned();
                     }
                     self.status_text = status;
                     self.dirty_filter = true;
@@ -227,6 +230,7 @@ impl AppsManagerState {
                             app.installed_timestamp = installed_timestamp;
                         }
                         app.data_paths = data_paths;
+                        self.dirty_filter = true;
                     }
                 }
                 AppsEvent::TaskStarted { title } => {

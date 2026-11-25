@@ -10,6 +10,7 @@ pub(super) enum Job {
     List(String),
     Micro(String, bool),
     RunPython(String),
+    RunShell(String),
     Create(String, bool),
     Rename(String, String),
     Paste(Vec<String>, String, bool),
@@ -78,18 +79,22 @@ fn run(host: &SshRemoteHost, job: Job) -> Result<Outcome, String> {
     if let Job::Micro(path, install) = job {
         return open_micro(host, path, install);
     }
-    if let Job::RunPython(path) = job {
-        execute(host, "command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1 || { echo 'Python is not installed on this SSH host.' >&2; exit 127; }", 15)?;
-        let (directory, _) = path.rsplit_once('/').ok_or("Invalid Python file path.")?;
+    if let Job::RunPython(ref path) | Job::RunShell(ref path) = job {
+        let (preferred, fallback, message) = if matches!(job, Job::RunPython(_)) {
+            ("python3", "python", "Started Python in an SSH terminal.")
+        } else {
+            ("bash", "sh", "Started shell script in an SSH terminal.")
+        };
+        let probe = format!("command -v {preferred} >/dev/null 2>&1 || command -v {fallback} >/dev/null 2>&1 || {{ echo 'Neither {preferred} nor {fallback} is installed on this SSH host.' >&2; exit 127; }}");
+        execute(host, &probe, 15)?;
+        let (directory, _) = path.rsplit_once('/').ok_or("Invalid script path.")?;
         let directory = shell_quote(if directory.is_empty() { "/" } else { directory });
-        let file = shell_quote(&path);
-        let command = format!("cd {directory} && if command -v python3 >/dev/null 2>&1; then exec python3 {file}; else exec python {file}; fi");
+        let file = shell_quote(path);
+        let command = format!("cd {directory} && if command -v {preferred} >/dev/null 2>&1; then exec {preferred} {file}; else exec {fallback} {file}; fi");
         let mut host = host.clone();
         host.remote_cwd.clear();
         crate::remote::launch_external_ssh_command(&host, &command)?;
-        return Ok(Outcome::TerminalOpened(
-            "Started Python in an SSH terminal.",
-        ));
+        return Ok(Outcome::TerminalOpened(message));
     }
     let moved = matches!(&job, Job::Paste(_, _, true));
     let command = mutation_command(job)?;
@@ -296,6 +301,10 @@ done"#,
                 require(tool)
             )
         }
-        Job::List(_) | Job::Micro(_, _) | Job::RunPython(_) | Job::Transfer(_) => unreachable!(),
+        Job::List(_)
+        | Job::Micro(_, _)
+        | Job::RunPython(_)
+        | Job::RunShell(_)
+        | Job::Transfer(_) => unreachable!(),
     })
 }

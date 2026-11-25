@@ -9,6 +9,7 @@ enum Action {
     Refresh,
     Open,
     RunPython,
+    RunShell,
     Copy,
     Cut,
     Paste,
@@ -33,6 +34,7 @@ impl Action {
             Self::Refresh => "Refresh",
             Self::Open => "Open",
             Self::RunPython => "Run Python",
+            Self::RunShell => "Run shell script",
             Self::Copy => "Copy",
             Self::Cut => "Cut",
             Self::Paste => "Paste",
@@ -56,7 +58,7 @@ impl Action {
             Self::Up => lucide::ARROW_UP,
             Self::Refresh => lucide::REFRESH_CW,
             Self::Open => lucide::FOLDER_OPEN,
-            Self::RunPython => lucide::PLAY,
+            Self::RunPython | Self::RunShell => lucide::PLAY,
             Self::Copy => lucide::COPY,
             Self::Cut => "✂",
             Self::Paste => lucide::CLIPBOARD,
@@ -73,7 +75,7 @@ impl Action {
 
     fn menu_group(self) -> u8 {
         match self {
-            Self::Open | Self::RunPython | Self::Download => 0,
+            Self::Open | Self::RunPython | Self::RunShell | Self::Download => 0,
             Self::Cut | Self::Copy | Self::Paste | Self::Rename => 1,
             Self::Delete => 2,
             Self::Compress | Self::ExtractHere | Self::ExtractTo => 3,
@@ -100,6 +102,9 @@ impl Action {
                 single.is_some_and(|entry| entry.kind == Kind::Folder || entry.opens_in_micro())
             }
             Self::RunPython => single.is_some_and(Entry::is_python),
+            Self::RunShell => single.is_some_and(|entry| {
+                entry.kind == Kind::File && entry.name.to_ascii_lowercase().ends_with(".sh")
+            }),
             Self::ExtractHere | Self::ExtractTo => {
                 single.is_some_and(|entry| entry.kind == Kind::Archive)
             }
@@ -383,6 +388,9 @@ fn menu(
     ui.visuals_mut().widgets.hovered.weak_bg_fill = p.bg_button_hover;
     let mut previous_group = None;
     for &item in items {
+        if matches!(item, Action::RunPython | Action::RunShell) && !item.enabled(files) {
+            continue;
+        }
         let group = item.menu_group();
         if previous_group.is_some_and(|previous| previous != group) {
             ui.separator();
@@ -694,6 +702,7 @@ fn details(
                                     &[
                                         Open,
                                         RunPython,
+                                        RunShell,
                                         Download,
                                         Cut,
                                         Copy,
@@ -823,6 +832,7 @@ fn activate(files: &mut RemoteFiles, host: &SshRemoteHost, ctx: &egui::Context, 
         ),
         Refresh => Job::List(directory),
         RunPython => Job::RunPython(model::join(&directory, &single())),
+        RunShell => Job::RunShell(model::join(&directory, &single())),
         Open => {
             let name = single();
             let path = model::join(&directory, &name);

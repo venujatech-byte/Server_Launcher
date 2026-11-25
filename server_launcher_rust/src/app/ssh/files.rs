@@ -55,7 +55,10 @@ impl RemoteFiles {
             self.notice = None;
             self.progress = None;
             self.transfer = matches!(job, Job::Transfer(_));
-            self.changing = !matches!(job, Job::List(_) | Job::Micro(_, _) | Job::RunPython(_));
+            self.changing = !matches!(
+                job,
+                Job::List(_) | Job::Micro(_, _) | Job::RunPython(_) | Job::RunShell(_)
+            );
             self.worker = Some(backend::start(host, job, ctx.clone()));
         }
     }

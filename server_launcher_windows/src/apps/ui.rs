@@ -437,7 +437,7 @@ fn render_apps_table(
                             app_icon(ui, state.icons.get(&app_idx), 16.0);
                             ui.add(
                                 egui::Label::new(
-                                    RichText::new(&app.name).size(13.0).color(p.text_primary),
+                                    RichText::new(&app.name).size(11.5).color(p.text_primary),
                                 )
                                 .truncate(),
                             );
@@ -466,7 +466,7 @@ fn render_apps_table(
                         cell_ui(&mut row_ui, col_ver_w, 24.0, false, |ui| {
                             ui.add(
                                 egui::Label::new(
-                                    RichText::new(&app.version).size(12.5).color(p.text_secondary),
+                                    RichText::new(&app.version).size(11.5).color(p.text_secondary),
                                 )
                                 .truncate(),
                             ).hover_tip(&app.version);
@@ -474,13 +474,13 @@ fn render_apps_table(
 
                         // Size
                         cell_ui(&mut row_ui, col_size_w, 24.0, false, |ui| {
-                            ui.label(RichText::new(&app.size_display).size(12.5).color(p.text_muted));
+                            ui.label(RichText::new(&app.size_display).size(11.5).color(p.text_muted));
                         });
 
                         // Installed Date
                         cell_ui(&mut row_ui, col_date_w, 24.0, false, |ui| {
                             let d = app.installed_date.as_deref().unwrap_or("—");
-                            ui.label(RichText::new(d).size(12.5).color(p.text_muted));
+                            ui.label(RichText::new(d).size(11.5).color(p.text_muted));
                         });
 
                         // Minimal borderless ghost icons shown ONLY on row hover or selection

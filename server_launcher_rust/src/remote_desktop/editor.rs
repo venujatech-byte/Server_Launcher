@@ -268,3 +268,37 @@ mod tests {
         assert_eq!(vnc_port(":65535", "::1"), None);
     }
 }
+
+#[derive(Default)]
+pub(crate) struct PasswordDraft {
+    pub value: zeroize::Zeroizing<String>,
+    reveal: bool,
+}
+
+impl PasswordDraft {
+    pub(crate) fn show(&mut self, ui: &mut Ui, reference: &mut Option<String>) {
+        ui.horizontal(|ui| {
+            ui.label("Password");
+            let toggle = if self.reveal { "Hide" } else { "Show" };
+            if ui.small_button(toggle).clicked() {
+                self.reveal = !self.reveal;
+            }
+            if reference.is_some() && ui.small_button("Forget saved password").clicked() {
+                *reference = None;
+            }
+        });
+        let hint = if reference.is_some() {
+            "Leave blank to keep saved password"
+        } else {
+            "Enter password"
+        };
+        let mut output = TextEdit::singleline(&mut *self.value)
+            .password(!self.reveal)
+            .hint_text(hint)
+            .desired_width(f32::INFINITY)
+            .show(ui);
+        // egui keeps an undo copy even in password mode.
+        output.state.clear_undoer();
+        output.state.store(ui.ctx(), output.response.id);
+    }
+}

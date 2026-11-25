@@ -1008,8 +1008,13 @@ impl AddEditModalState {
 pub enum ModalAction {
     SaveServer(ServerConfig, Option<String>),
     DeleteServer(String),
-    SaveSshHost(crate::config::SshRemoteHost, Option<String>),
+    SaveSshHost(
+        crate::config::SshRemoteHost,
+        Option<String>,
+        crate::remote_desktop::credentials::StagedCredentials,
+    ),
     DeleteSshHost(String),
+    NotifyError(String),
     ExecutePaletteAction(PaletteAction),
     None,
 }
@@ -1521,6 +1526,9 @@ enum RemotePcTab {
 pub struct SshHostModalState {
     tab: RemotePcTab,
     vnc_port_text: String,
+    rdp_password: crate::remote_desktop::editor::PasswordDraft,
+    vnc_password: crate::remote_desktop::editor::PasswordDraft,
+    pending_save: Option<std::sync::mpsc::Receiver<RemotePcSaveResult>>,
     pub open: bool,
     pub is_edit: bool,
     pub editing_id: Option<String>,
@@ -1540,9 +1548,46 @@ pub struct SshHostModalState {
     vnc: Option<crate::remote_desktop::profile::VncProfile>,
 }
 
+type RemotePcSaveResult = Result<
+    (crate::config::SshRemoteHost, crate::remote_desktop::credentials::StagedCredentials),
+    String,
+>;
+
 impl SshHostModalState {
+    fn clear_desktop_passwords(&mut self) {
+        self.pending_save = None;
+        self.rdp_password = Default::default();
+        self.vnc_password = Default::default();
+    }
+
+    fn save_desktop_passwords(&mut self, mut host: crate::config::SshRemoteHost, ctx: &Context) {
+        use crate::remote_desktop::credentials::{DesktopProtocol, StagedCredentials};
+        let rdp = std::mem::take(&mut self.rdp_password.value);
+        let vnc = std::mem::take(&mut self.vnc_password.value);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.pending_save = Some(receiver);
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let mut staged = StagedCredentials::default();
+            let result = (|| {
+                if host.rdp.as_ref().is_some_and(|profile| profile.enabled) {
+                    staged.stage(&mut host, DesktopProtocol::Rdp, rdp)
+                        .map_err(|error| format!("RDP password: {error}"))?;
+                }
+                if host.vnc.as_ref().is_some_and(|profile| profile.enabled) {
+                    staged.stage(&mut host, DesktopProtocol::Vnc, vnc)
+                        .map_err(|error| format!("VNC password: {error}"))?;
+                }
+                Ok((host, staged))
+            })();
+            let _ = sender.send(result);
+            ctx.request_repaint();
+        });
+    }
+
     pub fn open_add(&mut self) {
         self.tab = RemotePcTab::General;
+        self.clear_desktop_passwords();
         self.open = true;
         self.is_edit = false;
         self.editing_id = None;
@@ -1565,6 +1610,7 @@ impl SshHostModalState {
 
     pub fn open_edit(&mut self, h: &crate::config::SshRemoteHost) {
         self.tab = RemotePcTab::General;
+        self.clear_desktop_passwords();
         self.open = true;
         self.is_edit = true;
         self.editing_id = Some(h.id.clone());
@@ -1589,12 +1635,14 @@ impl SshHostModalState {
 pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palette: &ThemePalette, timeout_seconds: u32) -> ModalAction {
     if !state.open {
         state.pending_test = None;
+        state.clear_desktop_passwords();
         return ModalAction::None;
     }
 
     if ctx.input(|i| i.key_pressed(Key::Escape)) {
         state.open = false;
         state.pending_test = None;
+        state.clear_desktop_passwords();
         return ModalAction::None;
     }
 
@@ -1609,6 +1657,27 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             state.pending_test = None;
         }
     }
+    if let Some(receiver) = &state.pending_save {
+        use std::sync::mpsc::TryRecvError;
+        match receiver.try_recv() {
+            Ok(Ok((host, staged))) => {
+                state.open = false;
+                state.clear_desktop_passwords();
+                return ModalAction::SaveSshHost(host, state.editing_id.clone(), staged);
+            }
+            Ok(Err(error)) => {
+                state.pending_save = None;
+                return ModalAction::NotifyError(error);
+            }
+            Err(TryRecvError::Disconnected) => {
+                state.pending_save = None;
+                return ModalAction::NotifyError("The credential store request ended unexpectedly.".into());
+            }
+            Err(TryRecvError::Empty) => {}
+        }
+    }
+    let saving = state.pending_save.is_some();
+
     let testing = state.pending_test.is_some();
 
     let mut action = ModalAction::None;
@@ -1662,7 +1731,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                 .max_height((max_h - 145.0).max(80.0))
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    if testing {
+                    if testing || saving {
                         ui.disable();
                     }
                     match state.tab {
@@ -1819,9 +1888,15 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                         }
                         RemotePcTab::Rdp => {
                             crate::remote_desktop::editor::rdp(ui, &mut state.rdp);
+                            if let Some(profile) = state.rdp.as_mut().filter(|profile| profile.enabled) {
+                                state.rdp_password.show(ui, &mut profile.credential_ref);
+                            }
                         }
                         RemotePcTab::Vnc => {
                             crate::remote_desktop::editor::vnc(ui, &mut state.vnc, &mut state.vnc_port_text, &state.host);
+                            if let Some(profile) = state.vnc.as_mut().filter(|profile| profile.enabled) {
+                                state.vnc_password.show(ui, &mut profile.credential_ref);
+                            }
                         }
                     }
                 });
@@ -1847,6 +1922,9 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             } else {
                 None
             };
+            if saving {
+                ui.label("Saving credentials…");
+            }
             if let Some(error) = validation_error {
                 ui.label(RichText::new(error).color(palette.danger));
             }
@@ -1859,7 +1937,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                     .fill(palette.bg_button)
                     .stroke(Stroke::NONE)
                     .rounding(Rounding::same(8.0));
-                if ui.add_enabled(!testing && !state.host.trim().is_empty(), test_btn).clicked() {
+                if ui.add_enabled(!testing && !saving && !state.host.trim().is_empty(), test_btn).clicked() {
                     let port = state.port_str.trim().parse::<u16>().unwrap_or(22);
                     let host_obj = crate::config::SshRemoteHost {
                         id: "test".to_string(),
@@ -1913,7 +1991,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                     if let Some(id_to_del) = state.editing_id.clone() {
                         let del_btn = egui::Button::new(RichText::new("Delete Host").size(11.5).color(palette.danger))
                             .fill(palette.danger_subtle);
-                        if ui.add(del_btn).clicked() {
+                        if ui.add_enabled(!saving, del_btn).clicked() {
                             action = ModalAction::DeleteSshHost(id_to_del);
                             state.open = false;
                         }
@@ -1926,7 +2004,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                         .rounding(Rounding::same(8.0))
                         .min_size(egui::vec2(95.0, 28.0));
 
-                    if ui.add_enabled(!testing && validation_error.is_none(), save_btn).clicked() {
+                    if ui.add_enabled(!testing && !saving && validation_error.is_none(), save_btn).clicked() {
                         let port = state.port_str.trim().parse::<u16>().unwrap_or(22);
                         let name = if state.name.trim().is_empty() {
                             state.host.trim().to_string()
@@ -1958,9 +2036,13 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                             }),
                         };
 
-                        action = ModalAction::SaveSshHost(host_obj, state.editing_id.clone());
-                        state.open = false;
-                        is_open = false;
+                        if state.rdp_password.value.is_empty() && state.vnc_password.value.is_empty() {
+                            action = ModalAction::SaveSshHost(host_obj, state.editing_id.clone(), Default::default());
+                            state.open = false;
+                            is_open = false;
+                        } else {
+                            state.save_desktop_passwords(host_obj, ctx);
+                        }
                     }
 
                     let cancel_btn = egui::Button::new(RichText::new("Cancel").size(12.0).color(palette.text_secondary))
@@ -1981,6 +2063,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
     }
     if !state.open {
         state.pending_test = None;
+        state.clear_desktop_passwords();
     }
     action
 }

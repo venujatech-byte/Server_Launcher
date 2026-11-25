@@ -143,3 +143,31 @@ mod tests {
         assert_eq!(references(&original).count(), 2);
     }
 }
+
+/// References created for a pending save. Cancelled saves remove their staged secrets.
+#[derive(Default)]
+pub(crate) struct StagedCredentials(Vec<String>);
+
+impl StagedCredentials {
+    pub(crate) fn keep(&mut self) {
+        self.0.clear();
+    }
+
+    pub(crate) fn stage(
+        &mut self,
+        host: &mut SshRemoteHost,
+        protocol: DesktopProtocol,
+        password: Zeroizing<String>,
+    ) -> Result<(), String> {
+        if !password.is_empty() {
+            self.0.push(protect(host, protocol, password)?);
+        }
+        Ok(())
+    }
+}
+
+impl Drop for StagedCredentials {
+    fn drop(&mut self) {
+        ssh_credentials::discard(std::mem::take(&mut self.0));
+    }
+}

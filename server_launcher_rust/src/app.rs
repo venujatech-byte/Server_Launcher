@@ -1424,6 +1424,10 @@ impl LauncherApp {
     }
 
     fn persist_config(&mut self) {
+        self.try_persist_config();
+    }
+
+    fn try_persist_config(&mut self) -> bool {
         let mut ssh_hosts = self.ssh_hosts.clone();
         let mut staged_refs = Vec::new();
         for host in &mut ssh_hosts {
@@ -1436,7 +1440,7 @@ impl LauncherApp {
                     Err(error) => {
                         crate::ssh_credentials::discard(staged_refs);
                         self.import_status_msg = Some((format!("Could not protect the SSH password for {}: {error}", host.name), true, Instant::now()));
-                        return;
+                        return false;
                     }
                 }
             }
@@ -1447,6 +1451,7 @@ impl LauncherApp {
             crate::ssh_credentials::discard(staged_refs);
             eprintln!("Configuration save failed: {error}");
             self.import_status_msg = Some((format!("Could not save settings: {error}"), true, Instant::now()));
+            false
         } else {
             let saved_refs = cfg.ssh_hosts.iter().flat_map(crate::remote_desktop::credentials::references).cloned().collect();
             let removed = self.saved_host_credential_refs.difference(&saved_refs).cloned().collect();
@@ -1455,6 +1460,7 @@ impl LauncherApp {
             for (host, stored) in self.ssh_hosts.iter_mut().zip(cfg.ssh_hosts) {
                 host.credential_ref = stored.credential_ref;
             }
+            true
         }
     }
 
@@ -3489,37 +3495,55 @@ impl eframe::App for LauncherApp {
 
         let ssh_modal_action = render_ssh_host_modal(ctx, &mut self.ssh_host_modal, &p, self.ssh_probe_timeouts.connection_test_seconds);
         match ssh_modal_action {
-            ModalAction::SaveSshHost(mut new_host, old_id) => {
-                self.ssh_host_modal.open = false;
-                if let Some(old) = old_id {
-                    if let Some(pos) = self.ssh_hosts.iter().position(|h| h.id == old) {
+            ModalAction::SaveSshHost(mut new_host, old_id, mut staged) => {
+                let previous_hosts = self.ssh_hosts.clone();
+                let mut changed = false;
+                let host_id = new_host.id.clone();
+                if let Some(old) = &old_id {
+                    if let Some(pos) = self.ssh_hosts.iter().position(|host| host.id == *old) {
                         let previous = &self.ssh_hosts[pos];
                         crate::remote_desktop::credentials::retain_matching(previous, &mut new_host);
-                        let host_changed = new_host != *previous;
                         if new_host.password == previous.password
                             && crate::ssh_credentials::binding(&new_host) == crate::ssh_credentials::binding(previous)
                         {
                             new_host.credential_ref.clone_from(&previous.credential_ref);
                         }
-                        if host_changed {
-                            self.cancel_remote_commands(&old);
-                            self.invalidate_remote_host(&old);
-                        }
-                        self.ssh_hosts[pos] = new_host.clone();
-                        self.remote_host_lifetime(&new_host);
-                    }
-                    if self.selected_machine == old {
-                        self.selected_machine = new_host.id.clone();
+                        changed = new_host != *previous;
+                        self.ssh_hosts[pos] = new_host;
+                    } else {
+                        self.import_status_msg = Some(("The host was removed before its settings could be saved.".into(), true, Instant::now()));
+                        ctx.request_repaint();
+                        return;
                     }
                 } else {
-                    self.selected_machine = new_host.id.clone();
                     self.ssh_hosts.push(new_host);
                 }
-                self.persist_config();
+                if self.try_persist_config() {
+                    staged.keep();
+                    if let Some(old) = &old_id {
+                        if changed {
+                            self.cancel_remote_commands(old);
+                            self.invalidate_remote_host(old);
+                            if let Some(host) = self.ssh_hosts.iter().find(|host| host.id == host_id) {
+                                self.remote_host_lifetime(host);
+                            }
+                        }
+                    }
+                    if old_id.as_ref().is_none_or(|old| self.selected_machine == *old) {
+                        self.selected_machine = host_id;
+                    }
+                } else {
+                    self.ssh_hosts = previous_hosts;
+                    self.ssh_host_modal.open = true;
+                }
             }
             ModalAction::DeleteSshHost(id) => {
                 self.ssh_host_modal.open = false;
                 self.delete_ssh_host(&id);
+            }
+            ModalAction::NotifyError(error) => {
+                self.import_status_msg = Some((error, true, Instant::now()));
+                ctx.request_repaint();
             }
             _ => {}
         }

@@ -17,6 +17,21 @@ pub(crate) fn keysym(key: Key) -> Option<u32> {
         Key::ArrowRight => 0xff53,
         Key::ArrowDown => 0xff54,
         Key::Space => 0x20,
+        Key::Colon => b':' as u32,
+        Key::Comma => b',' as u32,
+        Key::Minus => b'-' as u32,
+        Key::Period => b'.' as u32,
+        Key::Plus => b'+' as u32,
+        Key::Equals => b'=' as u32,
+        Key::Semicolon => b';' as u32,
+        Key::Backslash => b'\\' as u32,
+        Key::Slash => b'/' as u32,
+        Key::Pipe => b'|' as u32,
+        Key::Questionmark => b'?' as u32,
+        Key::OpenBracket => b'[' as u32,
+        Key::CloseBracket => b']' as u32,
+        Key::Backtick => b'`' as u32,
+        Key::Quote => b'\'' as u32,
         _ => {
             let name = key.name();
             if let Some(number) = name
@@ -43,5 +58,6 @@ mod tests {
         assert_eq!(keysym(Key::ArrowLeft), Some(0xff51));
         assert_eq!(keysym(Key::Space), Some(0x20));
         assert_eq!(keysym(Key::Num0), Some(b'0'.into()));
+        assert_eq!(keysym(Key::Minus), Some(b'-'.into()));
     }
 }

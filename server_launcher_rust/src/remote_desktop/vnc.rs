@@ -88,6 +88,12 @@ impl Connection {
         state
     }
 
+    pub(crate) fn open_input(&mut self) -> (mpsc::Receiver<Input>, Arc<AtomicBool>) {
+        let (sender, receiver) = mpsc::sync_channel(256);
+        self.input = Some(sender);
+        (receiver, self.input_overflow.clone())
+    }
+
     pub(crate) fn send_input(&self, event: Input) {
         if let Some(input) = &self.input {
             if matches!(input.try_send(event), Err(mpsc::TrySendError::Full(_))) {
@@ -173,12 +179,7 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
     request(&mut stream, size, false)?;
     let writer = Arc::new(Mutex::new(stream.input_socket()?));
     if !profile.view_only {
-        let (input, pending) = mpsc::sync_channel(256);
-        let overflow = {
-            let mut state = state.lock().unwrap();
-            state.input = Some(input);
-            state.input_overflow.clone()
-        };
+        let (pending, overflow) = state.lock().unwrap().open_input();
         let writer = writer.clone();
         std::thread::spawn(move || {
             while let Ok(event) = pending.recv() {

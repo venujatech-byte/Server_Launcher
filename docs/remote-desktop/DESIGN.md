@@ -142,3 +142,11 @@ Initial dimensions are validated before allocating the decoded framebuffer.
 Damage from the graphics stage feeds the common partial texture renderer.
 Reactivation, input, display control, and redirection channels are separate work.
 IronRDP and its blocking adapter are available under MIT or Apache-2.0.
+
+RDP keyboard and pointer events use IronRDP fast-path input on the worker that
+owns the TLS connection. The worker drains a bounded queue between reads.
+A 30 ms read timeout lets input reach an otherwise quiet connection without
+periodic UI repaint requests. The current mapping covers the common PC
+scancodes, three pointer buttons, and both scroll axes. Physical keyboard
+layout mapping, IME, extra buttons, and a full interactive RDP server test
+remain pending.

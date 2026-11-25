@@ -24,7 +24,7 @@ use ironrdp_blocking::Framed;
 use std::{
     io,
     net::{SocketAddr, TcpStream, ToSocketAddrs},
-    sync::{Arc, Mutex},
+    sync::{atomic::Ordering, Arc, Mutex},
     time::{Duration, Instant},
 };
 use x509_cert::der::Decode;
@@ -143,7 +143,7 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
 
     let width = result.desktop_size.width;
     let height = result.desktop_size.height;
-    {
+    let (input, overflow) = {
         let mut shared = state.lock().unwrap();
         shared
             .framebuffer
@@ -156,7 +156,8 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
             "Connected · TLS verified"
         }
         .into();
-    }
+        shared.open_input()
+    };
     ctx.request_repaint();
     let mut image = DecodedImage::new(PixelFormat::RgbA32, width, height);
     let mut stage = ActiveStageBuilder {
@@ -171,8 +172,34 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
     }
     .build();
 
+    framed
+        .get_inner()
+        .0
+        .sock
+        .set_read_timeout(Duration::from_millis(30))?;
+    let mut encoder = super::rdp_input::Encoder::default();
+    let mut events = Vec::with_capacity(64);
     let mut rgba = Vec::new();
     loop {
+        if overflow.load(Ordering::Acquire) {
+            return Err(error(
+                "The RDP input queue is full. The session was closed to release held inputs.",
+            ));
+        }
+        events.clear();
+        for event in input.try_iter().take(32) {
+            encoder.encode(event, &mut events);
+        }
+        if !events.is_empty() {
+            let frames = stage
+                .process_fastpath_input(&mut image, &events)
+                .map_err(|_| error("Could not encode RDP input."))?;
+            for frame in frames {
+                if let ActiveStageOutput::ResponseFrame(bytes) = frame {
+                    framed.write_all(&bytes)?;
+                }
+            }
+        }
         let (action, payload) = match framed.read_pdu() {
             Ok(frame) => frame,
             Err(err)

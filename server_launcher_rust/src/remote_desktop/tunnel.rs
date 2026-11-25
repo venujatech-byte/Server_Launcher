@@ -161,6 +161,7 @@ pub(crate) trait InputSocket: Write + Send {
 
 pub(crate) trait DesktopStream: Read + Write + Sync {
     fn input_socket(&self) -> io::Result<Box<dyn InputSocket>>;
+    fn set_read_timeout(&self, timeout: Duration) -> io::Result<()>;
 }
 
 impl InputSocket for std::net::TcpStream {
@@ -170,6 +171,10 @@ impl InputSocket for std::net::TcpStream {
 }
 
 impl DesktopStream for std::net::TcpStream {
+    fn set_read_timeout(&self, timeout: Duration) -> io::Result<()> {
+        std::net::TcpStream::set_read_timeout(self, Some(timeout))
+    }
+
     fn input_socket(&self) -> io::Result<Box<dyn InputSocket>> {
         Ok(Box::new(self.try_clone()?))
     }
@@ -184,6 +189,10 @@ impl InputSocket for UnixStream {
 
 #[cfg(unix)]
 impl DesktopStream for Tunnel {
+    fn set_read_timeout(&self, timeout: Duration) -> io::Result<()> {
+        self.stream.set_read_timeout(Some(timeout))
+    }
+
     fn input_socket(&self) -> io::Result<Box<dyn InputSocket>> {
         Ok(Box::new(self.stream.try_clone()?))
     }

@@ -401,6 +401,7 @@ fn render_apps_table(
                         );
                         if info_resp.clicked() {
                             state.selected_key = Some((app.id.clone(), app.source));
+                            state.inspector_scroll_to_top = true;
                             *pending_action = Some(AppAction::ResolveDetails(app.clone()));
                         }
 
@@ -795,15 +796,20 @@ fn render_inspector_panel(
             }
 
             ui.add_space(10.0);
-            ui.separator();
-            ui.add_space(8.0);
+            let (sep_rect, _) = ui.allocate_exact_size(egui::vec2(inner_w, 1.0), egui::Sense::hover());
+            ui.painter().rect_filled(sep_rect, Rounding::ZERO, p.bg_button);
+            ui.add_space(10.0);
 
-            let scroll_h = (ui.available_height() - 82.0).max(80.0);
-            egui::ScrollArea::vertical()
+            let actions_reserve = 78.0;
+            let scroll_h = (ui.available_height() - actions_reserve).max(80.0);
+            let mut scroll = egui::ScrollArea::vertical()
                 .id_salt("apps_inspector_scroll")
                 .max_height(scroll_h)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
+                .auto_shrink([false, false]);
+            if std::mem::take(&mut state.inspector_scroll_to_top) {
+                scroll = scroll.vertical_scroll_offset(0.0);
+            }
+            scroll.show(ui, |ui| {
                     ui.set_width(inner_w);
 
                     // Description Section
@@ -909,20 +915,23 @@ fn render_inspector_panel(
                 });
 
             ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(6.0);
+            let (sep2_rect, _) = ui.allocate_exact_size(egui::vec2(inner_w, 1.0), egui::Sense::hover());
+            ui.painter().rect_filled(sep2_rect, Rounding::ZERO, p.bg_button);
+            ui.add_space(8.0);
 
             // Action Buttons pinned at bottom of inspector
+            ui.spacing_mut().button_padding = egui::vec2(10.0, 5.0);
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
                 if app.can_launch {
                     let btn = egui::Button::new(
                         RichText::new(format!("{} Launch", crate::lucide::PLAY))
-                            .size(12.0)
+                            .size(11.5)
                             .color(p.accent_text),
                     )
                     .fill(p.success)
-                    .rounding(Rounding::same(8.0));
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding::same(6.0));
                     if ui.add(btn).clicked() {
                         *pending_action = Some(AppAction::Launch(app.clone()));
                     }
@@ -931,11 +940,12 @@ fn render_inspector_panel(
                 if app.can_update {
                     let btn = egui::Button::new(
                         RichText::new(format!("{} Update", crate::lucide::DOWNLOAD))
-                            .size(12.0)
+                            .size(11.5)
                             .color(p.accent_text),
                     )
                     .fill(p.accent)
-                    .rounding(Rounding::same(8.0));
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding::same(6.0));
                     if ui.add_enabled(!state.task_running, btn).clicked() {
                         *pending_action = Some(AppAction::Update(app.clone()));
                     }
@@ -944,11 +954,12 @@ fn render_inspector_panel(
                 let has_loc = app.install_location.is_some() || app.desktop_file.is_some();
                 let open_btn = egui::Button::new(
                     RichText::new(format!("{} Open Folder", crate::lucide::FOLDER_OPEN))
-                        .size(12.0)
+                        .size(11.5)
                         .color(p.text_primary),
                 )
                 .fill(p.bg_button)
-                .rounding(Rounding::same(8.0));
+                .stroke(Stroke::NONE)
+                .rounding(Rounding::same(6.0));
                 if ui.add_enabled(has_loc, open_btn).clicked() {
                     *pending_action = Some(AppAction::OpenLocation(app.clone()));
                 }
@@ -956,11 +967,12 @@ fn render_inspector_panel(
                 if !app.data_paths.is_empty() {
                     let clear_btn = egui::Button::new(
                         RichText::new(format!("{} Clear Data", crate::lucide::LAYERS))
-                            .size(12.0)
+                            .size(11.5)
                             .color(p.warning),
                     )
                     .fill(p.warning_subtle)
-                    .rounding(Rounding::same(8.0));
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding::same(6.0));
                     if ui.add_enabled(!state.task_running, clear_btn).clicked() {
                         state.confirm_clear_data = Some((app.clone(), ClearDataMode::CacheOnly));
                     }
@@ -969,11 +981,12 @@ fn render_inspector_panel(
                 if app.can_uninstall {
                     let uninst_btn = egui::Button::new(
                         RichText::new(format!("{} Uninstall", crate::lucide::TRASH))
-                            .size(12.0)
+                            .size(11.5)
                             .color(p.danger),
                     )
                     .fill(p.danger_subtle)
-                    .rounding(Rounding::same(8.0));
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding::same(6.0));
                     if ui.add_enabled(!state.task_running, uninst_btn).clicked() {
                         state.confirm_uninstall = Some(app.clone());
                     }

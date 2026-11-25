@@ -668,6 +668,7 @@ pub struct LauncherApp {
 
     // Import status notification: (message, is_error, timestamp)
     pub import_status_msg: Option<(String, bool, Instant)>,
+    notified_ssh_error: Option<(String, String)>,
 
     // Settings window open state
     pub settings_modal_open: bool,
@@ -1029,6 +1030,7 @@ impl LauncherApp {
             sudo_popup: SudoPopupState::default(),
             local_sudo_password: String::new(),
             import_status_msg: credential_warning,
+            notified_ssh_error: None,
             settings_modal_open: false,
 
             proc_properties_modal_open: false,
@@ -2854,6 +2856,22 @@ impl eframe::App for LauncherApp {
                             (s, c)
                         };
 
+                        if let (false, Some(Err(error))) = (is_connecting, status.as_ref()) {
+                            let already_notified = self.notified_ssh_error.as_ref().is_some_and(
+                                |(id, previous)| id == &host.id && previous == error,
+                            );
+                            if !already_notified {
+                                self.notified_ssh_error = Some((host.id.clone(), error.clone()));
+                                self.import_status_msg = Some((
+                                    format!("SSH connection to {} failed: {error}", host.name),
+                                    true,
+                                    Instant::now(),
+                                ));
+                            }
+                        } else {
+                            self.notified_ssh_error = None;
+                        }
+
                         ui.vertical(|ui| {
                             ui.horizontal(|ui| {
                                 let name_width = ui.available_width().min(220.0);
@@ -2887,23 +2905,14 @@ impl eframe::App for LauncherApp {
                                             );
                                             badge_lbl.hover_tip(format!("Online: {}", info));
                                         });
-                                } else if let Some(Err(ref err)) = status {
+                                } else if matches!(status, Some(Err(_))) {
                                     Frame::none()
                                         .fill(p.danger_subtle)
                                         .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(999.0))
                                         .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                         .show(ui, |ui| {
-                                            let err_chars = err.chars().count();
-                                            let err_short = if err_chars > 24 {
-                                                format!("{}...", err.chars().take(21).collect::<String>())
-                                            } else {
-                                                err.clone()
-                                            };
-                                            let badge_lbl = ui.label(
-                                                RichText::new(format!("● Error: {}", err_short)).size(10.0).color(p.danger),
-                                            );
-                                            badge_lbl.hover_tip(format!("Connection Error:\n{}", err));
+                                            ui.label(RichText::new("○ Offline").size(10.0).color(p.danger));
                                         });
                                 } else {
                                     Frame::none()

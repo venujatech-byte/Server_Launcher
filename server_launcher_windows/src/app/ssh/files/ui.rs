@@ -229,16 +229,6 @@ pub(super) fn explorer(
                 });
             });
 
-        if let Some((message, true)) = &files.notice {
-            ui.add_space(6.0);
-            Frame::none()
-                .fill(p.danger_subtle)
-                .rounding(Rounding::same(6.0))
-                .inner_margin(egui::Margin::same(8.0))
-                .show(ui, |ui| {
-                    ui.label(RichText::new(message.trim()).size(11.0).color(p.danger));
-                });
-        }
         ui.add_space(8.0);
         details(ui, id, focus, p, files, &mut action);
         if ui.is_enabled() && files.directory().is_some() && files.worker.is_none() {
@@ -301,6 +291,42 @@ pub(super) fn explorer(
         files.start(host, &ctx, Job::List(path));
     } else if let Some(action) = action.filter(|item| item.enabled(files)) {
         activate(files, host, &ctx, action);
+    }
+    if files.prompt.is_none() {
+        let mut open = true;
+        let mut dismissed = false;
+        if let Some((message, true)) = &files.notice {
+            egui::Window::new("File operation failed")
+                .id(id.with("operation_error"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(&ctx, |ui| {
+                    ui.set_width(360.0);
+                    egui::ScrollArea::vertical()
+                        .max_height(180.0)
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new(message.trim())
+                                    .size(12.0)
+                                    .color(p.text_secondary),
+                            );
+                        });
+                    ui.add_space(8.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Dismiss").clicked()
+                            || ui.input(|input| input.key_pressed(egui::Key::Escape))
+                        {
+                            dismissed = true;
+                        }
+                    });
+                });
+            if !open || dismissed {
+                // A failed initial listing must wait for an explicit refresh.
+                files.notice = Some((String::new(), false));
+            }
+        }
     }
     prompt(&ctx, id, files, host, p);
 }
@@ -1163,7 +1189,11 @@ fn status(ui: &mut Ui, p: &ThemePalette, files: &mut RemoteFiles) {
                     .cancel
                     .store(true, std::sync::atomic::Ordering::Relaxed);
             }
-        } else if let Some((message, false)) = &files.notice {
+        } else if let Some((message, false)) = files
+            .notice
+            .as_ref()
+            .filter(|(message, _)| !message.is_empty())
+        {
             ui.separator();
             ui.label(RichText::new(message).size(11.0).color(p.text_secondary));
         }

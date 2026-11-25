@@ -934,20 +934,22 @@ fn prompt(
     let mut dismiss = false;
     let mut submit = false;
     let destructive = matches!(prompt, Prompt::Delete(_));
+    let compact = destructive || matches!(prompt, Prompt::RunShell(_));
     egui::Window::new(title)
+        .default_height(0.0)
         .title_bar(false)
         .frame(
             Frame::window(&ctx.style())
                 .fill(p.bg_card)
                 .rounding(Rounding::same(12.0))
-                .inner_margin(egui::Margin::same(16.0)),
+                .inner_margin(egui::Margin::same(if compact { 12.0 } else { 16.0 })),
         )
         .id(id.with("prompt"))
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ctx, |ui| {
-            ui.set_width(350.0);
+            ui.set_width(if destructive { 260.0 } else if compact { 280.0 } else { 350.0 });
             ui.horizontal(|ui| {
                 if destructive {
                     ui.label(RichText::new(lucide::TRASH).size(16.0).color(p.danger));
@@ -959,18 +961,18 @@ fn prompt(
                         .color(p.text_primary),
                 );
             });
-            ui.add_space(8.0);
+            ui.add_space(if compact { 4.0 } else { 8.0 });
             if let Prompt::RunShell(path) = &prompt {
                 ui.label(
                     RichText::new(path.escape_debug().to_string())
                         .size(11.5)
                         .monospace(),
                 );
-                ui.label("Enter one argument per line. Leave blank to run without arguments.");
+                ui.label(RichText::new("One argument per line. Leave blank for none.").size(11.5).color(p.text_secondary));
                 ui.add(
                     egui::TextEdit::multiline(&mut files.name)
                         .hint_text("Service name\nOptional Python path")
-                        .desired_rows(3)
+                        .desired_rows(2)
                         .desired_width(ui.available_width()),
                 );
             } else if let Prompt::InstallMicro(path) = &prompt {
@@ -980,21 +982,21 @@ fn prompt(
             } else if let Prompt::Delete(paths) = &prompt {
                 ui.label(
                     RichText::new(format!(
-                        "Remove {} item(s) from the remote host? This cannot be undone.",
+                        "Delete {} remote item(s) permanently?",
                         paths.len()
                     ))
                     .size(11.5)
                     .color(p.text_secondary),
                 );
-                ui.add_space(6.0);
+                ui.add_space(4.0);
                 Frame::none()
                     .fill(p.bg_input)
                     .rounding(Rounding::same(6.0))
-                    .inner_margin(egui::Margin::same(8.0))
+                    .inner_margin(egui::Margin::same(6.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         egui::ScrollArea::vertical()
-                            .max_height(140.0)
+                            .max_height(84.0)
                             .show(ui, |ui| {
                                 for path in paths {
                                     let name = path.rsplit('/').next().unwrap_or(path);
@@ -1027,8 +1029,8 @@ fn prompt(
                         });
                 }
             }
-            ui.add_space(12.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_space(if compact { 8.0 } else { 12.0 });
+            ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 26.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 submit = ui
                     .add_enabled(
                         destructive

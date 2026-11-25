@@ -93,3 +93,10 @@ incremental request on X11. Production VNC authentication, secure tunneling,
 input, and additional encodings still need implementation. This milestone
 accepts only an explicitly configured direct private endpoint and refuses
 connections that would ignore configured credentials.
+
+Classic VNC password negotiation uses the [RFB security handshake](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.2.2)
+and [RustCrypto DES 0.8.1](https://docs.rs/des/0.8.1/des/) with its zeroize feature.
+DES is used only for this legacy challenge response. The session itself is
+unencrypted on a direct connection, and public endpoints remain blocked.
+A configured password requires VNC authentication and rules out unauthenticated
+negotiation. Username-based security modes need a separate implementation.

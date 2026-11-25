@@ -19,6 +19,7 @@ rfd = "0.15"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 tauri = "2"
 zeroize = "1.9.0"
+des = { version = "0.8.1", features = ["zeroize"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

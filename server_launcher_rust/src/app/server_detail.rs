@@ -39,7 +39,7 @@ impl LauncherApp {
                     ..Default::default()
                 });
                 let response = ui.push_id("tab_overview", |ui| render_notebook_tab(ui, label, tab_width, overview_active, &p))
-                    .inner.on_hover_text(format!("Overview · {online_count} running · {total_count} configured"));
+                    .inner.hover_tip(format!("Overview · {online_count} running · {total_count} configured"));
                 if response.clicked() { to_switch_tab = Some("overview".to_string()); }
 
                 for server in &ordered {
@@ -65,7 +65,7 @@ impl LauncherApp {
                         ..Default::default()
                     });
                     let response = ui.push_id(("server_tab", &server.config.key), |ui| render_notebook_tab(ui, label, tab_width, active, &p))
-                        .inner.on_hover_text(format!("{} · {}\nDrag to reorder", server.config.name, state));
+                        .inner.hover_tip(format!("{} · {}\nDrag to reorder", server.config.name, state));
                     response.dnd_set_drag_payload(ServerTabDrag { key: server.config.key.clone() });
                     if let Some(payload) = response.dnd_hover_payload::<ServerTabDrag>() {
                         if payload.key != server.config.key {
@@ -214,7 +214,7 @@ impl LauncherApp {
                         .fill(if search_is_open { p.accent.gamma_multiply(0.25) } else { p.bg_button })
                         .stroke(Stroke::NONE)
                         .rounding(Rounding::same(4.0));
-                        if ui.add(find_btn).on_hover_text("Find in output · Ctrl+F").clicked() {
+                        if ui.add(find_btn).hover_tip("Find in output · Ctrl+F").clicked() {
                             self.search_open.insert(key.to_string(), !search_is_open);
                         }
                         if is_running {
@@ -251,9 +251,9 @@ impl LauncherApp {
                                 for (label, tooltip, copy) in &metrics {
                                     if let Some(address) = copy {
                                         if ui.add(egui::Button::new(label.clone()).small().frame(false))
-                                            .on_hover_text(tooltip).clicked() { ui.ctx().copy_text(address.clone()); }
+                                            .hover_tip(tooltip).clicked() { ui.ctx().copy_text(address.clone()); }
                                     } else {
-                                        ui.add(egui::Label::new(label.clone())).on_hover_text(tooltip);
+                                        ui.add(egui::Label::new(label.clone())).hover_tip(tooltip);
                                     }
                                 }
                             };
@@ -262,7 +262,7 @@ impl LauncherApp {
                                 ui.allocate_ui_with_layout(egui::vec2(metrics_width, 22.0), egui::Layout::left_to_right(egui::Align::Center), render_metrics);
                             } else {
                                 ui.menu_button(RichText::new(format!("{} Stats", crate::lucide::ACTIVITY)).size(10.5), render_metrics)
-                                    .response.on_hover_text("Show port, CPU, memory and uptime");
+                                    .response.hover_tip("Show port, CPU, memory and uptime");
                             }
                         }
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -273,7 +273,7 @@ impl LauncherApp {
                             title.append(&format!("  {status_label}"), 0.0, egui::TextFormat {
                                 font_id: egui::FontId::proportional(10.5), color: status_color, ..Default::default()
                             });
-                            ui.add(egui::Label::new(title).truncate()).on_hover_text(format!("{name} · {status_label}\nWorking directory: {cwd}"));
+                            ui.add(egui::Label::new(title).truncate()).hover_tip(format!("{name} · {status_label}\nWorking directory: {cwd}"));
                         });
                     });
                 });
@@ -293,7 +293,7 @@ impl LauncherApp {
                             .fill(p.bg_button)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(4.0));
-                            if ui.add(vscode_btn).on_hover_text("Open working directory in VS Code (code .)").clicked() {
+                            if ui.add(vscode_btn).hover_tip("Open working directory in VS Code (code .)").clicked() {
                                 let cwd = self.find_service(key).map(|s| s.config.cwd.clone()).unwrap_or_default();
                                 crate::service::open_in_vscode(&cwd);
                             }
@@ -306,7 +306,7 @@ impl LauncherApp {
                             .fill(p.bg_button)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(4.0));
-                            if ui.add(folder_btn).on_hover_text("Open working directory in file manager (xdg-open)").clicked() {
+                            if ui.add(folder_btn).hover_tip("Open working directory in file manager (xdg-open)").clicked() {
                                 let cwd = self.find_service(key).map(|s| s.config.cwd.clone()).unwrap_or_default();
                                 crate::service::open_folder(&cwd);
                             }
@@ -319,7 +319,7 @@ impl LauncherApp {
                             .fill(p.bg_button)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(4.0));
-                            if ui.add(console_btn).on_hover_text("Open interactive console / terminal window in working directory").clicked() {
+                            if ui.add(console_btn).hover_tip("Open interactive console / terminal window in working directory").clicked() {
                                 if let Some(s) = self.find_service(key) {
                                     s.open_console();
                                 }
@@ -331,7 +331,7 @@ impl LauncherApp {
                             if ui.checkbox(
                                 &mut auto_scroll,
                                 RichText::new("Auto-scroll").size(11.0).color(p.text_secondary),
-                            ).on_hover_text("Keep pinned to bottom when new logs arrive (uncheck to scroll up smoothly without jitter)").changed() {
+                            ).hover_tip("Keep pinned to bottom when new logs arrive (uncheck to scroll up smoothly without jitter)").changed() {
                                 self.auto_scroll.insert(key.to_string(), auto_scroll);
                             }
 
@@ -339,7 +339,7 @@ impl LauncherApp {
                             if ui.checkbox(
                                 &mut autostart,
                                 RichText::new("Autostart").size(11.0).color(p.text_secondary),
-                            ).on_hover_text("Automatically start this server when Server Launcher opens").changed() {
+                            ).hover_tip("Automatically start this server when Server Launcher opens").changed() {
                                 if let Some(s) = self.find_service_mut(key) {
                                     s.config.autostart = autostart;
                                     self.persist_config();
@@ -350,7 +350,7 @@ impl LauncherApp {
                             if ui.checkbox(
                                 &mut auto_restart,
                                 RichText::new("Auto-restart").size(11.0).color(p.text_secondary),
-                            ).on_hover_text("Auto-restart this server if it exits unexpectedly or crashes").changed() {
+                            ).hover_tip("Auto-restart this server if it exits unexpectedly or crashes").changed() {
                                 if let Some(s) = self.find_service_mut(key) {
                                     s.config.auto_restart = auto_restart;
                                     self.persist_config();
@@ -723,7 +723,7 @@ impl LauncherApp {
                 let edit_resp = ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     ui.label(RichText::new(">").monospace().color(p.accent).size(12.0))
-                        .on_hover_text(format!("Working directory: {cwd}"));
+                        .hover_tip(format!("Working directory: {cwd}"));
                     if is_running {
                         ui.menu_button(RichText::new(crate::lucide::ZAP).size(11.0).color(p.text_secondary), |ui| {
                             for (label, command, tip) in [
@@ -734,34 +734,34 @@ impl LauncherApp {
                                 ("Clear console (c)", "c", "Clear the dev server console"),
                                 ("Quit (q)", "q", "Quit the dev server"),
                             ] {
-                                if ui.button(label).on_hover_text(tip).clicked() {
+                                if ui.button(label).hover_tip(tip).clicked() {
                                     if let Some(server) = self.find_service(key) { server.send_input(command); }
                                     ui.close_menu();
                                 }
                             }
-                        }).response.on_hover_text("Dev server shortcuts");
+                        }).response.hover_tip("Dev server shortcuts");
                     }
                     let hint = if is_running { "Send input… · / commands" } else { "Run a command… · / commands" };
                     let input_width = (ui.available_width() - 48.0 - 3.0 * 24.0 - 4.0 * ui.spacing().item_spacing.x).max(48.0);
                     let edit_resp = ui.add_sized([input_width, 24.0], egui::TextEdit::singleline(&mut input_val)
                         .font(egui::FontId::monospace(11.5)).hint_text(hint).desired_width(input_width))
-                        .on_hover_text("Enter to submit · Type / for available commands");
+                        .hover_tip("Enter to submit · Type / for available commands");
                     if edit_resp.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) { do_send = true; }
                     if ui.add_enabled(!input_val.trim().is_empty(), egui::Button::new(RichText::new("Send").size(11.0).color(p.accent_text))
                         .fill(p.accent).rounding(Rounding::same(4.0)).min_size(egui::vec2(48.0, 24.0))).clicked() { do_send = true; }
                     if ui.add_enabled(pid.is_some() || is_running, egui::Button::new(RichText::new(crate::lucide::STOP).size(11.0).color(Color32::WHITE))
                         .fill(p.danger).rounding(Rounding::same(4.0)).min_size(egui::vec2(24.0, 24.0)))
-                        .on_hover_text("Send Ctrl+C to the server").clicked() {
+                        .hover_tip("Send Ctrl+C to the server").clicked() {
                         if let Some(server) = self.find_service(key) { server.send_interrupt(); }
                     }
                     if ui.add_enabled(!logs_vec.is_empty(), egui::Button::new(RichText::new(crate::lucide::TRASH).size(11.0).color(p.text_secondary))
                         .fill(p.bg_button).rounding(Rounding::same(4.0)).min_size(egui::vec2(24.0, 24.0)))
-                        .on_hover_text("Clear output").clicked() {
+                        .hover_tip("Clear output").clicked() {
                         if let Some(server) = self.find_service(key) { server.clear_logs(); }
                     }
                     if ui.add_sized([24.0, 24.0], egui::Button::new(RichText::new(crate::lucide::EXTERNAL_LINK).size(11.0).color(p.text_secondary))
                         .fill(p.bg_button).rounding(Rounding::same(4.0)))
-                        .on_hover_text("Open external console").clicked() {
+                        .hover_tip("Open external console").clicked() {
                         if let Some(server) = self.find_service(key) { server.open_console(); }
                     }
                     edit_resp

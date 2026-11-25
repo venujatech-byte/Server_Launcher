@@ -55,7 +55,7 @@ impl LauncherApp {
                 ui.painter().circle_filled(dot_center, 2.5, p.success);
             }
 
-            if local_resp.on_hover_ui(|ui| { ui.label(RichText::new(local_tooltip).size(11.0)); }).clicked() {
+            if local_resp.hover_tip(local_tooltip).clicked() {
                 self.selected_machine = "local".to_string();
             }
 
@@ -118,7 +118,7 @@ impl LauncherApp {
                             ui.painter().circle_filled(dot_center, 4.0, p.bg_machines_nav);
                             ui.painter().circle_filled(dot_center, 2.5, status_color);
 
-                            let host_resp = host_resp.on_hover_ui(|ui| { ui.label(RichText::new(host_tooltip).size(11.0)); });
+                            let host_resp = host_resp.hover_tip(host_tooltip);
                             if host_resp.clicked() {
                                 self.selected_machine = host.id.clone();
                             }
@@ -187,7 +187,7 @@ impl LauncherApp {
                             let dot_col = if adb_dev.is_wireless { p.accent_light } else { p.success };
                             ui.painter().circle_filled(dot_center, 2.5, dot_col);
 
-                            let dev_resp = dev_resp.on_hover_ui(|ui| { ui.label(RichText::new(adb_tooltip).size(11.0)); });
+                            let dev_resp = dev_resp.hover_tip(adb_tooltip);
                             if dev_resp.clicked() {
                                 self.selected_machine = adb_dev.id.clone();
                             }
@@ -226,7 +226,7 @@ impl LauncherApp {
                             egui::FontId::proportional(17.0),
                             if add_resp.hovered() { p.accent } else { p.text_muted },
                         );
-                        if add_resp.on_hover_text("Add Device (SSH Remote PC or Android ADB)").clicked() {
+                        if add_resp.hover_tip("Add Device (SSH Remote PC or Android ADB)").clicked() {
                             self.add_device_selector_modal_open = true;
                         }
 
@@ -244,7 +244,7 @@ impl LauncherApp {
                             egui::FontId::proportional(14.0),
                             if imp_resp.hovered() { p.accent } else { p.text_muted },
                         );
-                        if imp_resp.on_hover_text("Import hosts from ~/.ssh/config").clicked() {
+                        if imp_resp.hover_tip("Import hosts from ~/.ssh/config").clicked() {
                             let imported = import_from_ssh_config();
                             let mut added = 0;
                             for inh in imported {
@@ -361,7 +361,7 @@ impl LauncherApp {
                         .wrap_mode(egui::TextWrapMode::Truncate);
 
                         let (rect, _) = ui.allocate_exact_size(egui::vec2(tab_width, 26.0), egui::Sense::hover());
-                        if ui.put(rect, btn).on_hover_text(label).clicked() {
+                        if ui.put(rect, btn).hover_tip(label).clicked() {
                             self.active_sidebar_tab = tab;
                             if tab == SidebarTab::Commands {
                                 if self.selected_machine == "local" {

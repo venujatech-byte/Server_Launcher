@@ -48,7 +48,7 @@ impl LauncherApp {
                             ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(accent));
                             let host_name = self.host_display_name(host_id);
                             ui.add(egui::Label::new(RichText::new(&host_name).size(11.5).strong().color(p.text_primary)).truncate())
-                                .on_hover_text(host_name);
+                                .hover_tip(host_name);
 
                             // CPU brief info (clean up "(R)", "(TM)", "CPU" to keep it concise)
                             if ui.available_width() > 140.0 {
@@ -92,7 +92,7 @@ impl LauncherApp {
                             if total_disk > 0 && ui.available_width() > 70.0 {
                                 ui.label(RichText::new("│").size(10.0).color(p.border));
                                 ui.label(RichText::new(format!("{} {}", crate::lucide::STORAGE, crate::sensors::format_bytes(total_disk))).size(10.0).color(p.text_secondary))
-                                    .on_hover_text(if phys_disk > 0 { "Installed physical storage capacity" } else { "Mounted filesystem capacity" });
+                                    .hover_tip(if phys_disk > 0 { "Installed physical storage capacity" } else { "Mounted filesystem capacity" });
                             }
 
                             // System Uptime
@@ -112,7 +112,7 @@ impl LauncherApp {
                             .fill(p.bg_button)
                             .rounding(Rounding::same(7.0))
                             .min_size(egui::vec2(26.0, 24.0));
-                        if ui.add(btn_ref).on_hover_text("Refresh system telemetry now").clicked() {
+                        if ui.add(btn_ref).hover_tip("Refresh system telemetry now").clicked() {
                             if let Some(hid) = host_id {
                                 if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
                                     self.trigger_remote_sensors_query(host);
@@ -137,7 +137,7 @@ impl LauncherApp {
                                     ui.label(RichText::new("●").size(7.5).color(state_color));
                                     ui.label(RichText::new(state).size(9.5).monospace().strong().color(state_color));
                                 });
-                            }).response.on_hover_text(age.map(|age| format!("Last updated {}s ago", age.as_secs())).unwrap_or_else(|| "No sensor snapshot received yet".into()));
+                            }).response.hover_tip(age.map(|age| format!("Last updated {}s ago", age.as_secs())).unwrap_or_else(|| "No sensor snapshot received yet".into()));
                     });
                 });
             });
@@ -175,7 +175,7 @@ impl LauncherApp {
                                         .fill(p.bg_button)
                                         .rounding(Rounding::same(7.0))
                                         .min_size(egui::vec2(28.0, 26.0));
-                                    if ui.add(btn_ref).on_hover_text("Refresh all sensors now").clicked() {
+                                    if ui.add(btn_ref).hover_tip("Refresh all sensors now").clicked() {
                                         if let Some(hid) = host_id {
                                             if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
                                                 self.trigger_remote_sensors_query(host);
@@ -479,7 +479,7 @@ impl LauncherApp {
         let key = PendingSudoAction::UnlockSensorAccess.key(None);
         let busy = self.systemd_actions_in_flight.lock().unwrap().contains(&key);
         ui.horizontal_wrapped(|ui| {
-            if ui.add_enabled(!busy, egui::Button::new(if self.sensors_snapshot.hardware_access_unlocked { "Refresh protected sensors" } else { "Unlock hardware sensors" })).on_hover_text("Extra metrics only: CPU and RAM usage do not need sudo. This read-only probe reads protected CPU energy, Intel GPU counters and RAM module details; it changes no hardware settings.").clicked() {
+            if ui.add_enabled(!busy, egui::Button::new(if self.sensors_snapshot.hardware_access_unlocked { "Refresh protected sensors" } else { "Unlock hardware sensors" })).hover_tip("Extra metrics only: CPU and RAM usage do not need sudo. This read-only probe reads protected CPU energy, Intel GPU counters and RAM module details; it changes no hardware settings.").clicked() {
                 self.service_action_msg = None;
                 self.queue_systemd_action(PendingSudoAction::UnlockSensorAccess, None, None);
             }
@@ -489,13 +489,13 @@ impl LauncherApp {
         if let Some(message) = self.service_action_msg.as_ref().filter(|message| !busy && (message.starts_with("Read-only hardware") || message.starts_with("Error: Hardware probe") || message.starts_with("Error: Could not start hardware"))) {
             if crate::systemd::needs_sudo_password(message) {
                 ui.label(RichText::new("Unlock sensors to read protected metrics.").size(11.0).color(p.text_muted))
-                    .on_hover_text(message);
+                    .hover_tip(message);
             } else {
                 ui.label(RichText::new(message).size(11.0).color(p.text_muted));
             }
         }
         if let Some(error) = &self.sensors_snapshot.hardware_access_error {
-            ui.add(egui::Label::new(RichText::new(error).size(11.0).color(p.warning)).truncate()).on_hover_text(error);
+            ui.add(egui::Label::new(RichText::new(error).size(11.0).color(p.warning)).truncate()).hover_tip(error);
         }
         ui.add_space(6.0);
     }

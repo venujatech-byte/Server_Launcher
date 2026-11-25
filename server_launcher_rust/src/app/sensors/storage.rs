@@ -327,7 +327,7 @@ impl LauncherApp {
                                         .truncate(),
                                     );
                                     if is_mounted {
-                                        mnt_lbl.on_hover_text(format!("Mount: {} ({})", mount_pt, d_fs));
+                                        mnt_lbl.hover_tip(format!("Mount: {} ({})", mount_pt, d_fs));
                                     }
                                 });
 
@@ -359,7 +359,7 @@ impl LauncherApp {
                                 scols[2].vertical(|ui| {
                                     ui.label(RichText::new("BUS INTERFACE").size(8.5).monospace().color(p.text_muted));
                                     let bus_str = physical_disk.map(|disk| disk.bus_interface.as_str()).filter(|bus| !bus.is_empty()).unwrap_or("Not reported");
-                                    ui.add(egui::Label::new(RichText::new(bus_str).size(12.5).monospace().strong().color(p.text_primary)).truncate()).on_hover_text(bus_str);
+                                    ui.add(egui::Label::new(RichText::new(bus_str).size(12.5).monospace().strong().color(p.text_primary)).truncate()).hover_tip(bus_str);
                                 });
                             });
                         });
@@ -769,7 +769,7 @@ impl LauncherApp {
                                     part_p.rect_filled(seg_r, Rounding::same(3.0), fill_col);
 
                                     ui.interact(seg_r, part_res.id.with(idx), egui::Sense::hover())
-                                        .on_hover_text(format!("{label} · {}", crate::sensors::format_bytes(part.size_bytes)));
+                                        .hover_tip(format!("{label} · {}", crate::sensors::format_bytes(part.size_bytes)));
 
                                     // Render label if wide enough
                                     if w > 105.0 {
@@ -809,10 +809,10 @@ impl LauncherApp {
                                 .inner_margin(egui::Margin::same(10.0)).show(ui, |ui| {
                                     ui.set_width(ui.available_width());
                                     ui.add(egui::Label::new(RichText::new(&mount.mount_point).size(12.0).strong().color(p.text_primary)).truncate())
-                                        .on_hover_text(&mount.mount_point);
+                                        .hover_tip(&mount.mount_point);
                                     ui.label(RichText::new(format!("{} / {} used", crate::sensors::format_bytes(mount.used_bytes), crate::sensors::format_bytes(mount.total_bytes))).size(11.0).color(p.text_secondary));
                                     let device = format!("{} · {}", mount.name, mount.fs_type);
-                                    ui.add(egui::Label::new(RichText::new(&device).size(10.0).monospace().color(p.text_muted)).truncate()).on_hover_text(&device);
+                                    ui.add(egui::Label::new(RichText::new(&device).size(10.0).monospace().color(p.text_muted)).truncate()).hover_tip(&device);
                                 });
                         });
                     });

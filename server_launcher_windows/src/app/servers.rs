@@ -41,7 +41,7 @@ impl LauncherApp {
                                         .fill(if selected { p.accent_subtle } else { p.bg_subtle })
                                         .rounding(Rounding::same(8.0)).stroke(Stroke::NONE)
                                         .min_size(egui::vec2(32.0, 24.0));
-                                    if ui.add(button).on_hover_text(format!("Show {} servers", group)).clicked() {
+                                    if ui.add(button).hover_tip(format!("Show {} servers", group)).clicked() {
                                         self.active_group_filter = group;
                                     }
                                 }
@@ -50,7 +50,7 @@ impl LauncherApp {
                 });
                 let add = egui::Button::new(RichText::new(format!("{} Add", crate::lucide::PLUS)).size(10.5).color(p.accent))
                     .fill(p.bg_button).rounding(Rounding::same(8.0)).stroke(Stroke::NONE);
-                if ui.add_sized([54.0, 24.0], add).on_hover_text("Configure and add a new server").clicked() {
+                if ui.add_sized([54.0, 24.0], add).hover_tip("Configure and add a new server").clicked() {
                     self.add_edit_modal.open_new();
                 }
             });
@@ -183,7 +183,7 @@ impl LauncherApp {
                                         .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(999.0))
                                         .min_size(egui::vec2(76.0, 22.0));
-                                        if ui.add_enabled(group_running, btn_stop_grp).on_hover_text("Stop all servers in this group").on_disabled_hover_text("No running servers in this group").clicked() {
+                                        if ui.add_enabled(group_running, btn_stop_grp).hover_tip("Stop all servers in this group").disabled_hover_tip("No running servers in this group").clicked() {
                                             stop_grp = Some(group_name.clone());
                                         }
 
@@ -194,7 +194,7 @@ impl LauncherApp {
                                         .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(999.0))
                                         .min_size(egui::vec2(76.0, 22.0));
-                                        if ui.add_enabled(group_startable, btn_start_grp).on_hover_text("Start all servers in this group").on_disabled_hover_text("All servers in this group are already running").clicked() {
+                                        if ui.add_enabled(group_startable, btn_start_grp).hover_tip("Start all servers in this group").disabled_hover_tip("All servers in this group are already running").clicked() {
                                             start_grp = Some(group_name.clone());
                                         }
                                     });
@@ -262,7 +262,7 @@ impl LauncherApp {
                                                 .fill(Color32::TRANSPARENT)
                                                 .min_size(egui::vec2(22.0, 22.0));
 
-                                                if ui.add(btn_chevron).on_hover_text("Expand card").clicked() {
+                                                if ui.add(btn_chevron).hover_tip("Expand card").clicked() {
                                                     to_toggle_collapse = Some(key.clone());
                                                 }
 
@@ -276,7 +276,7 @@ impl LauncherApp {
                                                     .rounding(Rounding::same(8.0))
                                                     .min_size(egui::vec2(24.0, 24.0));
                                                 let hint = format!("{} {}", if is_running { "Stop" } else { "Start" }, s.config.name);
-                                                let response = ui.add(action).on_hover_text(&hint);
+                                                let response = ui.add(action).hover_tip(&hint);
                                                 response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &hint));
                                                 if response.clicked() {
                                                     if is_running { to_stop = Some(idx); } else { to_start = Some(idx); }
@@ -342,7 +342,7 @@ impl LauncherApp {
                                                 .fill(Color32::TRANSPARENT)
                                                 .min_size(egui::vec2(22.0, 22.0));
 
-                                                if ui.add(btn_chevron).on_hover_text("Minimize card").clicked() {
+                                                if ui.add(btn_chevron).hover_tip("Minimize card").clicked() {
                                                     to_toggle_collapse = Some(key.clone());
                                                 }
 
@@ -397,7 +397,7 @@ impl LauncherApp {
                                                             .size(10.5)
                                                             .monospace()
                                                             .color(p.text_primary),
-                                                    ).truncate()).on_hover_text(&s.config.command);
+                                                    ).truncate()).hover_tip(&s.config.command);
 
                                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                         let btn_copy = egui::Button::new(
@@ -408,7 +408,7 @@ impl LauncherApp {
                                                         .fill(Color32::TRANSPARENT)
                                                         .stroke(Stroke::NONE);
 
-                                                        if ui.add(btn_copy).on_hover_text("Copy command").clicked() {
+                                                        if ui.add(btn_copy).hover_tip("Copy command").clicked() {
                                                             ui.ctx().copy_text(s.config.command.clone());
                                                         }
 
@@ -545,7 +545,7 @@ impl LauncherApp {
                                                 .rounding(Rounding::same(999.0))
                                                 .min_size(egui::vec2(80.0, 24.0));
 
-                                                if ui.add(btn_stop).on_hover_text("Stop this server").clicked() {
+                                                if ui.add(btn_stop).hover_tip("Stop this server").clicked() {
                                                     to_stop = Some(idx);
                                                 }
 
@@ -559,7 +559,7 @@ impl LauncherApp {
                                                 .rounding(Rounding::same(999.0))
                                                 .min_size(egui::vec2(80.0, 24.0));
 
-                                                if ui.add(btn_restart).on_hover_text("Restart this server").clicked() {
+                                                if ui.add(btn_restart).hover_tip("Restart this server").clicked() {
                                                     to_restart = Some(idx);
                                                 }
                                             });
@@ -574,7 +574,7 @@ impl LauncherApp {
                                             .rounding(Rounding::same(999.0))
                                             .min_size(egui::vec2(80.0, 24.0));
 
-                                            if ui.add(btn_start).on_hover_text("Start this server").clicked() {
+                                            if ui.add(btn_start).hover_tip("Start this server").clicked() {
                                                 to_start = Some(idx);
                                             }
                                         }
@@ -599,7 +599,7 @@ impl LauncherApp {
                                                 .fill(circ_bg)
                                                 .rounding(circ_rnd)
                                                 .min_size(circ_size);
-                                                if ui.add(btn_console).on_hover_text("Open in console / terminal window").clicked() {
+                                                if ui.add(btn_console).hover_tip("Open in console / terminal window").clicked() {
                                                     s.open_console();
                                                 }
 
@@ -609,7 +609,7 @@ impl LauncherApp {
                                                 .fill(circ_bg)
                                                 .rounding(circ_rnd)
                                                 .min_size(circ_size);
-                                                if ui.add(btn_edit).on_hover_text("Edit server configuration").clicked() {
+                                                if ui.add(btn_edit).hover_tip("Edit server configuration").clicked() {
                                                     to_edit = Some(s.config.clone());
                                                 }
 
@@ -619,7 +619,7 @@ impl LauncherApp {
                                                 .fill(circ_bg)
                                                 .rounding(circ_rnd)
                                                 .min_size(circ_size);
-                                                if ui.add(btn_vscode).on_hover_text("Open working directory in VS Code (code .)").clicked() {
+                                                if ui.add(btn_vscode).hover_tip("Open working directory in VS Code (code .)").clicked() {
                                                     crate::service::open_in_vscode(&s.config.cwd);
                                                 }
 
@@ -629,7 +629,7 @@ impl LauncherApp {
                                                 .fill(circ_bg)
                                                 .rounding(circ_rnd)
                                                 .min_size(circ_size);
-                                                if ui.add(btn_folder).on_hover_text("Open working directory in file manager").clicked() {
+                                                if ui.add(btn_folder).hover_tip("Open working directory in file manager").clicked() {
                                                     crate::service::open_folder(&s.config.cwd);
                                                 }
 
@@ -645,7 +645,7 @@ impl LauncherApp {
                                                     .fill(circ_bg)
                                                     .rounding(circ_rnd)
                                                     .min_size(circ_size);
-                                                    if ui.add(btn_browser).on_hover_text(format!("Open {} in browser", target_url)).clicked() {
+                                                    if ui.add(btn_browser).hover_tip(format!("Open {} in browser", target_url)).clicked() {
                                                         ui.ctx().open_url(egui::OpenUrl::new_tab(target_url));
                                                     }
                                                 }
@@ -660,7 +660,7 @@ impl LauncherApp {
                                                     .rounding(circ_rnd)
                                                     .min_size(circ_size);
 
-                                                    if ui.add(btn_del).on_hover_text("Delete server").clicked() {
+                                                    if ui.add(btn_del).hover_tip("Delete server").clicked() {
                                                         to_delete = Some(key.clone());
                                                     }
                                                 });

@@ -316,7 +316,7 @@ impl LauncherApp {
 
                                     ui.add_space(4.0);
                                     let clean_name = crate::bluetooth::clean_device_name(&dev.name);
-                                    ui.add(egui::Label::new(RichText::new(&clean_name).size(14.0).strong().color(p.text_primary)).truncate()).on_hover_text(&clean_name);
+                                    ui.add(egui::Label::new(RichText::new(&clean_name).size(14.0).strong().color(p.text_primary)).truncate()).hover_tip(&clean_name);
                                     ui.label(RichText::new(&dev.mac).size(8.5).monospace().color(p.text_muted));
 
                                     ui.add_space(8.0);

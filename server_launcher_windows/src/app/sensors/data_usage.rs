@@ -67,8 +67,8 @@ impl LauncherApp {
                                 ui.label(RichText::new(*label).size(11.0).monospace().strong().color(p.text_muted));
                             });
                             ui.add_space(6.0);
-                            ui.add(egui::Label::new(RichText::new(value).size(30.0).strong().color(p.text_primary)).truncate()).on_hover_text(value);
-                            ui.add(egui::Label::new(RichText::new(detail).size(11.0).monospace().color(p.text_secondary)).truncate()).on_hover_text(detail);
+                            ui.add(egui::Label::new(RichText::new(value).size(30.0).strong().color(p.text_primary)).truncate()).hover_tip(value);
+                            ui.add(egui::Label::new(RichText::new(detail).size(11.0).monospace().color(p.text_secondary)).truncate()).hover_tip(detail);
                         });
                 });
 

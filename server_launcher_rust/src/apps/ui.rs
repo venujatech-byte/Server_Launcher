@@ -1,3 +1,4 @@
+use crate::theme::CompactTooltip as _;
 use super::actions::format_bytes;
 use super::model::{AppAction, AppEntry, AppFilter, AppSortCol, AppSource, ClearDataMode, RepoEntry};
 use super::AppsManagerState;
@@ -170,7 +171,7 @@ fn render_top_bar(
                 ui.scope(|ui| {
                     ui.set_max_width(status_width);
                     ui.add(egui::Label::new(RichText::new(&status_line).size(11.5).color(p.text_muted)).truncate())
-                        .on_hover_text(&status_line);
+                        .hover_tip(&status_line);
                 });
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -453,7 +454,7 @@ fn render_apps_table(
                                     RichText::new(&app.version).size(11.5).color(p.text_secondary),
                                 )
                                 .truncate(),
-                            ).on_hover_text(&app.version);
+                            ).hover_tip(&app.version);
                         });
 
                         // Size
@@ -475,21 +476,21 @@ fn render_apps_table(
                             ui.spacing_mut().item_spacing.x = 2.0;
                             if app.can_uninstall
                                 && ghost_button(ui, crate::lucide::TRASH, p.danger, p, !state.task_running)
-                                    .on_hover_text("Uninstall")
+                                    .hover_tip("Uninstall")
                                     .clicked()
                             {
                                 state.confirm_uninstall = Some(app.clone());
                             }
                             if app.can_update
                                 && ghost_button(ui, crate::lucide::DOWNLOAD, p.accent, p, !state.task_running)
-                                    .on_hover_text("Update")
+                                    .hover_tip("Update")
                                     .clicked()
                             {
                                 *pending_action = Some(AppAction::Update(app.clone()));
                             }
                             if app.can_launch
                                 && ghost_button(ui, crate::lucide::PLAY, p.success, p, true)
-                                    .on_hover_text("Launch")
+                                    .hover_tip("Launch")
                                     .clicked()
                             {
                                 *pending_action = Some(AppAction::Launch(app.clone()));
@@ -644,7 +645,7 @@ fn render_repos_table(state: &AppsManagerState, ui: &mut Ui, p: &ThemePalette, h
                                     RichText::new(&repo.name).size(12.0).strong().color(p.text_primary),
                                 )
                                 .truncate(),
-                            ).on_hover_text(format!("{}\n{}", repo.name, repo.id));
+                            ).hover_tip(format!("{}\n{}", repo.name, repo.id));
                         });
                         cell_ui(&mut row_ui, col_src_w, 26.0, false, |ui| {
                             ui.label(RichText::new(&repo.source).size(11.5).color(p.accent));
@@ -804,7 +805,7 @@ fn render_inspector_panel(
                 .stroke(Stroke::NONE);
                 if ui
                     .add(id_btn)
-                    .on_hover_text("Click to copy package / app ID")
+                    .hover_tip("Click to copy package / app ID")
                     .clicked()
                 {
                     ui.ctx().copy_text(app.id.clone());
@@ -910,7 +911,7 @@ fn render_inspector_panel(
                                             )
                                             .truncate(),
                                         )
-                                        .on_hover_text(loc_text);
+                                        .hover_tip(loc_text);
                                         if (app.install_location.is_some() || app.desktop_file.is_some())
                                             && ghost_button(
                                                 ui,
@@ -919,7 +920,7 @@ fn render_inspector_panel(
                                                 p,
                                                 true,
                                             )
-                                            .on_hover_text("Open Folder")
+                                            .hover_tip("Open Folder")
                                             .clicked()
                                         {
                                             *pending_action = Some(AppAction::OpenLocation(app.clone()));
@@ -1057,7 +1058,7 @@ fn meta_row(ui: &mut Ui, p: &ThemePalette, label_w: f32, val_w: f32, label: &str
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
             ui.add(egui::Label::new(RichText::new(value).size(11.5).color(p.text_primary)).truncate())
-                .on_hover_text(value);
+                .hover_tip(value);
         },
     );
     ui.end_row();

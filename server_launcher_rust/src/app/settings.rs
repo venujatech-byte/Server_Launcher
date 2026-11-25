@@ -245,7 +245,7 @@ impl LauncherApp {
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
                             .min_size(egui::vec2(26.0, 26.0));
-                        if ui.add(btn_close).on_hover_text("Close settings (Esc)").clicked() {
+                        if ui.add(btn_close).hover_tip("Close settings (Esc)").clicked() {
                             close_requested = true;
                         }
                     });
@@ -287,7 +287,7 @@ impl LauncherApp {
                                 .rounding(Rounding::same(8.0))
                                 .wrap_mode(egui::TextWrapMode::Truncate);
                                 let (rect, _) = ui.allocate_exact_size(egui::vec2(tab_w, 28.0), egui::Sense::hover());
-                                if ui.put(rect, btn).on_hover_text(tab.label()).clicked() {
+                                if ui.put(rect, btn).hover_tip(tab.label()).clicked() {
                                     self.settings_active_tab = tab;
                                 }
                             }
@@ -373,7 +373,7 @@ impl LauncherApp {
                                         .rounding(Rounding::same(999.0))
                                         .min_size(egui::vec2(ui.available_width(), 28.0));
 
-                                        if ui.add(btn_sys).on_hover_text("Automatically sync with desktop GNOME/GTK4 accent color in real-time").clicked() {
+                                        if ui.add(btn_sys).hover_tip("Automatically sync with desktop GNOME/GTK4 accent color in real-time").clicked() {
                                             change_accent = Some(Some("system".to_string()));
                                         }
 
@@ -428,7 +428,7 @@ impl LauncherApp {
 
                                                                 ui.vertical(|ui| {
                                                                     ui.set_width((ui.available_width() - 50.0).max(0.0));
-                                                                    ui.add(egui::Label::new(RichText::new(p_set.name).size(11.0).strong().color(palette.text_primary)).truncate()).on_hover_text(p_set.name);
+                                                                    ui.add(egui::Label::new(RichText::new(p_set.name).size(11.0).strong().color(palette.text_primary)).truncate()).hover_tip(p_set.name);
                                                                     ui.label(RichText::new(p_set.hex).size(9.5).monospace().color(palette.text_muted));
                                                                 });
 
@@ -490,7 +490,7 @@ impl LauncherApp {
                                                 .stroke(Stroke::NONE)
                                                 .rounding(Rounding::same(999.0))
                                                 .min_size(egui::vec2(140.0, 22.0));
-                                            if ui.add(btn_reset).on_hover_text("Clear custom accent and restore the native theme palette").clicked() {
+                                            if ui.add(btn_reset).hover_tip("Clear custom accent and restore the native theme palette").clicked() {
                                                 change_accent = Some(None);
                                             }
                                         });
@@ -598,7 +598,7 @@ impl LauncherApp {
                                         ui.add_enabled(
                                             self.ssh_idle.mode != SshIdleMode::Never,
                                             egui::DragValue::new(&mut self.ssh_idle.minutes).range(1..=120).suffix(" min"),
-                                        ).on_hover_text("Continuous time inactive before closing the local SSH connection");
+                                        ).hover_tip("Continuous time inactive before closing the local SSH connection");
                                         ui.separator();
                                         ui.label(RichText::new("SSH probe timeouts").size(14.0).strong().color(palette.text_primary));
                                         ui.horizontal_wrapped(|ui| {
@@ -636,7 +636,7 @@ impl LauncherApp {
                                                 .stroke(Stroke::NONE)
                                                 .rounding(Rounding::same(999.0))
                                                 .min_size(egui::vec2(160.0, 32.0));
-                                            if ui.add(btn_import).on_hover_text("Select and import a backup or servers.json file").clicked() {
+                                            if ui.add(btn_import).hover_tip("Select and import a backup or servers.json file").clicked() {
                                                 do_import = true;
                                             }
 
@@ -645,7 +645,7 @@ impl LauncherApp {
                                                 .stroke(Stroke::NONE)
                                                 .rounding(Rounding::same(999.0))
                                                 .min_size(egui::vec2(160.0, 32.0));
-                                            if ui.add(btn_export).on_hover_text("Export all servers, SSH hosts, ADB devices, scripts, commands, and settings").clicked() {
+                                            if ui.add(btn_export).hover_tip("Export all servers, SSH hosts, ADB devices, scripts, commands, and settings").clicked() {
                                                 do_export = true;
                                             }
                                         });
@@ -729,7 +729,7 @@ impl LauncherApp {
                                         ui.add_space(8.0);
                                         ui.horizontal_wrapped(|ui| {
                                             ui.label(RichText::new("Active Config File:").size(11.0).color(palette.text_muted));
-                                            ui.add(egui::Label::new(RichText::new(self.config_path.display().to_string()).size(10.5).monospace().color(palette.text_secondary)).truncate()).on_hover_text(self.config_path.display().to_string());
+                                            ui.add(egui::Label::new(RichText::new(self.config_path.display().to_string()).size(10.5).monospace().color(palette.text_secondary)).truncate()).hover_tip(self.config_path.display().to_string());
                                         });
                                     });
                             }

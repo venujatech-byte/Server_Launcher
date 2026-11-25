@@ -59,7 +59,7 @@ impl LauncherApp {
                     )
                     .fill(p.accent)
                     .rounding(Rounding::same(8.0));
-                    if ui.add(btn_add).on_hover_text("Start a new server or process on remote host").clicked() {
+                    if ui.add(btn_add).hover_tip("Start a new server or process on remote host").clicked() {
                         self.remote_start_server_modal.open_for_host(host);
                     }
 
@@ -69,7 +69,7 @@ impl LauncherApp {
                     )
                     .fill(p.bg_button)
                     .rounding(Rounding::same(8.0));
-                    if ui.add_enabled(!is_scanning, refresh).on_hover_text("Refresh listening ports").clicked() {
+                    if ui.add_enabled(!is_scanning, refresh).hover_tip("Refresh listening ports").clicked() {
                         self.trigger_remote_scan(host);
                     }
                 });
@@ -85,7 +85,7 @@ impl LauncherApp {
                             .frame(false).id_source(("remote_filter", &host.id))
                             .hint_text(RichText::new("Filter remote servers...").color(p.text_muted))
                             .desired_width((ui.available_width() - 34.0).max(0.0)));
-                        if !search_q.is_empty() && ui.small_button(crate::lucide::X).on_hover_text("Clear server filter").clicked() {
+                        if !search_q.is_empty() && ui.small_button(crate::lucide::X).hover_tip("Clear server filter").clicked() {
                             search_q.clear();
                             response.request_focus();
                         }
@@ -102,7 +102,7 @@ impl LauncherApp {
                     "Port scan failed. Showing the last successful results."
                 };
                 ui.add(egui::Label::new(RichText::new(status).size(11.0).color(p.danger)).wrap())
-                    .on_hover_text(error.as_ref());
+                    .hover_tip(error.as_ref());
                 ui.add_space(4.0);
             }
 
@@ -179,7 +179,7 @@ impl LauncherApp {
                                         let name_width = (ui.available_width() - 78.0).max(0.0);
                                         ui.add_sized([name_width, 18.0], egui::Label::new(
                                             RichText::new(&l.name).size(11.5).strong().color(p.text_primary)
-                                        ).truncate()).on_hover_text(&l.name);
+                                        ).truncate()).hover_tip(&l.name);
                                         ui.label(RichText::new("● Running").size(11.0).color(p.success));
                                     });
                                     ui.label(RichText::new(format!(":{} · {}", l.port, l.proto.to_ascii_uppercase()))
@@ -220,7 +220,7 @@ impl LauncherApp {
                                         .fill(p.bg_button)
                                         .rounding(Rounding::same(8.0));
                                         let identified = l.pid.is_some() && l.start_marker.is_some();
-                                        if ui.add_enabled(identified, stop_btn).on_disabled_hover_text("Process identity is unavailable.").on_hover_text("Stop this remote server gracefully").clicked() {
+                                        if ui.add_enabled(identified, stop_btn).disabled_hover_tip("Process identity is unavailable.").hover_tip("Stop this remote server gracefully").clicked() {
                                             requested = Some((l.clone(), false));
                                         }
 
@@ -232,8 +232,8 @@ impl LauncherApp {
                                         .rounding(Rounding::same(8.0));
                                         let restart_cmd = build_remote_restart_cmd(l, host.port);
                                         if ui.add_enabled(restart_cmd.is_some(), restart_btn)
-                                            .on_hover_text("Restart the verified systemd service")
-                                            .on_disabled_hover_text("Restart requires a verified TCP listener outside the SSH service.")
+                                            .hover_tip("Restart the verified systemd service")
+                                            .disabled_hover_tip("Restart requires a verified TCP listener outside the SSH service.")
                                             .clicked()
                                         {
                                             if let Some(command) = restart_cmd {
@@ -244,7 +244,7 @@ impl LauncherApp {
                                         ui.menu_button(RichText::new("⋯").size(11.0), |ui| {
                                             ui.set_min_width(88.0);
                                             ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
-                                            if ui.add_enabled(identified, egui::Button::new(RichText::new("Kill").size(11.5)).min_size(egui::vec2(88.0, 24.0))).on_disabled_hover_text("Process identity is unavailable.").on_hover_text("Force stop this remote process").clicked() {
+                                            if ui.add_enabled(identified, egui::Button::new(RichText::new("Kill").size(11.5)).min_size(egui::vec2(88.0, 24.0))).disabled_hover_tip("Process identity is unavailable.").hover_tip("Force stop this remote process").clicked() {
                                                 requested = Some((l.clone(), true));
                                                 ui.close_menu();
                                             }
@@ -257,8 +257,8 @@ impl LauncherApp {
                                                 && (matches!(l.port, 80 | 3000 | 4173 | 5173 | 8000 | 8008 | 8080 | 8081 | 8888)
                                                     || name == "http" || name.starts_with("http /") || command.contains("http://"));
                                             if ui.add_enabled_ui(http, |ui| ui.add_sized([88.0, 24.0], egui::Button::new(RichText::new("Curl").size(11.5)))).inner
-                                                .on_hover_text("Probe HTTP response")
-                                                .on_disabled_hover_text("Available for HTTP over TCP").clicked() {
+                                                .hover_tip("Probe HTTP response")
+                                                .disabled_hover_tip("Available for HTTP over TCP").clicked() {
                                                 let curl_cmd = format!("curl -I -s --connect-timeout 2 http://localhost:{} | head -n 5", l.port);
                                                 self.run_remote_ssh_command(host, &curl_cmd, Some(ui.ctx().clone()), false);
                                                 ui.close_menu();
@@ -271,7 +271,7 @@ impl LauncherApp {
                                         )
                                         .fill(p.bg_button)
                                         .rounding(Rounding::same(8.0));
-                                        if ui.add(ps_btn).on_hover_text("Inspect process details on remote host").clicked() {
+                                        if ui.add(ps_btn).hover_tip("Inspect process details on remote host").clicked() {
                                             let ps_cmd = if let Some(pid) = l.pid {
                                                 format!("ps -u -p {} 2>/dev/null", pid)
                                             } else {
@@ -299,7 +299,7 @@ impl LauncherApp {
                                         let name_width = (ui.available_width() - 78.0).max(0.0);
                                         ui.add_sized([name_width, 18.0], egui::Label::new(
                                             RichText::new(&s.name).size(11.5).strong().color(p.text_primary)
-                                        ).truncate()).on_hover_text(&s.name);
+                                        ).truncate()).hover_tip(&s.name);
                                         ui.label(RichText::new("● Stopped").size(11.0).color(p.text_muted));
                                     });
                                     ui.label(RichText::new(format!(":{} · {}", s.port, s.proto.to_ascii_uppercase()))
@@ -332,7 +332,7 @@ impl LauncherApp {
                                         )
                                         .fill(p.bg_button)
                                         .rounding(Rounding::same(8.0));
-                                        if ui.add(start_btn).on_hover_text("Start this remote server").clicked() {
+                                        if ui.add(start_btn).hover_tip("Start this remote server").clicked() {
                                             let start_cmd = build_remote_start_cmd(&s.name, s.port, if s.start_cmd.is_empty() { None } else { Some(&s.start_cmd) }, &s.cwd);
                                             self.run_remote_ssh_command(host, &start_cmd, Some(ui.ctx().clone()), true);
                                         }
@@ -343,7 +343,7 @@ impl LauncherApp {
                                         )
                                         .fill(p.accent_subtle)
                                         .rounding(Rounding::same(8.0));
-                                        if ui.add(restart_btn).on_hover_text("Attempt to restart this remote server").clicked() {
+                                        if ui.add(restart_btn).hover_tip("Attempt to restart this remote server").clicked() {
                                             let start_cmd = build_remote_start_cmd(&s.name, s.port, if s.start_cmd.is_empty() { None } else { Some(&s.start_cmd) }, &s.cwd);
                                             self.run_remote_ssh_command(host, &start_cmd, Some(ui.ctx().clone()), true);
                                         }
@@ -354,7 +354,7 @@ impl LauncherApp {
                                         )
                                         .fill(p.bg_button)
                                         .rounding(Rounding::same(8.0));
-                                        if ui.add(dismiss_btn).on_hover_text("Dismiss from stopped servers list").clicked() {
+                                        if ui.add(dismiss_btn).hover_tip("Dismiss from stopped servers list").clicked() {
                                             dismiss_port = Some(s.port);
                                         }
 
@@ -364,7 +364,7 @@ impl LauncherApp {
                                         )
                                         .fill(p.bg_button)
                                         .rounding(Rounding::same(8.0));
-                                        if ui.add(info_btn).on_hover_text("Inspect status on remote host").clicked() {
+                                        if ui.add(info_btn).hover_tip("Inspect status on remote host").clicked() {
                                             let mut info_cmd = format!("lsof -i :{} 2>/dev/null", s.port);
                                             if let Some(unit) = crate::remote::remote_service_operand(&s.name) {
                                                 info_cmd.push_str(&format!(" || systemctl status -- {unit}"));

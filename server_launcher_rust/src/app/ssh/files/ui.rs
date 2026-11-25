@@ -367,7 +367,7 @@ fn command_button(
     .min_size(egui::vec2(26.0, 24.0));
     if ui
         .add_enabled(enabled, button)
-        .on_hover_text(item.label())
+        .hover_tip(item.label())
         .clicked()
     {
         *action = Some(item);
@@ -474,7 +474,7 @@ fn address(ui: &mut Ui, files: &mut RemoteFiles, navigate: &mut Option<String>, 
                     egui::vec2(ui.available_width().max(0.0), 21.0),
                     egui::Sense::click(),
                 );
-                if response.on_hover_text("Edit path · Ctrl+L").clicked() {
+                if response.hover_tip("Edit path · Ctrl+L").clicked() {
                     edit = true;
                 }
                 if rect.width() < 50.0 {
@@ -721,7 +721,7 @@ fn details(
                         });
                         response
                             .clone()
-                            .on_hover_text(entry.name.escape_debug().to_string());
+                            .hover_tip(entry.name.escape_debug().to_string());
                         if files.selected.contains(&entry.name) || response.hovered() {
                             let fill = if files.selected.contains(&entry.name) {
                                 p.bg_card_active
@@ -1008,7 +1008,7 @@ fn prompt(
                                         )
                                         .truncate(),
                                     )
-                                    .on_hover_text(path.escape_debug().to_string());
+                                    .hover_tip(path.escape_debug().to_string());
                                 }
                             });
                     });

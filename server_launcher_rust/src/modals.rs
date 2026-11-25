@@ -1,3 +1,4 @@
+use crate::theme::CompactTooltip as _;
 use crate::commands::CommandModalState;
 use crate::config::{CustomAction, CustomLink, CustomScript, SavedCommand, ServerConfig, SshRemoteHost};
 use crate::scripts::ScriptModalState;
@@ -1237,7 +1238,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                         ui.add_sized([width, 30.0], egui::TextEdit::singleline(&mut state.cwd).text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0))
                             .hint_text(RichText::new(if cfg!(windows) { r"C:\Projects\my-app" } else { "/home/you/my-app" }).color(palette.text_muted))
                             .font(egui::TextStyle::Monospace).clip_text(true))
-                            .on_hover_text("Folder where the command runs. Use . for the current directory.");
+                            .hover_tip("Folder where the command runs. Use . for the current directory.");
                         if ui.add_sized([76.0, 30.0], egui::Button::new(RichText::new("Browse…").size(11.5).color(palette.text_secondary))
                             .fill(palette.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(8.0))).clicked() {
                             if let Some(folder) = rfd::FileDialog::new().pick_folder() { state.cwd = folder.to_string_lossy().into_owned(); }
@@ -1260,9 +1261,9 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                         ui.set_width(ui.available_width());
                         egui::CollapsingHeader::new(RichText::new("Launch options").size(11.5)).id_salt("server_launch_options").show(ui, |ui| {
                             ui.checkbox(&mut state.own_console, "Use an external terminal")
-                                .on_hover_text("Launch the server in a separate system terminal window.");
+                                .hover_tip("Launch the server in a separate system terminal window.");
                             ui.checkbox(&mut state.auto_restart, "Restart after a crash")
-                                .on_hover_text("Restart this server if its process exits unexpectedly.");
+                                .hover_tip("Restart this server if its process exits unexpectedly.");
                             ui.checkbox(&mut state.autostart, "Start when Server Launcher opens");
                         });
                         egui::CollapsingHeader::new(RichText::new("Advanced settings").size(11.5)).id_salt("server_advanced_settings").show(ui, |ui| {
@@ -1270,12 +1271,12 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                             ui.label(RichText::new("Identifier (optional)").size(12.0).strong());
                             ui.add_enabled(!state.is_edit, egui::TextEdit::singleline(&mut state.key).text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0))
                                 .hint_text(RichText::new("Generated from the name if empty").color(palette.text_muted)).clip_text(true).desired_width(ui.available_width()))
-                                .on_hover_text("Unique configuration key. Existing server identifiers cannot be changed here.");
+                                .hover_tip("Unique configuration key. Existing server identifiers cannot be changed here.");
                             ui.add_space(8.0);
                             ui.label(RichText::new("Stop command (optional)").size(12.0).strong());
                             ui.add(egui::TextEdit::singleline(&mut state.stop_command).text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).font(egui::TextStyle::Monospace)
                                 .hint_text(RichText::new("Leave empty to stop the process directly").color(palette.text_muted)).clip_text(true).desired_width(ui.available_width()))
-                                .on_hover_text("Runs before stopping the server.");
+                                .hover_tip("Runs before stopping the server.");
                             ui.add_space(8.0);
                             ui.label(RichText::new("Environment variables").size(12.0).strong());
                             ui.add(egui::TextEdit::multiline(&mut state.env_text).text_color(palette.text_secondary).font(egui::TextStyle::Monospace)
@@ -1293,7 +1294,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                                             ui.add(egui::TextEdit::singleline(command).text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text(RichText::new("npm run build").color(palette.text_muted))
                                                 .font(egui::TextStyle::Monospace).clip_text(true).desired_width(command_width));
                                             if ui.button(RichText::new(crate::lucide::X).size(11.0).color(palette.danger))
-                                                .on_hover_text("Remove action").clicked() { remove = Some(index); }
+                                                .hover_tip("Remove action").clicked() { remove = Some(index); }
                                         });
                                     });
                                 }
@@ -1311,7 +1312,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                                             ui.add(egui::TextEdit::singleline(url).text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text(RichText::new("http://localhost:3000").color(palette.text_muted))
                                                 .clip_text(true).desired_width(url_width));
                                             if ui.button(RichText::new(crate::lucide::X).size(11.0).color(palette.danger))
-                                                .on_hover_text("Remove link").clicked() { remove = Some(index); }
+                                                .hover_tip("Remove link").clicked() { remove = Some(index); }
                                         });
                                     });
                                 }
@@ -1478,7 +1479,7 @@ pub fn render_command_palette(
                             let width = ui.available_width();
                             let resp = ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
                                 ui.add_sized([width, 27.0], row)
-                            }).inner.on_hover_text(label);
+                            }).inner.hover_tip(label);
                             if selected && ui.input(|i| i.key_pressed(Key::ArrowDown) || i.key_pressed(Key::ArrowUp)) {
                                 resp.scroll_to_me(None);
                             }
@@ -1846,11 +1847,11 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                     match res {
                         Ok(msg) => {
                             ui.label(RichText::new("●").size(9.0).color(palette.success));
-                            ui.add(egui::Label::new(RichText::new(msg).size(11.0).color(palette.success)).truncate()).on_hover_text(msg);
+                            ui.add(egui::Label::new(RichText::new(msg).size(11.0).color(palette.success)).truncate()).hover_tip(msg);
                         }
                         Err(err) => {
                             ui.label(RichText::new("●").size(9.0).color(palette.danger));
-                            ui.add(egui::Label::new(RichText::new(err).size(11.0).color(palette.danger)).truncate()).on_hover_text(err);
+                            ui.add(egui::Label::new(RichText::new(err).size(11.0).color(palette.danger)).truncate()).hover_tip(err);
                         }
                     }
                 } else {
@@ -2076,7 +2077,7 @@ pub fn render_close_confirmation_modal(
                         .rounding(Rounding::same(8.0))
                         .min_size(egui::vec2(0.0, 28.0));
 
-                        if ui.add(btn_keep).on_hover_text("Leave processes active in the background. Server Launcher will reconnect to them when reopened.").clicked() {
+                        if ui.add(btn_keep).hover_tip("Leave processes active in the background. Server Launcher will reconnect to them when reopened.").clicked() {
                             choice = CloseConfirmChoice::KeepRunningAndExit;
                         }
                     });
@@ -2311,7 +2312,7 @@ pub fn render_command_modal(
                             egui::Frame::none().fill(palette.bg_subtle).rounding(Rounding::same(8.0))
                                 .inner_margin(egui::Margin::symmetric(8.0, 6.0)).show(ui, |ui| {
                                     ui.set_width(ui.available_width());
-                                    ui.add(egui::Label::new(RichText::new(&scope).size(12.0).color(palette.text_secondary)).truncate()).on_hover_text(&scope);
+                                    ui.add(egui::Label::new(RichText::new(&scope).size(12.0).color(palette.text_secondary)).truncate()).hover_tip(&scope);
                                 });
                         });
                     });
@@ -2337,7 +2338,7 @@ pub fn render_command_modal(
                             ui.set_width(ui.available_width());
                             ui.checkbox(&mut state.run_in_terminal,
                                 RichText::new("Run in an external terminal").size(11.5).color(palette.text_primary))
-                                .on_hover_text("Required for full-screen terminal tools such as top, htop and vim.");
+                                .hover_tip("Required for full-screen terminal tools such as top, htop and vim.");
                             ui.label(RichText::new("Use for interactive tools such as htop, vim or nano.").size(10.5).color(palette.text_muted));
                         });
                 });
@@ -2910,7 +2911,7 @@ pub fn render_sudo_modal(
                 )
                 .fill(Color32::from_rgb(30, 34, 48))
                 .rounding(Rounding::same(6.0));
-                if ui.add(eye_btn).on_hover_text("Toggle password visibility").clicked() {
+                if ui.add(eye_btn).hover_tip("Toggle password visibility").clicked() {
                     state.show_password = !state.show_password;
                 }
 
@@ -3157,7 +3158,7 @@ pub fn render_remote_reboot_modal(
                 )
                 .fill(Color32::from_rgb(30, 34, 48))
                 .rounding(Rounding::same(6.0));
-                if ui.add(eye_btn).on_hover_text("Toggle password visibility").clicked() {
+                if ui.add(eye_btn).hover_tip("Toggle password visibility").clicked() {
                     state.show_password = !state.show_password;
                 }
 
@@ -3189,7 +3190,7 @@ pub fn render_remote_reboot_modal(
                     .rounding(Rounding::same(8.0))
                     .min_size(egui::vec2(140.0, 30.0));
 
-                    if ui.add(btn_submit).on_hover_text("Reboot the remote machine now").clicked() {
+                    if ui.add(btn_submit).hover_tip("Reboot the remote machine now").clicked() {
                         submit_requested = true;
                     }
 
@@ -3388,7 +3389,7 @@ pub fn render_remote_shutdown_modal(
                 )
                 .fill(Color32::from_rgb(30, 34, 48))
                 .rounding(Rounding::same(6.0));
-                if ui.add(eye_btn).on_hover_text("Toggle password visibility").clicked() {
+                if ui.add(eye_btn).hover_tip("Toggle password visibility").clicked() {
                     state.show_password = !state.show_password;
                 }
 
@@ -3420,7 +3421,7 @@ pub fn render_remote_shutdown_modal(
                     .rounding(Rounding::same(8.0))
                     .min_size(egui::vec2(140.0, 30.0));
 
-                    if ui.add(btn_submit).on_hover_text("Power off the remote machine now").clicked() {
+                    if ui.add(btn_submit).hover_tip("Power off the remote machine now").clicked() {
                         submit_requested = true;
                     }
 

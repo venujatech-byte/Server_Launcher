@@ -301,7 +301,7 @@ impl LauncherApp {
                                                     ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(accent));
                                                     let estimated = bat.is_some_and(|battery| battery.energy_estimated);
                                                     ui.label(RichText::new(if estimated { "Energy (est.)" } else { "Battery energy" }).size(9.5).monospace().color(p.text_muted))
-                                                        .on_hover_text(if estimated { "One or more energy values are estimated from reported charge and design voltage." } else { "Energy values reported by the battery, when available." });
+                                                        .hover_tip(if estimated { "One or more energy values are estimated from reported charge and design voltage." } else { "Energy values reported by the battery, when available." });
                                                 });
                                                 ui.add_space(4.0);
                                                 ui.horizontal(|ui| {

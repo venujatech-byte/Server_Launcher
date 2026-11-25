@@ -287,7 +287,7 @@ impl LauncherApp {
                                 .show(ui, |ui| {
                                     ui.set_width(ui.available_width());
                                     ui.horizontal(|ui| {
-                                        ui.add(egui::Label::new(RichText::new(name).size(10.0).monospace().strong().color(p.text_secondary)).truncate()).on_hover_text(name);
+                                        ui.add(egui::Label::new(RichText::new(name).size(10.0).monospace().strong().color(p.text_secondary)).truncate()).hover_tip(name);
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             ui.label(RichText::new(*status).size(7.5).monospace().strong().color(p.text_secondary));
                                         });

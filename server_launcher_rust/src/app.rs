@@ -1,3 +1,4 @@
+use crate::theme::CompactTooltip;
 mod workspace;
 mod servers;
 mod listeners;
@@ -808,7 +809,7 @@ fn render_window_button(
         }
     }
 
-    resp.on_hover_text(match kind {
+    resp.hover_tip(match kind {
         WindowButtonKind::Minimize => "Minimize",
         WindowButtonKind::Maximize(true) => "Restore",
         WindowButtonKind::Maximize(false) => "Maximize",
@@ -3053,7 +3054,7 @@ impl eframe::App for LauncherApp {
                                             let badge_lbl = ui.label(
                                                 RichText::new("● Online").size(10.0).strong().color(p.success),
                                             );
-                                            badge_lbl.on_hover_text(format!("Online: {}", info));
+                                            badge_lbl.hover_tip(format!("Online: {}", info));
                                         });
                                 } else if let Some(Err(ref err)) = status {
                                     Frame::none()
@@ -3071,7 +3072,7 @@ impl eframe::App for LauncherApp {
                                             let badge_lbl = ui.label(
                                                 RichText::new(format!("● Error: {}", err_short)).size(10.0).color(p.danger),
                                             );
-                                            badge_lbl.on_hover_text(format!("Connection Error:\n{}", err));
+                                            badge_lbl.hover_tip(format!("Connection Error:\n{}", err));
                                         });
                                 } else {
                                     Frame::none()
@@ -3108,7 +3109,7 @@ impl eframe::App for LauncherApp {
                                     let reconnect = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(10.0))
                                         .small()
                                         .frame(false);
-                                    if ui.add(reconnect).on_hover_text("Reconnect SSH").clicked() {
+                                    if ui.add(reconnect).hover_tip("Reconnect SSH").clicked() {
                                         self.test_remote_host(host);
                                         self.trigger_remote_scan(host);
                                     }
@@ -3168,7 +3169,7 @@ impl eframe::App for LauncherApp {
                         .stroke(Stroke::NONE)
                         .rounding(Rounding::same(6.0))
                         .min_size(egui::vec2(22.0, 22.0));
-                        if ui.add(btn_settings).on_hover_text("Settings & Preferences (Ctrl+,)").clicked() {
+                        if ui.add(btn_settings).hover_tip("Settings & Preferences (Ctrl+,)").clicked() {
                             self.settings_modal_open = true;
                         }
 
@@ -3184,7 +3185,7 @@ impl eframe::App for LauncherApp {
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
                             .min_size(egui::vec2(76.0, 22.0));
-                            if ui.add(btn_ext).on_hover_text("Open desktop terminal connected via SSH").clicked() {
+                            if ui.add(btn_ext).hover_tip("Open desktop terminal connected via SSH").clicked() {
                                 let _ = launch_external_ssh_terminal(host);
                             }
 
@@ -3200,7 +3201,7 @@ impl eframe::App for LauncherApp {
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
                             .min_size(egui::vec2(86.0, 22.0));
-                            if ui.add(btn_shutdown).on_hover_text("Shut down remote device (requires confirmation & sudo password)").clicked() {
+                            if ui.add(btn_shutdown).hover_tip("Shut down remote device (requires confirmation & sudo password)").clicked() {
                                 self.remote_shutdown_modal.open_for_host(host);
                             }
 
@@ -3214,7 +3215,7 @@ impl eframe::App for LauncherApp {
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
                             .min_size(egui::vec2(0.0, 22.0));
-                            if ui.add(btn_reboot).on_hover_text("Restart remote device (requires confirmation & sudo password)").clicked() {
+                            if ui.add(btn_reboot).hover_tip("Restart remote device (requires confirmation & sudo password)").clicked() {
                                 self.remote_reboot_modal.open_for_host(host);
                             }
                         } else {
@@ -3223,7 +3224,7 @@ impl eframe::App for LauncherApp {
                                 .size(11.0).strong().color(p.accent_text))
                                 .fill(p.accent).stroke(Stroke::NONE).rounding(Rounding::same(6.0))
                                 .min_size(egui::vec2(90.0, 22.0));
-                            if ui.add(add).on_hover_text("Configure a new server").clicked() {
+                            if ui.add(add).hover_tip("Configure a new server").clicked() {
                                 self.add_edit_modal.open_new();
                             }
                             let compact_actions = ui.available_width() < 320.0;
@@ -3232,7 +3233,7 @@ impl eframe::App for LauncherApp {
                                 .size(11.0).color(p.text_secondary))
                                 .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0))
                                 .min_size(egui::vec2(if compact_actions { 22.0 } else { 92.0 }, 22.0));
-                            if ui.add(quick).on_hover_text("Quick Launch · Ctrl+P or Ctrl+K").clicked() {
+                            if ui.add(quick).hover_tip("Quick Launch · Ctrl+P or Ctrl+K").clicked() {
                                 self.palette_modal.open = true;
                                 self.palette_modal.query.clear();
                             }
@@ -5242,24 +5243,24 @@ fn render_big_stat_card(
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 ui.label(RichText::new(icon).size(15.0).color(accent_color));
-                ui.add(egui::Label::new(RichText::new(title).size(11.0).monospace().strong().color(text_muted)).truncate()).on_hover_text(title);
+                ui.add(egui::Label::new(RichText::new(title).size(11.0).monospace().strong().color(text_muted)).truncate()).hover_tip(title);
             });
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                ui.add(egui::Label::new(RichText::new(hero_val).size(if hero_val.len() > 12 { 24.0 } else { 34.0 }).strong().color(ui.visuals().text_color())).truncate()).on_hover_text(hero_val);
+                ui.add(egui::Label::new(RichText::new(hero_val).size(if hero_val.len() > 12 { 24.0 } else { 34.0 }).strong().color(ui.visuals().text_color())).truncate()).hover_tip(hero_val);
                 if !hero_unit.is_empty() {
-                    ui.add(egui::Label::new(RichText::new(hero_unit).size(12.0).color(text_muted)).truncate()).on_hover_text(hero_unit);
+                    ui.add(egui::Label::new(RichText::new(hero_unit).size(12.0).color(text_muted)).truncate()).hover_tip(hero_unit);
                 }
             });
             ui.add_space(2.0);
-            ui.add(egui::Label::new(RichText::new(subtitle).size(11.0).monospace().color(text_muted)).truncate()).on_hover_text(subtitle);
+            ui.add(egui::Label::new(RichText::new(subtitle).size(11.0).monospace().color(text_muted)).truncate()).hover_tip(subtitle);
             ui.add_space(5.0);
             ui.horizontal(|ui| {
                 let width = ((ui.available_width() - ui.spacing().item_spacing.x) * 0.5).max(0.0);
-                ui.add_sized(egui::vec2(width, 17.0), egui::Label::new(RichText::new(left_stat).size(10.0).monospace().color(text_muted)).truncate()).on_hover_text(left_stat);
+                ui.add_sized(egui::vec2(width, 17.0), egui::Label::new(RichText::new(left_stat).size(10.0).monospace().color(text_muted)).truncate()).hover_tip(left_stat);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add_sized(egui::vec2(width, 17.0), egui::Label::new(RichText::new(right_stat).size(10.0).monospace().color(text_muted)).truncate()).on_hover_text(right_stat);
+                    ui.add_sized(egui::vec2(width, 17.0), egui::Label::new(RichText::new(right_stat).size(10.0).monospace().color(text_muted)).truncate()).hover_tip(right_stat);
                 });
             });
             ui.add_space(5.0);
@@ -5514,7 +5515,7 @@ fn cached_inline_console_galley(ui: &Ui, port: u16, logs: &VecDeque<crate::servi
 
 fn process_detail_value(ui: &mut Ui, text: &str, color: Color32) -> egui::Response {
     ui.add(egui::Label::new(RichText::new(text).size(10.5).monospace().color(color)).truncate())
-        .on_hover_text(text)
+        .hover_tip(text)
 }
 
 fn render_inline_console_output(ui: &mut Ui, port: u16, logs: Option<&VecDeque<crate::service::LogEntry>>, p: &crate::theme::ThemePalette) -> egui::Rect {
@@ -5572,7 +5573,7 @@ fn render_server_card_title(ui: &mut Ui, name: &str, width: f32, height: f32, se
     if response.has_focus() {
         ui.painter().rect_stroke(row.rect, Rounding::same(4.0), Stroke::new(1.0_f32, p.accent));
     }
-    response.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(hint)
+    response.on_hover_cursor(egui::CursorIcon::PointingHand).hover_tip(hint)
 }
 
 fn render_modern_toggle_switch(ui: &mut Ui, on: &mut bool, p: &crate::theme::ThemePalette, label: &str) -> bool {
@@ -5596,7 +5597,7 @@ fn render_modern_toggle_switch(ui: &mut Ui, on: &mut bool, p: &crate::theme::The
     let thumb = if *on { p.accent_text } else { p.text_secondary };
     ui.painter().circle_filled(egui::pos2(circle_x, rect.center().y), 5.0, thumb);
     let changed = response.changed();
-    response.on_hover_text(label);
+    response.hover_tip(label);
     changed
 }
 

@@ -129,7 +129,7 @@ pub(super) fn overview_metric(
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.label(RichText::new(icon).size(15.0).color(accent));
-                ui.add(egui::Label::new(RichText::new(title).size(11.0).monospace().strong().color(palette.text_muted)).truncate()).on_hover_text(title);
+                ui.add(egui::Label::new(RichText::new(title).size(11.0).monospace().strong().color(palette.text_muted)).truncate()).hover_tip(title);
             });
             ui.add_space(6.0);
             ui.horizontal(|ui| {
@@ -138,7 +138,7 @@ pub(super) fn overview_metric(
                     ui.label(RichText::new(unit).size(14.0).strong().color(palette.text_muted));
                 }
             });
-            ui.add(egui::Label::new(RichText::new(detail).size(11.0).monospace().color(palette.text_secondary)).truncate()).on_hover_text(detail);
+            ui.add(egui::Label::new(RichText::new(detail).size(11.0).monospace().color(palette.text_secondary)).truncate()).hover_tip(detail);
             ui.add_space(5.0);
             let (sum, count, peak) = history.iter().copied().filter(|v| v.is_finite())
                 .fold((0.0, 0, f32::NEG_INFINITY), |(sum, count, peak), v| (sum + v, count + 1, peak.max(v)));

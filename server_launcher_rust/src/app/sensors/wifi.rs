@@ -395,7 +395,7 @@ impl LauncherApp {
                                                 ui.set_width(ui.available_width());
                                                 ui.label(RichText::new(*k).size(7.5).monospace().color(p.text_muted));
                                                 ui.add_space(1.0);
-                                                ui.add(egui::Label::new(RichText::new(*v).size(9.0).monospace().strong().color(p.text_primary)).truncate()).on_hover_text(*v);
+                                                ui.add(egui::Label::new(RichText::new(*v).size(9.0).monospace().strong().color(p.text_primary)).truncate()).hover_tip(*v);
                                             });
                                     }
                                 });
@@ -659,7 +659,7 @@ impl LauncherApp {
                                             ui.painter().rect_filled(copy_rect, Rounding::same(4.0), accent_with_alpha(accent, 20));
                                         }
                                         ui.painter().text(copy_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::COPY, egui::FontId::proportional(12.5), copy_col);
-                                        let copy_resp = copy_resp.on_hover_text(if can_copy { "Copy IPv4 address to clipboard" } else { "IPv4 address unavailable" });
+                                        let copy_resp = copy_resp.hover_tip(if can_copy { "Copy IPv4 address to clipboard" } else { "IPv4 address unavailable" });
                                         if copy_resp.clicked() {
                                             let text_to_copy = format!("{}{}", ip_without_cidr, cidr_str);
                                             ui.output_mut(|o| o.copied_text = text_to_copy.clone());
@@ -703,7 +703,7 @@ impl LauncherApp {
                                             if flush_resp.clicked() {
                                                 self.queue_wifi_action(None, ui.ctx().clone());
                                             }
-                                            flush_resp.on_hover_text("Flush system DNS cache");
+                                            flush_resp.hover_tip("Flush system DNS cache");
                                         }
                                         let clean_dns = dns_resolvers_str.split(',').next().unwrap_or(dns_resolvers_str).trim();
                                         ui.label(RichText::new(clean_dns).size(9.5).monospace().color(p.text_primary));
@@ -723,7 +723,7 @@ impl LauncherApp {
                                             ui.painter().rect_filled(copy_v6_rect, Rounding::same(3.0), accent_with_alpha(accent, 20));
                                         }
                                         ui.painter().text(copy_v6_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::COPY, egui::FontId::proportional(11.0), copy_v6_col);
-                                        let copy_v6_resp = copy_v6_resp.on_hover_text(if can_copy { "Copy IPv6 address to clipboard" } else { "IPv6 address unavailable" });
+                                        let copy_v6_resp = copy_v6_resp.hover_tip(if can_copy { "Copy IPv6 address to clipboard" } else { "IPv6 address unavailable" });
                                         if copy_v6_resp.clicked() {
                                             ui.output_mut(|o| o.copied_text = ip_v6_str.to_string());
                                             self.wifi_status_msg = Some(("Copied IPv6 address to clipboard".to_string(), false, Instant::now()));
@@ -850,7 +850,7 @@ impl LauncherApp {
                                                 self.wifi_status_msg = Some(("Remote socket telemetry streaming in realtime via SSH".to_string(), false, Instant::now()));
                                             }
                                         }
-                                        mon_resp.on_hover_text("Refresh active listening sockets");
+                                        mon_resp.hover_tip("Refresh active listening sockets");
                                     });
                                 });
 

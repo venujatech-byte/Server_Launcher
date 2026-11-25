@@ -221,7 +221,7 @@ impl LauncherApp {
                             ] {
                                 let button = egui::Button::new(RichText::new(command).monospace().size(11.0).color(p.text_secondary))
                                     .fill(p.bg_button).stroke(Stroke::NONE).rounding(8.0);
-                                if ui.add(button).on_hover_text(hint).clicked() {
+                                if ui.add(button).hover_tip(hint).clicked() {
                                     self.run_remote_ssh_command(host, command, Some(ui.ctx().clone()), false);
                                 }
                             }
@@ -229,12 +229,12 @@ impl LauncherApp {
                     });
                     if running && ui.add_sized([72.0, 24.0], egui::Button::new(RichText::new("Cancel all").size(11.0))
                         .fill(p.bg_button).stroke(Stroke::NONE).rounding(8.0))
-                        .on_hover_text("Close all running command connections for this host").clicked()
+                        .hover_tip("Close all running command connections for this host").clicked()
                     {
                         self.cancel_remote_commands(&host.id);
                     }
                     if ui.add_sized([68.0, 24.0], egui::Button::new(RichText::new(format!("{} Clear", crate::lucide::TRASH)).size(11.0))
-                        .fill(p.bg_button).stroke(Stroke::NONE).rounding(8.0)).on_hover_text("Clear terminal output").clicked() {
+                        .fill(p.bg_button).stroke(Stroke::NONE).rounding(8.0)).hover_tip("Clear terminal output").clicked() {
                         self.clear_remote_terminal_logs(&host.id);
                     }
                 });
@@ -274,7 +274,7 @@ impl LauncherApp {
                             let prompt_width = (ui.available_width() * 0.30).min(180.0);
                             ui.add_sized([prompt_width, 24.0], egui::Label::new(
                                 RichText::new(&prompt).monospace().size(12.0).color(p.success)
-                            ).truncate()).on_hover_text(&prompt);
+                            ).truncate()).hover_tip(&prompt);
                             let input = self.remote_terminal_inputs.entry(host.id.clone()).or_default();
                             let input_width = (ui.available_width() - 68.0 - ui.spacing().item_spacing.x).max(0.0);
                             let editor = ui.add_sized([input_width, 24.0], egui::TextEdit::singleline(input)

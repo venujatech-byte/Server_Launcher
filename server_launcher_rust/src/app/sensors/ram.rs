@@ -149,7 +149,7 @@ impl LauncherApp {
 
                         let (bar_res, bar_p) = ui.allocate_painter(egui::vec2(ui.available_width(), 16.0), egui::Sense::hover());
                         let br = bar_res.rect;
-                        bar_res.on_hover_text("In use versus the remainder of reported total memory. Free, dirty and reclaimable values below are separate counters and may overlap.");
+                        bar_res.hover_tip("In use versus the remainder of reported total memory. Free, dirty and reclaimable values below are separate counters and may overlap.");
                         bar_p.rect_filled(br, Rounding::same(4.0), p.bg_input);
 
                         if memory_available {
@@ -333,7 +333,7 @@ impl LauncherApp {
                                         .fill(accent_with_alpha(accent, 18))
                                         .rounding(Rounding::same(999.0))
                                         .min_size(egui::vec2(0.0, 18.0));
-                                    if ui.add(btn).on_hover_text("Open Top Apps & Process Tree subtab").clicked() {
+                                    if ui.add(btn).hover_tip("Open Top Apps & Process Tree subtab").clicked() {
                                         self.sensors_subtab = SensorsSubTab::TopApps;
                                         self.sensors_top_apps_visited = true;
                                     }

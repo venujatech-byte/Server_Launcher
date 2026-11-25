@@ -100,7 +100,7 @@ impl LauncherApp {
                                     }
                                     ui.add_sized([shell_width, 20.0], egui::Label::new(
                                         RichText::new(&s.shell).size(10.0).monospace().color(p.text_muted))
-                                        .truncate().halign(egui::Align::Max)).on_hover_text(&s.shell);
+                                        .truncate().halign(egui::Align::Max)).hover_tip(&s.shell);
                                 });
 
                                 if s.autostart || !s.cwd.is_empty() {
@@ -123,7 +123,7 @@ impl LauncherApp {
                                                         .color(p.text_muted),
                                                 )
                                                 .truncate().halign(egui::Align::Min),
-                                            ).on_hover_text(&s.cwd);
+                                            ).hover_tip(&s.cwd);
                                         }
                                     });
                                 }
@@ -146,12 +146,12 @@ impl LauncherApp {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         let delete = egui::Button::new(RichText::new(crate::lucide::TRASH).size(11.0).color(p.text_muted))
                                             .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0));
-                                        if ui.add_sized([24.0, 24.0], delete).on_hover_text("Delete script").clicked() {
+                                        if ui.add_sized([24.0, 24.0], delete).hover_tip("Delete script").clicked() {
                                             to_delete = Some(s.id.clone());
                                         }
                                         let edit = egui::Button::new(RichText::new(crate::lucide::PENCIL).size(11.0).color(p.text_secondary))
                                             .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0));
-                                        if ui.add_sized([24.0, 24.0], edit).on_hover_text("Edit script").clicked() {
+                                        if ui.add_sized([24.0, 24.0], edit).hover_tip("Edit script").clicked() {
                                             to_edit = Some(s.clone());
                                         }
                                     });

@@ -140,7 +140,7 @@ impl LauncherApp {
                                     let btn = egui::Button::new(RichText::new(format!("{} Copy", crate::lucide::COPY)).size(10.0).color(palette.text_muted))
                                         .fill(palette.bg_button)
                                         .rounding(Rounding::same(4.0));
-                                    if ui.add(btn).on_hover_text("Copy to clipboard").clicked() {
+                                    if ui.add(btn).hover_tip("Copy to clipboard").clicked() {
                                         ui.ctx().output_mut(|o| o.copied_text = content.to_string());
                                     }
                                 });
@@ -943,7 +943,7 @@ impl LauncherApp {
                                 .rounding(Rounding::same(999.0))
                                 .min_size(egui::vec2(0.0, control_height))
                             };
-                            let btn_end_resp = ui.add(btn_end).on_hover_text(if has_selection {
+                            let btn_end_resp = ui.add(btn_end).hover_tip(if has_selection {
                                 "Click to terminate the selected process"
                             } else {
                                 "Select a process from the list below, then click End task to terminate it"
@@ -977,7 +977,7 @@ impl LauncherApp {
                                                         .stroke(Stroke::NONE)
                                                         .min_size(egui::vec2(20.0, search_inner_height)),
                                                 )
-                                                .on_hover_text("Clear search filter")
+                                                .hover_tip("Clear search filter")
                                                 .clicked()
                                             {
                                                 self.sensors_search_query.clear();
@@ -1298,7 +1298,7 @@ impl LauncherApp {
                                 if sortable { egui::Sense::click() } else { egui::Sense::hover() },
                             );
                             let response = if !sortable {
-                                response.on_hover_text(if key == "gpu" {
+                                response.hover_tip(if key == "gpu" {
                                     "Per-process GPU utilization is unavailable"
                                 } else {
                                     "Per-process power is unavailable"
@@ -1417,7 +1417,7 @@ impl LauncherApp {
                                                     } else {
                                                         format!("View {} subprocesses (Click to expand)", grp.children.len())
                                                     };
-                                                    let chev_resp = chev_resp.on_hover_text(tooltip);
+                                                    let chev_resp = chev_resp.hover_tip(tooltip);
                                                     if chev_resp.clicked() {
                                                         toggle_group_expand = Some(grp.key.clone());
                                                     }
@@ -1453,7 +1453,7 @@ impl LauncherApp {
                                                         .color(if is_group_selected { p.accent_light } else { p.text_primary }),
                                                 );
                                                 if char_count > 34 {
-                                                    label.on_hover_text(&disp_str);
+                                                    label.hover_tip(&disp_str);
                                                 }
 
                                                 exp_rect
@@ -1483,7 +1483,7 @@ impl LauncherApp {
                                                 egui::FontId::monospace(11.0),
                                                 cpu_color,
                                             );
-                                            let _ = cpu_resp.on_hover_text(if grp.cpu_usage_available { format!("{:.1}% Total System CPU ({:.1}% single-core raw)", norm_cpu, grp.sum_cpu) } else { "CPU usage unavailable for one or more processes".into() });
+                                            let _ = cpu_resp.hover_tip(if grp.cpu_usage_available { format!("{:.1}% Total System CPU ({:.1}% single-core raw)", norm_cpu, grp.sum_cpu) } else { "CPU usage unavailable for one or more processes".into() });
 
                                             // 3. Memory (Heatmap tinted cell, strictly bounded, right aligned)
                                             let (mem_rect, _mem_resp) = ui.allocate_exact_size(egui::vec2(COL_MEM_W, 22.0), egui::Sense::hover());
@@ -1530,7 +1530,7 @@ impl LauncherApp {
                                                 egui::FontId::monospace(11.0),
                                                 disk_color,
                                             );
-                                            let _ = disk_resp.on_hover_text(if grp.disk_rate_available { "Process disk read + write rate" } else { "Waiting for a prior process I/O sample" });
+                                            let _ = disk_resp.hover_tip(if grp.disk_rate_available { "Process disk read + write rate" } else { "Waiting for a prior process I/O sample" });
 
                                             // 5. Network (Strictly bounded, right aligned)
                                             let (net_rect, net_resp) = ui.allocate_exact_size(egui::vec2(COL_NET_W, 22.0), egui::Sense::hover());
@@ -1547,7 +1547,7 @@ impl LauncherApp {
                                                 egui::FontId::monospace(11.0),
                                                 net_color,
                                             );
-                                            let _ = net_resp.on_hover_text(if !snap.process_network_supported {
+                                            let _ = net_resp.hover_tip(if !snap.process_network_supported {
                                                 "Per-process network counters are unavailable from this host's sensor collector.".to_string()
                                             } else if !grp.sum_net_bytes_available {
                                                 "Per-process network counters are unavailable for one or more processes.".to_string()
@@ -1578,7 +1578,7 @@ impl LauncherApp {
                                                 egui::FontId::monospace(11.0),
                                                 gpu_color,
                                             );
-                                            let _ = gpu_resp.on_hover_text("Per-process GPU utilization is unavailable");
+                                            let _ = gpu_resp.hover_tip("Per-process GPU utilization is unavailable");
 
                                             // 7. Power (Heatmap tinted cell, strictly bounded, right aligned, right-most rounded corners)
                                             let (pwr_rect, pwr_resp) = ui.allocate_exact_size(egui::vec2(COL_POWER_W, 22.0), egui::Sense::hover());
@@ -1606,7 +1606,7 @@ impl LauncherApp {
                                                 egui::FontId::proportional(11.0),
                                                 pwr_color,
                                             );
-                                            let _ = pwr_resp.on_hover_text("Per-process power is not available from this collector".to_string());
+                                            let _ = pwr_resp.hover_tip("Per-process power is not available from this collector".to_string());
 
                                             let row_interactive_rect = if is_multi && expander_rect.width() > 0.0 {
                                                 egui::Rect::from_min_max(
@@ -1723,7 +1723,7 @@ impl LauncherApp {
                                                         egui::FontId::monospace(10.5),
                                                         if child.disk_rate_available { p.text_secondary } else { p.text_muted },
                                                     );
-                                                    let _ = c_disk_resp.on_hover_text(if child.disk_rate_available { "Process disk read + write rate" } else { "Waiting for a prior process I/O sample" });
+                                                    let _ = c_disk_resp.hover_tip(if child.disk_rate_available { "Process disk read + write rate" } else { "Waiting for a prior process I/O sample" });
 
                                                     // Child Network
                                                     let (c_net_rect, c_net_resp) = ui.allocate_exact_size(egui::vec2(COL_NET_W, 20.0), egui::Sense::hover());
@@ -1744,7 +1744,7 @@ impl LauncherApp {
                                                         egui::FontId::monospace(10.5),
                                                         c_net_color,
                                                     );
-                                                    let _ = c_net_resp.on_hover_text(if !snap.process_network_supported {
+                                                    let _ = c_net_resp.hover_tip(if !snap.process_network_supported {
                                                         "Per-process network counters are unavailable from this host's sensor collector.".to_string()
                                                     } else if !child.net_counters_available {
                                                         "Per-process network counters are unavailable for this process.".to_string()
@@ -1766,7 +1766,7 @@ impl LauncherApp {
                                                         egui::FontId::monospace(10.5),
                                                         p.text_muted,
                                                     );
-                                                    let _ = c_gpu_resp.on_hover_text("Per-process GPU utilization is unavailable from this collector");
+                                                    let _ = c_gpu_resp.hover_tip("Per-process GPU utilization is unavailable from this collector");
 
                                                     // Child Power
                                                     let (c_pwr_rect, c_pwr_resp) = ui.allocate_exact_size(egui::vec2(COL_POWER_W, 20.0), egui::Sense::hover());
@@ -1781,7 +1781,7 @@ impl LauncherApp {
                                                         egui::FontId::proportional(10.5),
                                                         Color32::from_rgb(140, 145, 155),
                                                     );
-                                                    let _ = c_pwr_resp.on_hover_text("Per-process power is not available from this collector");
+                                                    let _ = c_pwr_resp.hover_tip("Per-process power is not available from this collector");
 
                                                     let c_row_resp = ui.interact(child_row_rect, egui::Id::new("child_row_full_clk").with(child.pid), egui::Sense::click());
                                                     if c_row_resp.clicked() {

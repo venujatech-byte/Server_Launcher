@@ -82,7 +82,7 @@ impl LauncherApp {
                 if host_id.is_none() && !self.local_sudo_password.is_empty() {
                     ui.add_space(4.0);
                     if ui.button(RichText::new(format!("{} Sudo [{}]", crate::lucide::KEY, crate::lucide::X)).size(10.0).color(p.success))
-                        .on_hover_text("Sudo password cached for this session. Click to clear/forget.")
+                        .hover_tip("Sudo password cached for this session. Click to clear/forget.")
                         .clicked()
                     {
                         self.local_sudo_password.clear();
@@ -92,7 +92,7 @@ impl LauncherApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_ref = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(p.text_secondary))
                         .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0));
-                    if ui.add_sized([24.0, 24.0], btn_ref).on_hover_text("Refresh systemd services list").clicked() {
+                    if ui.add_sized([24.0, 24.0], btn_ref).hover_tip("Refresh systemd services list").clicked() {
                         if host_id.is_some() {
                             if let Some(host) = &host_opt {
                                 self.trigger_remote_services_list(host, user_mode);
@@ -227,17 +227,17 @@ impl LauncherApp {
                                     let name_width = (ui.available_width() - 74.0).max(0.0);
                                     ui.add_sized([name_width, 20.0], egui::Label::new(
                                         RichText::new(&s.name).size(11.5).strong().color(if is_selected { p.accent } else { p.text_primary }))
-                                        .truncate().halign(egui::Align::Min)).on_hover_text(&s.name);
+                                        .truncate().halign(egui::Align::Min)).hover_tip(&s.name);
                                     ui.add_sized([68.0, 20.0], egui::Label::new(
                                         RichText::new(&s.sub_state).size(10.0).color(colour))
-                                        .truncate().halign(egui::Align::Max)).on_hover_text(&s.sub_state);
+                                        .truncate().halign(egui::Align::Max)).hover_tip(&s.sub_state);
                                 });
                                 let description = if s.description.is_empty() || s.description == s.name {
                                     format!("{} service · {}", if user_mode { "User" } else { "System" }, s.load_state)
                                 } else { s.description.clone() };
                                 ui.add_sized([ui.available_width(), 14.0], egui::Label::new(
                                     RichText::new(&description).size(10.5).color(p.text_muted))
-                                    .truncate().halign(egui::Align::Min)).on_hover_text(&description);
+                                    .truncate().halign(egui::Align::Min)).hover_tip(&description);
                             })).inner;
 
                         let whole_card_click = ui.interact(
@@ -326,7 +326,7 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         let name_width = (ui.available_width() - 128.0).max(0.0);
                                         ui.add_sized([name_width, 20.0], egui::Label::new(RichText::new(&s.name).size(13.0).strong().color(p.text_primary))
-                                            .truncate().halign(egui::Align::Min)).on_hover_text(&s.name);
+                                            .truncate().halign(egui::Align::Min)).hover_tip(&s.name);
                                         let status_tag = if is_active {
                                             RichText::new(format!("{} Active (Running)", crate::lucide::CHECK)).size(11.0).strong().color(p.success)
                                         } else if is_failed {
@@ -412,7 +412,7 @@ impl LauncherApp {
                                             .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(999.0))
                                             .min_size(egui::vec2(86.0, 26.0));
-                                        if ui.add_enabled(is_enabled.is_some(), btn_enable).on_hover_text("Enable at startup; available after querying the unit state").clicked() {
+                                        if ui.add_enabled(is_enabled.is_some(), btn_enable).hover_tip("Enable at startup; available after querying the unit state").clicked() {
                                             action_to_run = Some("enable");
                                         }
                                     }
@@ -723,7 +723,7 @@ impl LauncherApp {
                 .stroke(if is_current { Stroke::NONE } else { Stroke::new(1.0_f32, p.border.gamma_multiply(0.5)) })
                 .rounding(Rounding::same(8.0)).wrap_mode(egui::TextWrapMode::Truncate);
                 let file_width = ui.fonts(|fonts| fonts.layout_no_wrap(label.clone(), egui::FontId::proportional(11.0), p.text_primary).size().x + 28.0).min(180.0);
-                if ui.add_sized([file_width, 24.0], btn).on_hover_text(format!("Path: {}\nType: {}", path, if *is_dropin { "Drop-In Override" } else { "Primary Unit File" })).clicked() {
+                if ui.add_sized([file_width, 24.0], btn).hover_tip(format!("Path: {}\nType: {}", path, if *is_dropin { "Drop-In Override" } else { "Primary Unit File" })).clicked() {
                     switch_to_path = Some(path.clone());
                 }
             }
@@ -757,7 +757,7 @@ impl LauncherApp {
             )
             .fill(p.accent)
             .rounding(Rounding::same(999.0));
-            if ui.add(btn_new_dropin).on_hover_text("Create a new configuration drop-in override (e.g. override.conf)").clicked() {
+            if ui.add(btn_new_dropin).hover_tip("Create a new configuration drop-in override (e.g. override.conf)").clicked() {
                 self.systemd_new_dropin_open = !self.systemd_new_dropin_open;
             }
 
@@ -765,7 +765,7 @@ impl LauncherApp {
             let btn_ref = egui::Button::new(RichText::new(format!("{} Refresh", crate::lucide::REFRESH_CW)).size(11.0).color(p.text_secondary))
                 .fill(p.bg_button)
                 .rounding(Rounding::same(999.0));
-            if ui.add_enabled(self.systemd_file_content == self.systemd_file_original, btn_ref).on_hover_text("Save or revert edits before reloading files from disk").clicked() {
+            if ui.add_enabled(self.systemd_file_content == self.systemd_file_original, btn_ref).hover_tip("Save or revert edits before reloading files from disk").clicked() {
                 let cache_key = format!("{}:{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), s.name, user_mode);
                 if let Ok(mut c) = self.systemd_files_cache.lock() {
                     c.remove(&cache_key);
@@ -884,7 +884,7 @@ impl LauncherApp {
                 ui.horizontal(|ui| {
                     let path_width = (ui.available_width() - 108.0 - if is_modified { 100.0 } else { 0.0 }).max(0.0);
                     ui.add_sized([path_width, 20.0], egui::Label::new(RichText::new(format!("{} {}", if is_dropin { crate::lucide::PACKAGE } else { crate::lucide::FILE_TEXT }, &cur_path))
-                        .size(11.0).monospace().color(p.info)).truncate().halign(egui::Align::Min)).on_hover_text(&cur_path);
+                        .size(11.0).monospace().color(p.info)).truncate().halign(egui::Align::Min)).hover_tip(&cur_path);
                     ui.label(RichText::new(if is_dropin { "Drop-in override" } else { "Primary unit" }).size(10.0).color(p.text_muted));
                     if is_modified { ui.label(RichText::new("● Unsaved").size(10.5).color(p.warning)); }
                 });
@@ -898,7 +898,7 @@ impl LauncherApp {
                         let btn_restart = egui::Button::new(RichText::new(format!("{} Restart Service", crate::lucide::REFRESH_CW)).size(10.5).color(p.text_secondary))
                             .fill(p.bg_button)
                             .rounding(Rounding::same(999.0));
-                        if ui.add(btn_restart).on_hover_text("Restart service to activate new configuration").clicked() {
+                        if ui.add(btn_restart).hover_tip("Restart service to activate new configuration").clicked() {
                             self.queue_systemd_action(PendingSudoAction::ServiceAction { unit: s.name.clone(), action: "restart", user_mode }, host_opt, None);
                         }
 
@@ -907,7 +907,7 @@ impl LauncherApp {
                             let btn_del = egui::Button::new(RichText::new(format!("{} Delete Drop-In", crate::lucide::TRASH)).size(10.5).strong().color(Color32::WHITE))
                                 .fill(p.danger)
                                 .rounding(Rounding::same(999.0));
-                            if ui.add_enabled(!is_modified && !file_busy, btn_del).on_hover_text("Save or revert edits before deleting this drop-in").clicked() {
+                            if ui.add_enabled(!is_modified && !file_busy, btn_del).hover_tip("Save or revert edits before deleting this drop-in").clicked() {
                                 self.queue_systemd_action(PendingSudoAction::DeleteDropIn { path: cur_path.clone(), user_mode }, host_opt, None);
                             }
                         }
@@ -917,7 +917,7 @@ impl LauncherApp {
                             let btn_revert = egui::Button::new(RichText::new("Revert").size(10.5).color(p.text_secondary))
                                 .fill(p.bg_button)
                                 .rounding(Rounding::same(999.0));
-                            if ui.add(btn_revert).on_hover_text("Discard changes and restore original file").clicked() {
+                            if ui.add(btn_revert).hover_tip("Discard changes and restore original file").clicked() {
                                 self.systemd_file_content = self.systemd_file_original.clone();
                             }
                         }
@@ -928,7 +928,7 @@ impl LauncherApp {
                         )
                         .fill(if is_modified { p.accent } else { p.bg_button })
                         .rounding(Rounding::same(999.0));
-                        if ui.add_enabled(file_loaded && is_modified && !file_busy, btn_save).on_hover_text("Save file to disk and execute systemctl daemon-reload").clicked() {
+                        if ui.add_enabled(file_loaded && is_modified && !file_busy, btn_save).hover_tip("Save file to disk and execute systemctl daemon-reload").clicked() {
                             self.queue_systemd_action(PendingSudoAction::SaveUnitFile { path: cur_path.clone(), content: self.systemd_file_content.clone(), user_mode }, host_opt, None);
                         }
                 });
@@ -1004,7 +1004,7 @@ impl LauncherApp {
                 )
                 .fill(p.accent)
                 .rounding(Rounding::same(999.0));
-                if ui.add(btn_back).on_hover_text(format!("Back to {}", prev)).clicked() {
+                if ui.add(btn_back).hover_tip(format!("Back to {}", prev)).clicked() {
                     let prev_unit = self.systemd_deps_history.pop().unwrap();
                     self.select_systemd_unit(&prev_unit, user_mode, host_opt);
                     return;
@@ -1052,7 +1052,7 @@ impl LauncherApp {
                 let btn_ref = egui::Button::new(RichText::new(format!("{} Refresh", crate::lucide::REFRESH_CW)).size(11.0).color(p.text_secondary))
                     .fill(p.bg_button)
                     .rounding(Rounding::same(999.0));
-                if ui.add(btn_ref).on_hover_text("Refresh dependencies").clicked() {
+                if ui.add(btn_ref).hover_tip("Refresh dependencies").clicked() {
                     let cache_key = format!("{}:{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), s.name, user_mode);
                     if let Ok(mut c) = self.systemd_deps_cache.lock() {
                         c.remove(&cache_key);
@@ -1156,7 +1156,7 @@ impl LauncherApp {
                                             .rounding(Rounding::same(8.0)).wrap_mode(egui::TextWrapMode::Truncate);
                                             let width = ui.fonts(|fonts| fonts.layout_no_wrap(unit_name.to_string(), egui::FontId::monospace(11.0), p.text_primary).size().x + 28.0)
                                                 .min(ui.max_rect().width()).min(280.0);
-                                            if ui.add_sized([width, 24.0], btn).on_hover_text(format!("Click to view and inspect dependencies for {}", unit_name)).clicked() {
+                                            if ui.add_sized([width, 24.0], btn).hover_tip(format!("Click to view and inspect dependencies for {}", unit_name)).clicked() {
                                                 navigate_to_unit = Some((*unit_name).clone());
                                             }
                                         }

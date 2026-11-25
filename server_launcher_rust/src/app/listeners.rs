@@ -77,7 +77,7 @@ impl LauncherApp {
                     ui.allocate_ui_with_layout(egui::vec2(heading_width, 24.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         ui.set_width(heading_width);
                         ui.add(egui::Label::new(heading).truncate().halign(egui::Align::Min))
-                            .on_hover_text(format!("Command Console · {}", metadata));
+                            .hover_tip(format!("Command Console · {}", metadata));
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Buttons use weak fills; set each state locally to follow the active palette.
@@ -92,13 +92,13 @@ impl LauncherApp {
                             egui::Button::new(RichText::new(format!("{} {}", icon, label)).size(10.5))
                                 .rounding(Rounding::same(6.0)).min_size(egui::vec2(width, 24.0))
                         };
-                        if ui.add(button(crate::lucide::X, "Close", 58.0)).on_hover_text("Close command console").clicked() {
+                        if ui.add(button(crate::lucide::X, "Close", 58.0)).hover_tip("Close command console").clicked() {
                             self.open_inline_terminals.remove(&port);
                         }
-                        if ui.add(button(crate::lucide::REFRESH_CW, "Refresh Logs", 92.0)).on_hover_text("Load available process logs; commands run separately from the server process").clicked() {
+                        if ui.add(button(crate::lucide::REFRESH_CW, "Refresh Logs", 92.0)).hover_tip("Load available process logs; commands run separately from the server process").clicked() {
                             self.refresh_inline_logs(port, pid, cwd);
                         }
-                        if ui.add(button(crate::lucide::TRASH, "Clear", 58.0)).on_hover_text("Clear terminal output").clicked() {
+                        if ui.add(button(crate::lucide::TRASH, "Clear", 58.0)).hover_tip("Clear terminal output").clicked() {
                             self.clear_inline_logs(port);
                         }
                     });
@@ -106,7 +106,7 @@ impl LauncherApp {
                 let directory = if cwd.is_empty() { "launcher working directory" } else { cwd };
                 ui.add(egui::Label::new(RichText::new(format!("Commands in: {}", directory))
                     .size(10.5).color(p.text_muted)).truncate())
-                    .on_hover_text(format!("Working directory: {}\nEach command starts a separate shell; it does not send input to the server process.\nRefresh Logs loads available process logs on demand.", directory));
+                    .hover_tip(format!("Working directory: {}\nEach command starts a separate shell; it does not send input to the server process.\nRefresh Logs loads available process logs on demand.", directory));
                 ui.add_space(4.0);
 
                 let logs = self.inline_terminal_sessions.get(&port).and_then(|session| session.logs.lock().ok());
@@ -128,12 +128,12 @@ impl LauncherApp {
                             .margin(egui::vec2(8.0, 4.0)),
                     );
                     ui.add_sized([32.0, 24.0], egui::Label::new(RichText::new("Enter").size(10.0).color(p.text_muted)))
-                        .on_hover_text("Press Enter to run the command");
+                        .hover_tip("Press Enter to run the command");
                     let run = egui::Button::new(RichText::new(format!("{} Run", crate::lucide::PLAY_FILLED))
                         .size(10.5).strong().color(p.accent_text))
                         .fill(p.accent).rounding(Rounding::same(6.0)).min_size(egui::vec2(58.0, 24.0));
                     let run_clicked = ui.add_enabled(!input_ref.trim().is_empty(), run)
-                        .on_hover_text("Run command · Enter").clicked();
+                        .hover_tip("Run command · Enter").clicked();
                     let enter_pressed = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if (enter_pressed || run_clicked) && !input_ref.trim().is_empty() {
                         let cmd = input_ref.trim().to_string();
@@ -189,7 +189,7 @@ impl LauncherApp {
                                 .font(egui::FontId::proportional(13.0))
                                 .hint_text(RichText::new("Search servers, ports or commands").color(p.text_muted))
                                 .desired_width(input_width).frame(false))
-                            .on_hover_text("Search by server name, port or command · Ctrl+F");
+                            .hover_tip("Search by server name, port or command · Ctrl+F");
                         if self.focus_overview_search {
                             response.request_focus();
                             self.focus_overview_search = false;
@@ -200,7 +200,7 @@ impl LauncherApp {
                         }
                         if !self.overview_search_query.is_empty() && ui.add_sized([24.0, 20.0],
                             egui::Button::new(RichText::new(crate::lucide::X).size(12.0)).frame(false))
-                            .on_hover_text("Clear search").clicked() {
+                            .hover_tip("Clear search").clicked() {
                             self.overview_search_query.clear();
                             self.refresh_server_list();
                         }
@@ -210,7 +210,7 @@ impl LauncherApp {
             if ui.add_enabled(!is_scanning, egui::Button::new(
                 RichText::new(format!("{} {refresh_label}", crate::lucide::REFRESH_CW)).size(12.0).color(p.accent))
                 .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0))
-                .min_size(egui::vec2(96.0, 28.0))).on_hover_text("Scan for running servers").clicked() {
+                .min_size(egui::vec2(96.0, 28.0))).hover_tip("Scan for running servers").clicked() {
                 self.refresh_server_list();
             }
         });
@@ -395,12 +395,12 @@ impl LauncherApp {
                                                 let icon = if is_expanded { crate::lucide::CHEVRON_DOWN } else { crate::lucide::CHEVRON_RIGHT };
                                                 let toggle = egui::Button::new(RichText::new(icon).size(11.0).color(p.text_secondary))
                                                     .fill(p.bg_button).rounding(Rounding::same(6.0)).min_size(egui::vec2(22.0, 24.0));
-                                                if ui.add(toggle).on_hover_text(if is_expanded { "Collapse process details" } else { "Expand process details" }).clicked() {
+                                                if ui.add(toggle).hover_tip(if is_expanded { "Collapse process details" } else { "Expand process details" }).clicked() {
                                                     if is_expanded { self.expanded_listeners.remove(&listener.port); }
                                                     else { self.expanded_listeners.insert(listener.port); }
                                                 }
                                                 ui.add(egui::Label::new(RichText::new(&listener.name).size(12.5).strong().color(p.text_primary)).truncate())
-                                                    .on_hover_text(&listener.name);
+                                                    .hover_tip(&listener.name);
                                             });
                                             ui.horizontal_wrapped(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 8.0;
@@ -423,14 +423,14 @@ impl LauncherApp {
                                             let stop = egui::Button::new(RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED)).size(10.5).color(Color32::WHITE))
                                                 .fill(p.danger).rounding(Rounding::same(6.0)).min_size(egui::vec2(60.0, 24.0));
                                             let identified = listener.pid.is_some() && listener.start_marker.is_some();
-                                            if ui.add_enabled(identified, stop).on_hover_text("Stop this process")
-                                                .on_disabled_hover_text("The scanner could not verify the process identity.").clicked() {
+                                            if ui.add_enabled(identified, stop).hover_tip("Stop this process")
+                                                .disabled_hover_tip("The scanner could not verify the process identity.").clicked() {
                                                 to_kill_pid = Some((*listener).clone());
                                             }
                                             let restart = egui::Button::new(RichText::new(format!("{} Restart", crate::lucide::REFRESH_CW)).size(10.5).color(p.accent))
                                                 .fill(p.accent_subtle).rounding(Rounding::same(6.0)).min_size(egui::vec2(76.0, 24.0));
-                                            if ui.add_enabled(identified && cfg!(target_os = "linux") && !cmd_str.is_empty(), restart).on_hover_text("Restart this process")
-                                                .on_disabled_hover_text("Restart requires a verified process and its launch command.").clicked() {
+                                            if ui.add_enabled(identified && cfg!(target_os = "linux") && !cmd_str.is_empty(), restart).hover_tip("Restart this process")
+                                                .disabled_hover_tip("Restart requires a verified process and its launch command.").clicked() {
                                                 to_restart_pid = Some((*listener).clone());
                                             }
                                         });
@@ -479,7 +479,7 @@ impl LauncherApp {
                                                             .fill(p.bg_button)
                                                             .stroke(Stroke::NONE)
                                                             .rounding(Rounding::same(999.0));
-                                                            if ui.add(btn_inline).on_hover_text("Open a shell-command console and load available process logs").clicked() {
+                                                            if ui.add(btn_inline).hover_tip("Open a shell-command console and load available process logs").clicked() {
                                                                 self.open_inline_terminals.insert(listener.port);
                                                                 self.ensure_inline_session(listener.port, &listener.name, listener.pid, &cmd_str, &cwd_str);
                                                             }
@@ -495,7 +495,7 @@ impl LauncherApp {
                                                         .stroke(Stroke::NONE)
                                                         .rounding(Rounding::same(999.0));
 
-                                                        if ui.add(btn_external).on_hover_text("Open desktop terminal window (gnome-terminal, alacritty, etc.) in working directory").clicked() {
+                                                        if ui.add(btn_external).hover_tip("Open desktop terminal window (gnome-terminal, alacritty, etc.) in working directory").clicked() {
                                                             to_launch_external_terminal = Some((
                                                                 listener.name.clone(),
                                                                 listener.pid,
@@ -516,7 +516,7 @@ impl LauncherApp {
                                                             .stroke(Stroke::NONE)
                                                             .rounding(Rounding::same(999.0));
 
-                                                            if ui.add(btn_folder).on_hover_text("Open working directory in desktop file manager (xdg-open)").clicked() {
+                                                            if ui.add(btn_folder).hover_tip("Open working directory in desktop file manager (xdg-open)").clicked() {
                                                                 crate::service::open_folder(&cwd_str);
                                                             }
 
@@ -530,7 +530,7 @@ impl LauncherApp {
                                                             .stroke(Stroke::NONE)
                                                             .rounding(Rounding::same(999.0));
 
-                                                            if ui.add(btn_vscode).on_hover_text("Open working directory in VS Code (code .)").clicked() {
+                                                            if ui.add(btn_vscode).hover_tip("Open working directory in VS Code (code .)").clicked() {
                                                                 crate::service::open_in_vscode(&cwd_str);
                                                             }
                                                         }
@@ -595,11 +595,11 @@ impl LauncherApp {
                                                 let icon = if is_expanded { crate::lucide::CHEVRON_DOWN } else { crate::lucide::CHEVRON_RIGHT };
                                                 let toggle = egui::Button::new(RichText::new(icon).size(11.0).color(p.text_secondary))
                                                     .fill(p.bg_button).rounding(Rounding::same(6.0)).min_size(egui::vec2(22.0, 24.0));
-                                                if ui.add(toggle).on_hover_text(if is_expanded { "Collapse process details" } else { "Expand process details" }).clicked() {
+                                                if ui.add(toggle).hover_tip(if is_expanded { "Collapse process details" } else { "Expand process details" }).clicked() {
                                                     if is_expanded { self.expanded_listeners.remove(port); }
                                                     else { self.expanded_listeners.insert(*port); }
                                                 }
-                                                ui.add(egui::Label::new(RichText::new(name).size(12.5).strong().color(p.text_primary)).truncate()).on_hover_text(name);
+                                                ui.add(egui::Label::new(RichText::new(name).size(12.5).strong().color(p.text_primary)).truncate()).hover_tip(name);
                                             });
                                             ui.horizontal_wrapped(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 8.0;
@@ -610,10 +610,10 @@ impl LauncherApp {
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                                             let remove = egui::Button::new(RichText::new(crate::lucide::X).size(11.0).color(p.text_secondary))
                                                 .fill(p.bg_button).rounding(Rounding::same(6.0)).min_size(egui::vec2(24.0, 24.0));
-                                            if ui.add(remove).on_hover_text("Remove stopped process from this list").clicked() { to_remove_stopped = Some(*port); }
+                                            if ui.add(remove).hover_tip("Remove stopped process from this list").clicked() { to_remove_stopped = Some(*port); }
                                             let start = egui::Button::new(RichText::new(format!("{} Start", crate::lucide::PLAY_FILLED)).size(10.5).color(p.accent_text))
                                                 .fill(p.accent).rounding(Rounding::same(6.0)).min_size(egui::vec2(76.0, 24.0));
-                                            if ui.add(start).on_hover_text("Start this process").clicked() { to_start_stopped = Some((*port, cmd.clone(), cwd.clone())); }
+                                            if ui.add(start).hover_tip("Start this process").clicked() { to_start_stopped = Some((*port, cmd.clone(), cwd.clone())); }
                                         });
                                     });
 
@@ -661,7 +661,7 @@ impl LauncherApp {
                                                             .fill(p.bg_button)
                                                             .stroke(Stroke::NONE)
                                                             .rounding(Rounding::same(999.0));
-                                                            if ui.add(btn_inline).on_hover_text("Open a shell-command console in this working directory").clicked() {
+                                                            if ui.add(btn_inline).hover_tip("Open a shell-command console in this working directory").clicked() {
                                                                 self.open_inline_terminals.insert(*port);
                                                                 self.ensure_inline_session(*port, name, None, cmd, cwd);
                                                             }
@@ -677,7 +677,7 @@ impl LauncherApp {
                                                         .stroke(Stroke::NONE)
                                                         .rounding(Rounding::same(999.0));
 
-                                                        if ui.add(btn_external).on_hover_text("Open desktop terminal window (gnome-terminal, alacritty, etc.) in working directory").clicked() {
+                                                        if ui.add(btn_external).hover_tip("Open desktop terminal window (gnome-terminal, alacritty, etc.) in working directory").clicked() {
                                                             to_launch_external_terminal = Some((
                                                                 name.clone(),
                                                                 None,
@@ -698,7 +698,7 @@ impl LauncherApp {
                                                             .stroke(Stroke::NONE)
                                                             .rounding(Rounding::same(999.0));
 
-                                                            if ui.add(btn_folder).on_hover_text("Open working directory in desktop file manager (xdg-open)").clicked() {
+                                                            if ui.add(btn_folder).hover_tip("Open working directory in desktop file manager (xdg-open)").clicked() {
                                                                 crate::service::open_folder(cwd);
                                                             }
 
@@ -712,7 +712,7 @@ impl LauncherApp {
                                                             .stroke(Stroke::NONE)
                                                             .rounding(Rounding::same(999.0));
 
-                                                            if ui.add(btn_vscode).on_hover_text("Open working directory in VS Code (code .)").clicked() {
+                                                            if ui.add(btn_vscode).hover_tip("Open working directory in VS Code (code .)").clicked() {
                                                                 crate::service::open_in_vscode(cwd);
                                                             }
                                                         }

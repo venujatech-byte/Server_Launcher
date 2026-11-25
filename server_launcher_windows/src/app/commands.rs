@@ -26,7 +26,7 @@ impl LauncherApp {
                     )
                     .fill(p.accent)
                     .stroke(Stroke::NONE).rounding(Rounding::same(8.0)).min_size(egui::vec2(0.0, 24.0));
-                    if ui.add(btn_new).on_hover_text("Save a new custom command snippet").clicked() {
+                    if ui.add(btn_new).hover_tip("Save a new custom command snippet").clicked() {
                         self.command_modal.open_create(host_id.map(|s| s.to_string()));
                     }
 
@@ -38,7 +38,7 @@ impl LauncherApp {
                     )
                     .fill(p.bg_button)
                     .stroke(Stroke::NONE).rounding(Rounding::same(8.0)).min_size(egui::vec2(0.0, 24.0));
-                    if ui.add(btn_export).on_hover_text("Export saved commands as a JSON file").clicked() {
+                    if ui.add(btn_export).hover_tip("Export saved commands as a JSON file").clicked() {
                         self.export_commands_to_file_dialog(host_id);
                     }
 
@@ -50,7 +50,7 @@ impl LauncherApp {
                     )
                     .fill(p.bg_button)
                     .stroke(Stroke::NONE).rounding(Rounding::same(8.0)).min_size(egui::vec2(0.0, 24.0));
-                    if ui.add(btn_import).on_hover_text("Import commands from a JSON file").clicked() {
+                    if ui.add(btn_import).hover_tip("Import commands from a JSON file").clicked() {
                         self.import_commands_from_file_dialog(host_id);
                     }
                 });
@@ -138,7 +138,7 @@ impl LauncherApp {
                             let label = format!("{} ({})", cat, cat_count);
                             let selected = self.saved_command_category == *cat;
                             ui.selectable_value(&mut self.saved_command_category, cat.clone(),
-                                RichText::new(&label).size(11.5).color(if selected { p.accent } else { p.text_secondary })).on_hover_text(&label);
+                                RichText::new(&label).size(11.5).color(if selected { p.accent } else { p.text_secondary })).hover_tip(&label);
                         }
                     });
             });
@@ -242,17 +242,17 @@ impl LauncherApp {
                                     let name_width = (ui.available_width() - category_width - ui.spacing().item_spacing.x).max(0.0);
                                     ui.add_sized([name_width, 18.0], egui::Label::new(
                                         RichText::new(&c.name).size(12.0).strong().color(p.text_primary))
-                                        .truncate().halign(egui::Align::Min)).on_hover_text(&c.name);
+                                        .truncate().halign(egui::Align::Min)).hover_tip(&c.name);
                                     ui.add_sized([category_width, 18.0], egui::Label::new(
                                         RichText::new(&c.category).size(10.0).color(p.text_muted))
-                                        .truncate().halign(egui::Align::Max)).on_hover_text(&c.category);
+                                        .truncate().halign(egui::Align::Max)).hover_tip(&c.category);
                                 });
                                 ui.add_sized([ui.available_width(), 16.0], egui::Label::new(
                                     RichText::new(&c.command).size(11.0).monospace().color(p.info))
-                                    .truncate().halign(egui::Align::Min)).on_hover_text(&c.command);
+                                    .truncate().halign(egui::Align::Min)).hover_tip(&c.command);
                                 ui.add_sized([ui.available_width(), 12.0], egui::Label::new(
                                     RichText::new(&c.description).size(10.0).color(p.text_muted))
-                                    .truncate().halign(egui::Align::Min)).on_hover_text(&c.description);
+                                    .truncate().halign(egui::Align::Min)).hover_tip(&c.description);
                                 ui.horizontal(|ui| {
                                     ui.set_min_height(22.0);
                                     let mut run_in_ext = c.run_in_terminal;
@@ -261,28 +261,28 @@ impl LauncherApp {
                                         .fill(p.accent).stroke(Stroke::NONE).rounding(Rounding::same(8.0))
                                         .min_size(egui::vec2(60.0, 22.0));
                                     let run_hover = if run_in_ext { "Execute in external desktop terminal window" } else { "Execute in terminal" };
-                                    if ui.add(run).on_hover_text(run_hover).clicked() {
+                                    if ui.add(run).hover_tip(run_hover).clicked() {
                                         to_run_cmd = Some((c.command.clone(), run_in_ext));
                                     }
                                     let label_color = if run_in_ext { p.info } else { p.text_secondary };
                                     if ui.checkbox(&mut run_in_ext, RichText::new("External").size(10.5).color(label_color))
-                                        .on_hover_text("Run this command in an external desktop terminal").changed() {
+                                        .hover_tip("Run this command in an external desktop terminal").changed() {
                                         to_toggle_external = Some((c.id.clone(), run_in_ext));
                                     }
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         let delete = egui::Button::new(RichText::new(crate::lucide::TRASH).size(10.5).color(p.text_muted))
                                             .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0));
-                                        if ui.add_sized([22.0, 22.0], delete).on_hover_text("Delete command").clicked() {
+                                        if ui.add_sized([22.0, 22.0], delete).hover_tip("Delete command").clicked() {
                                             to_delete = Some(c.id.clone());
                                         }
                                         let edit = egui::Button::new(RichText::new(crate::lucide::PENCIL).size(10.5).color(p.text_secondary))
                                             .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0));
-                                        if ui.add_sized([22.0, 22.0], edit).on_hover_text("Edit command").clicked() {
+                                        if ui.add_sized([22.0, 22.0], edit).hover_tip("Edit command").clicked() {
                                             to_edit = Some(c.clone());
                                         }
                                         let copy = egui::Button::new(RichText::new(crate::lucide::COPY).size(10.5).color(p.text_secondary))
                                             .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0));
-                                        if ui.add_sized([22.0, 22.0], copy).on_hover_text("Copy command").clicked() {
+                                        if ui.add_sized([22.0, 22.0], copy).hover_tip("Copy command").clicked() {
                                             ui.ctx().copy_text(c.command.clone());
                                         }
                                     });
@@ -402,7 +402,7 @@ impl LauncherApp {
                                     RichText::new(&title).size(12.5).strong().color(p.text_primary),
                                 )
                                 .truncate().halign(egui::Align::Min),
-                            ).on_hover_text(&title);
+                            ).hover_tip(&title);
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 let btn_clear = egui::Button::new(
@@ -411,7 +411,7 @@ impl LauncherApp {
                                         .color(p.text_secondary),
                                 )
                                 .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0));
-                                if ui.add_sized([60.0, 24.0], btn_clear).on_hover_text("Clear output · Ctrl+L").clicked() {
+                                if ui.add_sized([60.0, 24.0], btn_clear).hover_tip("Clear output · Ctrl+L").clicked() {
                                     term.clear();
                                     term.request_focus = true;
                                 }
@@ -425,7 +425,7 @@ impl LauncherApp {
                                     )
                                     .fill(p.danger).stroke(Stroke::NONE)
                                     .rounding(Rounding::same(6.0));
-                                    if ui.add_sized([88.0, 24.0], btn_stop).on_hover_text("Interrupt command · Ctrl+C").clicked() {
+                                    if ui.add_sized([88.0, 24.0], btn_stop).hover_tip("Interrupt command · Ctrl+C").clicked() {
                                         term.interrupt();
                                         term.request_focus = true;
                                     }
@@ -438,7 +438,7 @@ impl LauncherApp {
                                     .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0));
                                     if ui
                                         .add_sized([104.0, 24.0], btn_ext)
-                                        .on_hover_text("Open native system terminal window in current directory")
+                                        .hover_tip("Open native system terminal window in current directory")
                                         .clicked()
                                     {
                                         let _ = crate::commands::open_system_terminal(&term.cwd);
@@ -463,7 +463,7 @@ impl LauncherApp {
                                     } else {
                                         p.text_muted
                                     })).truncate().halign(egui::Align::Min),
-                            ).on_hover_text(&stat_msg);
+                            ).hover_tip(&stat_msg);
                             ui.label(RichText::new("•").size(11.0).color(p.text_muted));
                             ui.add(
                                 egui::Label::new(
@@ -474,7 +474,7 @@ impl LauncherApp {
                                 )
                                 .truncate(),
                             )
-                            .on_hover_text(&cwd_display);
+                            .hover_tip(&cwd_display);
                         });
                     });
                 });
@@ -553,7 +553,7 @@ impl LauncherApp {
                                 .strong()
                                 .monospace()
                                 .color(prompt_color)).truncate().halign(egui::Align::Min),
-                        ).on_hover_text(&prompt_label);
+                        ).hover_tip(&prompt_label);
 
                         let hint = if is_running {
                             "Send input… · Ctrl+C to interrupt"
@@ -651,7 +651,7 @@ impl LauncherApp {
                             )
                             .fill(p.danger).stroke(Stroke::NONE)
                             .rounding(Rounding::same(6.0));
-                            if ui.add_sized([64.0, 28.0], btn_stop).on_hover_text("Interrupt running process (Ctrl+C)").clicked() {
+                            if ui.add_sized([64.0, 28.0], btn_stop).hover_tip("Interrupt running process (Ctrl+C)").clicked() {
                                 term.interrupt();
                                 resp.request_focus();
                             }
@@ -661,7 +661,7 @@ impl LauncherApp {
                             )
                             .fill(p.accent).stroke(Stroke::NONE)
                             .rounding(Rounding::same(6.0));
-                            if ui.add_sized([64.0, 28.0], btn_run).on_hover_text("Run command (Enter)").clicked() {
+                            if ui.add_sized([64.0, 28.0], btn_run).hover_tip("Run command (Enter)").clicked() {
                                 to_execute = Some(term.input_text.clone());
                                 term.input_text.clear();
                                 resp.request_focus();

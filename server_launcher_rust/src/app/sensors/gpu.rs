@@ -121,7 +121,7 @@ impl LauncherApp {
                                 if ui.add(egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(p.text_muted))
                                     .fill(p.bg_subtle)
                                     .stroke(Stroke::NONE)
-                                    .rounding(Rounding::same(4.0))).on_hover_text("Refresh GPU telemetry").clicked() {
+                                    .rounding(Rounding::same(4.0))).hover_tip("Refresh GPU telemetry").clicked() {
                                     if let Some(hid) = host_id {
                                         if let Some(host) = self.ssh_hosts.iter().find(|host| host.id == hid).cloned() {
                                             self.trigger_remote_sensors_query(host);

@@ -30,18 +30,175 @@ pub enum LogKind {
 
 #[derive(Debug, Clone)]
 pub struct LogEntry {
-    pub text: String,
-    pub timestamp: String,
+    pub text: Arc<str>,
+    pub timestamp: Arc<str>,
     pub kind: LogKind,
 }
 
+const MAX_LOG_ENTRY_BYTES: usize = 8 * 1024;
+
 impl LogEntry {
-    pub fn new(text: String, kind: LogKind) -> Self {
+    pub fn new(mut text: String, kind: LogKind) -> Self {
+        const TRUNCATED: &str = " … [truncated]";
+        if text.len() > MAX_LOG_ENTRY_BYTES {
+            let mut end = MAX_LOG_ENTRY_BYTES - TRUNCATED.len();
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text.truncate(end);
+            text.push_str(TRUNCATED);
+        }
         let timestamp = Local::now().format("%H:%M:%S").to_string();
         Self {
-            text,
-            timestamp,
+            text: text.into(),
+            timestamp: timestamp.into(),
             kind,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ProcessIdentity {
+    key: String,
+    command: String,
+    cwd: String,
+    pid: u32,
+    start_time: u64,
+}
+
+impl ProcessIdentity {
+    fn matches(&self, config: &ServerConfig, pid: u32, start_time: u64) -> bool {
+        self.pid == pid && pid > 0 && self.start_time > 0 && self.start_time == start_time
+            && self.key == config.key && self.command == config.command && self.cwd == config.cwd
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+enum ProcessRecord {
+    Identity(ProcessIdentity),
+    Legacy(u32),
+}
+
+impl ProcessRecord {
+    fn pid(&self) -> u32 {
+        match self { Self::Identity(identity) => identity.pid, Self::Legacy(pid) => *pid }
+    }
+}
+
+fn validate_server_key(key: &str) -> std::io::Result<()> {
+    if key.is_empty() || key == "." || key == ".." || key.chars().any(|c| {
+        c.is_control() || matches!(c, '/' | '\\' | ':' | '<' | '>' | '"' | '|' | '?' | '*')
+    }) {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid server key for process record"));
+    }
+    Ok(())
+}
+
+fn pid_file(config: &ServerConfig) -> std::io::Result<std::path::PathBuf> {
+    validate_server_key(&config.key)?;
+    Ok(std::env::temp_dir().join(format!("launcher_{}.pid", config.key)))
+}
+
+fn read_process_record(config: &ServerConfig) -> Option<ProcessRecord> {
+    serde_json::from_str(&std::fs::read_to_string(pid_file(config).ok()?).ok()?).ok()
+}
+
+fn write_process_record(config: &ServerConfig, pid: u32) -> std::io::Result<()> {
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[Pid::from_u32(pid)]), false, sysinfo::ProcessRefreshKind::nothing());
+    let process = sys.process(Pid::from_u32(pid)).filter(|p| p.start_time() > 0)
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Process identity unavailable"))?;
+    let identity = ProcessIdentity {
+        key: config.key.clone(), command: config.command.clone(), cwd: config.cwd.clone(),
+        pid, start_time: process.start_time(),
+    };
+    write_identity(config, &identity)
+}
+
+fn write_identity(config: &ServerConfig, identity: &ProcessIdentity) -> std::io::Result<()> {
+    use std::io::Write;
+    let path = pid_file(config)?;
+    let mut temp = tempfile::NamedTempFile::new_in(std::env::temp_dir())?;
+    temp.write_all(&serde_json::to_vec(identity)?)?;
+    temp.as_file().sync_all()?;
+    temp.persist(path).map(|_| ()).map_err(|error| error.error)
+}
+
+// sysinfo 0.31 computes Linux CPU percentages only during an All refresh.
+// Keep this scheduled: extra refreshes reset the per-process CPU time baselines.
+pub fn refresh_process_metrics(sys: &mut System) {
+    let refresh = sysinfo::ProcessRefreshKind::nothing().with_cpu();
+    #[cfg(not(target_os = "linux"))]
+    let refresh = refresh.with_memory();
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
+}
+
+fn process_tree_pids(root: Pid, parents: impl IntoIterator<Item = (Pid, Option<Pid>)>) -> Vec<Pid> {
+    let parents: Vec<_> = parents.into_iter().collect();
+    let mut tree = vec![root];
+    let mut index = 0;
+    while index < tree.len() {
+        for &(pid, parent) in &parents {
+            if parent == Some(tree[index]) && !tree.contains(&pid) { tree.push(pid); }
+        }
+        index += 1;
+    }
+    tree
+}
+
+fn refresh_process_alive(pid: u32) -> bool {
+    // Keep liveness probes separate so they cannot overwrite the CPU sampling baseline.
+    let mut sys = System::new();
+    // Targeted sysinfo refreshes retain dead entries, so presence in the cache is not enough.
+    let updated = sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[Pid::from_u32(pid)]), false, sysinfo::ProcessRefreshKind::nothing());
+    updated > 0 && sys.process(Pid::from_u32(pid)).is_some_and(|p| p.status() != sysinfo::ProcessStatus::Zombie)
+}
+
+fn legacy_process_matches(config: &ServerConfig, command: &[std::ffi::OsString], cwd: Option<&std::path::Path>) -> bool {
+    if config.command.trim().is_empty() { return false; }
+    let expected_cwd = std::fs::canonicalize(&config.cwd).ok();
+    let actual_cwd = cwd.and_then(|path| std::fs::canonicalize(path).ok());
+    if expected_cwd.is_none() || expected_cwd != actual_cwd { return false; }
+    let args: Vec<_> = command.iter().map(|arg| arg.to_string_lossy()).collect();
+    let shell_command = args.windows(2).any(|pair| {
+        (pair[0] == "-c" || pair[0].eq_ignore_ascii_case("/C") || pair[0].eq_ignore_ascii_case("/K"))
+            && pair[1] == config.command
+    });
+    let wrapper = std::env::temp_dir().join(format!("launcher_{}.sh", config.key));
+    shell_command || args.join(" ") == config.command
+        || (config.own_console && command.iter().any(|arg| std::path::Path::new(arg) == wrapper))
+}
+
+// A port describes availability, never which config owns a process.
+// Reject ambiguous legacy records rather than assigning the same PID to multiple configs.
+pub fn reconnect_services(services: &mut [Service]) {
+    let records: Vec<_> = services.iter().map(|service| {
+        if service.state == ServiceState::Stopped { read_process_record(&service.config) } else { None }
+    }).collect();
+    let pids: Vec<_> = records.iter().flatten().map(ProcessRecord::pid).filter(|&pid| pid > 0).map(Pid::from_u32).collect();
+    if pids.is_empty() { return; }
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(ProcessesToUpdate::Some(&pids), false, sysinfo::ProcessRefreshKind::nothing()
+        .with_cmd(sysinfo::UpdateKind::Always).with_cwd(sysinfo::UpdateKind::Always));
+    let candidates: Vec<_> = records.iter().zip(services.iter()).map(|(record, service)| {
+        let record = record.as_ref()?;
+        let process = sys.process(Pid::from_u32(record.pid()))?;
+        if process.status() == sysinfo::ProcessStatus::Zombie { return None; }
+        let matches = match record {
+            ProcessRecord::Identity(identity) => identity.matches(&service.config, record.pid(), process.start_time()),
+            ProcessRecord::Legacy(_) => legacy_process_matches(&service.config, process.cmd(), process.cwd()),
+        };
+        matches.then_some((record.pid(), process.start_time()))
+    }).collect();
+    let claimed: std::collections::HashSet<_> = services.iter().filter_map(|service| service.pid).collect();
+    for (service, candidate) in services.iter_mut().zip(candidates.iter()) {
+        if let Some((pid, start_time)) = candidate {
+            if !claimed.contains(pid) && candidates.iter().filter(|candidate| candidate.is_some_and(|(other, _)| other == *pid)).count() == 1 {
+                service.attach_existing(*pid, *start_time);
+            } else {
+                service.append_log(format!("[launcher] Cannot reconnect: PID {} is claimed by multiple server configs. Start this server explicitly to record its identity.", pid), LogKind::Warning);
+            }
         }
     }
 }
@@ -77,7 +234,7 @@ impl Service {
             cpu_usage: 0.0,
             memory_mb: 0.0,
             started_at: None,
-            logs: Arc::new(Mutex::new(VecDeque::with_capacity(2000))),
+            logs: Arc::new(Mutex::new(VecDeque::new())),
             stdin_writer: None,
             child_handle: None,
             max_logs: 2000,
@@ -227,6 +384,7 @@ impl Service {
             LogKind::Launcher,
         );
         self.state = ServiceState::Starting;
+        if let Ok(path) = pid_file(&self.config) { let _ = std::fs::remove_file(path); }
 
         let cmd_str = self.config.command.clone();
         let cwd_str = self.config.cwd.clone();
@@ -254,6 +412,8 @@ impl Service {
                         format!("[launcher] Running in console window (PID: {})", pid),
                         LogKind::Launcher,
                     );
+                    #[cfg(target_os = "windows")]
+                    self.save_process_identity(pid);
                     self.child_handle = Some(child);
                     return;
                 }
@@ -301,8 +461,7 @@ impl Service {
                 self.started_at = Some(std::time::Instant::now());
                 self.state = ServiceState::Running;
 
-                let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", self.config.key));
-                let _ = std::fs::write(&pid_file, pid.to_string());
+                self.save_process_identity(pid);
 
                 self.append_log(
                     format!("[launcher] Process spawned (PID: {})", pid),
@@ -355,7 +514,13 @@ impl Service {
         }
     }
 
-    pub fn attach_existing(&mut self, pid: u32, is_port_listener: bool) {
+    fn save_process_identity(&self, pid: u32) {
+        if let Err(error) = write_process_record(&self.config, pid) {
+            self.append_log(format!("[launcher] Could not save process identity: {}", error), LogKind::Warning);
+        }
+    }
+
+    fn attach_existing(&mut self, pid: u32, start_time: u64) {
         if self.state == ServiceState::Running {
             return;
         }
@@ -368,14 +533,15 @@ impl Service {
         // Allow port check to run soon after reconnect
         self.last_port_check = std::time::Instant::now() - std::time::Duration::from_secs(10);
 
-        let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", self.config.key));
-        let _ = std::fs::write(&pid_file, pid.to_string());
-
-        let reason = if is_port_listener {
-            format!("active listener on port :{}", self.config.port)
-        } else {
-            "recorded in PID file from previous session".to_string()
+        // Preserve the start time we verified; a fresh lookup could observe a reused PID.
+        let identity = ProcessIdentity {
+            key: self.config.key.clone(), command: self.config.command.clone(), cwd: self.config.cwd.clone(),
+            pid, start_time,
         };
+        if let Err(error) = write_identity(&self.config, &identity) {
+            self.append_log(format!("[launcher] Could not save process identity: {}", error), LogKind::Warning);
+        }
+        let reason = "verified process identity from previous session";
 
         self.append_log(
             format!(
@@ -394,17 +560,17 @@ impl Service {
             let logs_clone = Arc::clone(&self.logs);
             let max_logs = self.max_logs;
             thread::spawn(move || {
-                if let Ok(output) = Command::new("journalctl")
-                    .args(["-q", &format!("_PID={}", pid), "-n", "25", "--no-pager"])
-                    .output()
+                if let Ok(mut journal) = Command::new("journalctl")
+                    .args(["-q", "-b", &format!("_PID={}", pid), "-n", "25", "--no-pager"])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .spawn()
                 {
-                    let out = String::from_utf8_lossy(&output.stdout);
-                    for line in out.lines() {
-                        let trimmed = line.trim();
-                        if !trimmed.is_empty() {
-                            push_log_line(trimmed, &logs_clone, max_logs, LogKind::Stdout);
-                        }
+                    if let Some(stdout) = journal.stdout.take() {
+                        spawn_stream_reader(stdout, logs_clone, max_logs, LogKind::Stdout);
                     }
+                    let _ = journal.wait();
                 }
             });
         }
@@ -440,17 +606,7 @@ impl Service {
             });
         }
 
-        let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", self.config.key));
-        if let Ok(content) = std::fs::read_to_string(&pid_file) {
-            if let Ok(p) = content.trim().parse::<u32>() {
-                #[cfg(unix)]
-                unsafe {
-                    libc::kill(-(p as i32), libc::SIGKILL);
-                    libc::kill(p as i32, libc::SIGKILL);
-                }
-            }
-        }
-        let _ = std::fs::remove_file(&pid_file);
+        if let Ok(path) = pid_file(&self.config) { let _ = std::fs::remove_file(path); }
 
         if let Some(pid) = self.pid {
             #[cfg(target_os = "windows")]
@@ -567,7 +723,7 @@ impl Service {
         });
     }
 
-    pub fn poll_status(&mut self, sys: &mut System) {
+    pub fn poll_status(&mut self, sys: &System) {
         // Fast path: if service is completely stopped and no restart scheduled, do nothing
         if self.state == ServiceState::Stopped && self.child_handle.is_none() && self.pid.is_none() && self.restart_at.is_none() {
             self.port_open = false;
@@ -593,17 +749,18 @@ impl Service {
         }
 
         if self.config.own_console {
-            let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", self.config.key));
-            if let Ok(content) = std::fs::read_to_string(&pid_file) {
-                if let Ok(p) = content.trim().parse::<u32>() {
-                    self.pid = Some(p);
+            let pid_file = pid_file(&self.config).ok();
+            // Unix terminal wrappers publish their shell PID after the terminal starts.
+            if let Some(ProcessRecord::Legacy(pid)) = read_process_record(&self.config) {
+                if pid > 0 {
+                    self.pid = Some(pid);
+                    self.save_process_identity(pid);
                 }
             }
 
             if let Some(pid) = self.pid {
-                #[cfg(unix)]
                 {
-                    let alive = unsafe { libc::kill(pid as i32, 0) == 0 };
+                    let alive = refresh_process_alive(pid);
                     if !alive {
                         self.state = ServiceState::Stopped;
                         self.pid = None;
@@ -612,7 +769,7 @@ impl Service {
                         self.cpu_usage = 0.0;
                         self.memory_mb = 0.0;
                         self.port_open = false;
-                        let _ = std::fs::remove_file(&pid_file);
+                        if let Some(path) = &pid_file { let _ = std::fs::remove_file(path); }
 
                         self.append_log(
                             "[launcher] Console process terminated.".to_string(),
@@ -699,10 +856,7 @@ impl Service {
                 Err(_) => {}
             }
         } else if let Some(pid) = self.pid {
-            #[cfg(unix)]
-            let alive = unsafe { libc::kill(pid as i32, 0) == 0 };
-            #[cfg(not(unix))]
-            let alive = sys.process(Pid::from_u32(pid)).is_some();
+            let alive = refresh_process_alive(pid);
 
             if !alive {
                 self.state = ServiceState::Stopped;
@@ -712,8 +866,7 @@ impl Service {
                 self.cpu_usage = 0.0;
                 self.memory_mb = 0.0;
                 self.port_open = false;
-                let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", self.config.key));
-                let _ = std::fs::remove_file(&pid_file);
+                if let Ok(path) = pid_file(&self.config) { let _ = std::fs::remove_file(path); }
 
                 self.append_log(
                     "[launcher] Attached process terminated.".to_string(),
@@ -748,43 +901,18 @@ impl Service {
 
         // Poll stats across main pid and child processes (ONLY when active)
         if let Some(pid) = self.pid {
+            let pids = process_tree_pids(Pid::from_u32(pid), sys.processes().iter()
+                .filter(|(_, process)| process.thread_kind().is_none())
+                .map(|(&pid, process)| (pid, process.parent())));
+            self.cpu_usage = pids.iter().filter_map(|pid| sys.process(*pid)).map(|process| process.cpu_usage()).sum();
             #[cfg(target_os = "linux")]
             {
-                let mut all_pids = vec![pid];
-                all_pids.extend(get_child_pids_linux(pid));
-                all_pids.sort_unstable();
-                all_pids.dedup();
-
-                let total_rss_kb: u64 = all_pids.iter().map(|&p| get_proc_rss_kb_linux(p)).sum();
+                let total_rss_kb: u64 = pids.iter().map(|pid| get_proc_rss_kb_linux(pid.as_u32())).sum();
                 self.memory_mb = (total_rss_kb as f32) / 1024.0;
-
-                // Refresh ONLY our specific PIDs in sysinfo (not the entire OS!)
-                let s_pids: Vec<Pid> = all_pids.iter().map(|&p| Pid::from_u32(p)).collect();
-                sys.refresh_processes(ProcessesToUpdate::Some(&s_pids));
-
-                let mut total_cpu = 0.0;
-                for &s_pid in &s_pids {
-                    if let Some(process) = sys.process(s_pid) {
-                        total_cpu += process.cpu_usage();
-                    }
-                }
-                self.cpu_usage = total_cpu;
             }
-
             #[cfg(not(target_os = "linux"))]
             {
-                let s_pid = Pid::from_u32(pid);
-                sys.refresh_processes(ProcessesToUpdate::Some(&[s_pid]));
-                let mut total_cpu = 0.0;
-                let mut total_mem_bytes = 0;
-
-                for (p_pid, process) in sys.processes() {
-                    if *p_pid == s_pid || process.parent() == Some(s_pid) {
-                        total_cpu += process.cpu_usage();
-                        total_mem_bytes += process.memory();
-                    }
-                }
-                self.cpu_usage = total_cpu;
+                let total_mem_bytes: u64 = pids.iter().filter_map(|pid| sys.process(*pid)).map(|process| process.memory()).sum();
                 self.memory_mb = (total_mem_bytes as f32) / (1024.0 * 1024.0);
             }
 
@@ -800,28 +928,6 @@ impl Service {
             self.port_open = false;
         }
     }
-}
-
-#[cfg(target_os = "linux")]
-fn get_child_pids_linux(pid: u32) -> Vec<u32> {
-    let mut children = Vec::new();
-    let task_path = format!("/proc/{}/task", pid);
-    if let Ok(entries) = std::fs::read_dir(&task_path) {
-        for entry in entries.flatten() {
-            let child_file = entry.path().join("children");
-            if let Ok(content) = std::fs::read_to_string(&child_file) {
-                for token in content.split_whitespace() {
-                    if let Ok(cid) = token.parse::<u32>() {
-                        if !children.contains(&cid) {
-                            children.push(cid);
-                            children.extend(get_child_pids_linux(cid));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    children
 }
 
 #[cfg(target_os = "linux")]
@@ -986,60 +1092,29 @@ pub fn launch_external_terminal(
     #[cfg(not(target_os = "windows"))]
     {
         let pid_num = pid.unwrap_or(0);
-        let script_dir = std::env::temp_dir();
-        let safe_name: String = name.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
-        let script_path = script_dir.join(format!("launcher_term_{}_{}.sh", safe_name, port));
-
-        let script_content = format!(
-r#"#!/usr/bin/env bash
-cd "{cwd}" 2>/dev/null || true
-echo "=========================================================="
-echo " Server Launcher: External Terminal"
-echo " Service : {name}"
-echo " Port    : :{port}"
-echo " PID     : {pid_num}"
-echo " CWD     : {cwd}"
-echo " Command : {cmd_str}"
-echo "=========================================================="
-echo ""
-if command -v journalctl >/dev/null 2>&1 && [ "{pid_num}" -gt 0 ]; then
-    echo "--- Systemd / journald output for PID {pid_num} ---"
-    journalctl _PID={pid_num} -n 25 --no-pager 2>/dev/null || true
-    echo ""
-fi
-echo "Interactive shell opened in {cwd}."
-echo "Type exit or press Ctrl+D to close."
-echo ""
-exec bash
-"#,
-            cwd = cwd_path,
-            name = name,
-            port = port,
-            pid_num = pid_num,
-            cmd_str = cmd_str
-        );
-
-        if let Err(e) = std::fs::write(&script_path, script_content) {
-            return Err(format!("Failed to write terminal script: {}", e));
-        }
+        let cwd_path = std::path::absolute(cwd_path)
+            .map_err(|error| format!("Failed to resolve terminal directory: {error}"))?;
+        use std::io::Write;
+        let mut script = tempfile::Builder::new().prefix("launcher-term-").suffix(".sh").tempfile()
+            .map_err(|error| format!("Failed to create terminal script: {error}"))?;
+        script.write_all(external_terminal_script(name, pid_num, port, &cwd_path.to_string_lossy(), cmd_str).as_bytes())
+            .map_err(|error| format!("Failed to write terminal script: {error}"))?;
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            if let Ok(metadata) = std::fs::metadata(&script_path) {
-                let mut perms = metadata.permissions();
-                perms.set_mode(0o755);
-                let _ = std::fs::set_permissions(&script_path, perms);
-            }
+            script.as_file().set_permissions(std::fs::Permissions::from_mode(0o700))
+                .map_err(|error| format!("Failed to set terminal script permissions: {error}"))?;
         }
 
+        let script_path = script.into_temp_path();
         let script_str = script_path.to_string_lossy().to_string();
 
         #[cfg(target_os = "macos")]
         {
             let mut cmd = Command::new("open");
             cmd.args(&["-a", "Terminal", &script_str]);
-            return cmd.spawn().map(|_| ()).map_err(|e| format!("Failed to spawn Terminal: {}", e));
+            cmd.spawn().map_err(|e| format!("Failed to spawn Terminal: {}", e))?;
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -1058,11 +1133,10 @@ exec bash
                 for fb in &["x-terminal-emulator", "xterm", "sh"] {
                     let mut c = Command::new(fb);
                     if *fb == "sh" {
-                        c.args(&["-c", &script_str]);
+                        c.arg(&script_str);
                     } else {
                         c.args(&["-e", &script_str]);
                     }
-                    c.current_dir(cwd_path);
                     if c.spawn().is_ok() {
                         fallback_spawned = true;
                         break;
@@ -1071,18 +1145,19 @@ exec bash
                 if !fallback_spawned {
                     return Err("No compatible terminal emulator found on this system".to_string());
                 }
+                script_path.keep().map_err(|error| error.to_string())?;
                 return Ok(());
             }
 
-            cmd.current_dir(cwd_path);
             #[cfg(unix)]
             {
                 use std::os::unix::process::CommandExt;
                 cmd.process_group(0);
             }
             cmd.spawn().map_err(|e| format!("Failed to spawn terminal: {}", e))?;
-            Ok(())
         }
+        script_path.keep().map_err(|error| error.to_string())?;
+        Ok(())
     }
 
     #[cfg(target_os = "windows")]
@@ -1091,6 +1166,29 @@ exec bash
         crate::commands::open_system_terminal(std::path::Path::new(&cwd_path))?;
         Ok(())
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn external_terminal_script(name: &str, pid: u32, port: u16, cwd: &str, command: &str) -> String {
+    let quote = crate::remote::shell_quote;
+    format!(r#"#!/usr/bin/env bash
+rm -f -- "$0"
+if ! cd -- {cwd_operand}; then
+    printf '%s\n' 'Could not open the requested directory.'
+fi
+printf '%s\n' '==========================================================' ' Server Launcher: External Terminal' {name} ' Port    : :{port}' ' PID     : {pid}' {cwd} {command} '==========================================================' ''
+if command -v journalctl >/dev/null 2>&1 && [ {pid} -gt 0 ]; then
+    printf '%s\n' '--- Systemd / journald output for PID {pid} ---'
+    journalctl -b _PID={pid} -n 25 --no-pager 2>/dev/null || true
+fi
+printf '%s\n' 'Type exit or press Ctrl+D to close.'
+exec bash
+"#,
+        cwd_operand = quote(cwd),
+        name = quote(&format!(" Service : {name}")),
+        cwd = quote(&format!(" CWD     : {cwd}")),
+        command = quote(&format!(" Command : {command}")),
+    )
 }
 
 fn spawn_own_console(
@@ -1116,39 +1214,36 @@ fn spawn_own_console(
 
     #[cfg(not(target_os = "windows"))]
     {
-        let temp_dir = std::env::temp_dir();
-        let script_path = temp_dir.join(format!("launcher_{}.sh", key));
-        let pid_path = temp_dir.join(format!("launcher_{}.pid", key));
-        let pid_str = pid_path.to_string_lossy().to_string();
+        use std::io::Write;
+        validate_server_key(key)?;
 
-        let mut lines = Vec::new();
-        lines.push("#!/usr/bin/env bash".to_string());
-        lines.push(format!("echo $$ > \"{}\"", pid_str));
-        lines.push(format!("trap 'rm -f \"{}\"' EXIT", pid_str));
-        for (k, v) in env_vars {
-            lines.push(format!("export {}=\"{}\"", k, v.replace('"', "\\\"")));
-        }
-        if !cwd_str.is_empty() && cwd_str != "." {
-            lines.push(format!("cd \"{}\"", cwd_str));
-        }
-        lines.push(format!("echo -ne \"\\033]0;Server - {}\\007\"", name));
-        lines.push(cmd_str.to_string());
-        lines.push("EXIT_CODE=$?".to_string());
-        lines.push("echo \"\"".to_string());
-        lines.push("echo \"[launcher] Process exited with code $EXIT_CODE.\"".to_string());
-        lines.push("read -n 1 -s -r -p \"Press any key to close this terminal...\"".to_string());
-
-        let _ = std::fs::write(&script_path, lines.join("\n"));
+        let pid_path = std::env::temp_dir().join(format!("launcher_{key}.pid"));
+        let quote = crate::remote::shell_quote;
+        let mut script = tempfile::Builder::new().prefix("launcher-server-").suffix(".sh").tempfile()?;
+        write!(script, r#"#!/usr/bin/env bash
+rm -f -- "$0"
+pid_file={pid_path}
+if (umask 077; set -o noclobber; printf '%s\n' "$$" > "$pid_file") 2>/dev/null; then
+    trap 'rm -f -- "$pid_file"' EXIT
+fi
+printf '\033]0;%s\007' {title}
+bash -c {command}
+status=$?
+printf '\n[launcher] Process exited with code %s.\n' "$status"
+read -n 1 -s -r -p 'Press any key to close this terminal...'
+exit "$status"
+"#,
+            pid_path = quote(&pid_path.to_string_lossy()),
+            title = quote(&format!("Server - {}", name.replace(char::is_control, ""))),
+            command = quote(cmd_str),
+        )?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            if let Ok(metadata) = std::fs::metadata(&script_path) {
-                let mut perms = metadata.permissions();
-                perms.set_mode(0o755);
-                let _ = std::fs::set_permissions(&script_path, perms);
-            }
+            script.as_file().set_permissions(std::fs::Permissions::from_mode(0o700))?;
         }
 
+        let script_path = script.into_temp_path();
         let script_str = script_path.to_string_lossy().to_string();
         let chosen = find_terminal();
 
@@ -1160,22 +1255,22 @@ fn spawn_own_console(
             }
             cmd.arg(&script_str);
         } else {
-            cmd = Command::new("sh");
-            cmd.args(&["-c", &script_str]);
+            cmd = Command::new("bash");
+            cmd.arg(&script_str);
         }
 
         if !cwd_str.is_empty() && cwd_str != "." {
             cmd.current_dir(cwd_str);
         }
-        for (k, v) in env_vars {
-            cmd.env(k, v);
-        }
+        cmd.envs(env_vars);
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
             cmd.process_group(0);
         }
-        cmd.spawn()
+        let child = cmd.spawn()?;
+        script_path.keep().map_err(|error| error.error)?;
+        Ok(child)
     }
 }
 
@@ -1262,11 +1357,26 @@ pub fn push_log_line(
 }
 
 pub fn spawn_stream_reader<R: Read + Send + 'static>(
-    mut stream: R,
+    stream: R,
     logs: Arc<Mutex<VecDeque<LogEntry>>>,
     max_logs: usize,
     default_kind: LogKind,
 ) {
+    spawn_stream_reader_with_repaint(stream, logs, max_logs, default_kind, None);
+}
+
+pub fn spawn_stream_reader_with_repaint<R: Read + Send + 'static>(
+    mut stream: R,
+    logs: Arc<Mutex<VecDeque<LogEntry>>>,
+    max_logs: usize,
+    default_kind: LogKind,
+    repaint: Option<egui::Context>,
+) {
+    let output_ready = move || {
+        if let Some(ctx) = &repaint {
+            ctx.request_repaint_after(std::time::Duration::from_millis(33));
+        }
+    };
     thread::spawn(move || {
         let mut buf = [0u8; 4096];
         let mut pending = Vec::new();
@@ -1280,6 +1390,7 @@ pub fn spawn_stream_reader<R: Read + Send + 'static>(
                         for line in text.split(|c| c == '\n' || c == '\r') {
                             push_log_line(line, &logs, max_logs, default_kind.clone());
                         }
+                        output_ready();
                     }
                     break;
                 }
@@ -1302,11 +1413,13 @@ pub fn spawn_stream_reader<R: Read + Send + 'static>(
                         }
 
                         pending = pending[last_delim..].to_vec();
+                        output_ready();
                     } else if pending.len() > 1024 {
                         // Flush long output lines even without newline to prevent stalling
                         let text = String::from_utf8_lossy(&pending).to_string();
                         push_log_line(&text, &logs, max_logs, default_kind.clone());
                         pending.clear();
+                        output_ready();
                     }
                 }
                 Err(_) => {
@@ -1315,6 +1428,7 @@ pub fn spawn_stream_reader<R: Read + Send + 'static>(
                         for line in text.split(|c| c == '\n' || c == '\r') {
                             push_log_line(line, &logs, max_logs, default_kind.clone());
                         }
+                        output_ready();
                     }
                     break;
                 }
@@ -1447,6 +1561,25 @@ mod tests {
         assert_eq!(cleaned, "Success! Error text\n");
     }
 
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn external_terminal_quotes_display_values() {
+        let script = external_terminal_script("Pat’s server", 0, 80, "/tmp/Pat's files", "printf '%s' hello");
+        assert!(script.contains("cd -- '/tmp/Pat'\\''s files'"));
+        assert!(script.contains("' Command : printf '\\''%s'\\'' hello'"));
+    }
+
+    #[test]
+    fn oversized_log_entry_is_truncated_at_a_utf8_boundary() {
+        let normal = LogEntry::new("ordinary output".into(), LogKind::Stdout);
+        assert_eq!(&*normal.text, "ordinary output");
+
+        let entry = LogEntry::new("界".repeat(MAX_LOG_ENTRY_BYTES), LogKind::Stdout);
+        assert!(entry.text.len() <= MAX_LOG_ENTRY_BYTES);
+        assert!(entry.text.ends_with("[truncated]"));
+        assert!(!entry.text.contains('�'));
+    }
+
     #[test]
     fn test_push_log_line_classification() {
         let logs = Arc::new(Mutex::new(VecDeque::new()));
@@ -1457,11 +1590,11 @@ mod tests {
         let locked = logs.lock().unwrap();
         assert_eq!(locked.len(), 3);
         assert_eq!(locked[0].kind, LogKind::Error);
-        assert_eq!(locked[0].text, "Error: connection refused");
+        assert_eq!(locked[0].text.as_ref(), "Error: connection refused");
         assert_eq!(locked[1].kind, LogKind::Warning);
-        assert_eq!(locked[1].text, "Warning: low disk space");
+        assert_eq!(locked[1].text.as_ref(), "Warning: low disk space");
         assert_eq!(locked[2].kind, LogKind::Stdout);
-        assert_eq!(locked[2].text, "Server ready on port 3000");
+        assert_eq!(locked[2].text.as_ref(), "Server ready on port 3000");
     }
 
     #[test]
@@ -1501,6 +1634,184 @@ mod tests {
         assert!(logs[0].text.contains("Cannot send 'h': server is not running or stdin is closed."));
     }
 
+    fn identity_test_config() -> ServerConfig {
+        ServerConfig {
+            key: format!("identity_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()),
+            command: "python run.py".into(), cwd: ".".into(), port: 5173,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn process_records_reject_unsafe_keys_and_keep_legacy_records_readable() {
+        let mut config = identity_test_config();
+        for key in ["../outside", "..", "bad/key", "bad\\key", "C:drive"] {
+            config.key = key.into();
+            assert!(pid_file(&config).is_err());
+            assert!(write_identity(&config, &ProcessIdentity { key: key.into(), command: String::new(), cwd: String::new(), pid: 1, start_time: 1 }).is_err());
+            assert!(read_process_record(&config).is_none());
+        }
+
+        config.key = format!("legacy_record_{}", std::process::id());
+        let path = pid_file(&config).unwrap();
+        std::fs::write(&path, std::process::id().to_string()).unwrap();
+        assert!(matches!(read_process_record(&config), Some(ProcessRecord::Legacy(pid)) if pid == std::process::id()));
+
+        let mut interrupted = tempfile::NamedTempFile::new_in(std::env::temp_dir()).unwrap();
+        std::io::Write::write_all(&mut interrupted, b"{\"partial\":").unwrap();
+        drop(interrupted);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), std::process::id().to_string());
+        assert!(matches!(read_process_record(&config), Some(ProcessRecord::Legacy(_))));
+
+        let identity = ProcessIdentity { key: config.key.clone(), command: config.command.clone(), cwd: config.cwd.clone(), pid: 1, start_time: 1 };
+        write_identity(&config, &identity).unwrap();
+        assert!(matches!(read_process_record(&config), Some(ProcessRecord::Identity(record)) if record.key == config.key));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn process_tree_includes_nested_children_once_and_ignores_other_roots() {
+        let pid = Pid::from_u32;
+        let parents = [
+            (pid(3), Some(pid(2))), (pid(2), Some(pid(1))),
+            (pid(4), Some(pid(3))), (pid(2), Some(pid(1))),
+            (pid(9), None), (pid(10), Some(pid(9))),
+            (pid(1), Some(pid(4))),
+        ];
+        let mut tree = process_tree_pids(pid(1), parents);
+        tree.sort_unstable();
+        assert_eq!(tree, vec![pid(1), pid(2), pid(3), pid(4)]);
+        assert_eq!(process_tree_pids(pid(7), parents), vec![pid(7)]);
+    }
+
+    #[test]
+    fn scheduled_process_refresh_measures_busy_cpu_without_liveness_interference() {
+        let pid = Pid::from_u32(std::process::id());
+        let mut sys = System::new();
+        refresh_process_metrics(&mut sys);
+        // The first interval can still be warmup for a process whose initial CPU ticks were zero.
+        for _ in 0..2 {
+            let until = std::time::Instant::now() + sysinfo::MINIMUM_CPU_UPDATE_INTERVAL + Duration::from_millis(100);
+            let mut value = 1_u64;
+            while std::time::Instant::now() < until {
+                value = std::hint::black_box(value.wrapping_mul(3).wrapping_add(1));
+            }
+            assert!(refresh_process_alive(pid.as_u32()));
+            refresh_process_metrics(&mut sys);
+        }
+        assert!(sys.process(pid).unwrap().cpu_usage() > 0.0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dead_processes_are_not_reported_alive_from_stale_sysinfo_entries() {
+        let mut child = Command::new("sleep").arg("60").spawn().unwrap();
+        let pid = child.id();
+        let mut sys = System::new();
+        refresh_process_metrics(&mut sys);
+        assert!(refresh_process_alive(pid));
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(sys.process(Pid::from_u32(pid)).is_some());
+        assert!(!refresh_process_alive(pid));
+    }
+
+    #[test]
+    fn process_identity_rejects_reused_pids_and_changed_configs() {
+        let config = identity_test_config();
+        let record = ProcessIdentity { key: config.key.clone(), command: config.command.clone(), cwd: config.cwd.clone(), pid: 123, start_time: 456 };
+        assert!(record.matches(&config, 123, 456));
+        assert!(!record.matches(&config, 124, 456));
+        assert!(!record.matches(&config, 123, 457));
+        assert!(!ProcessIdentity { start_time: 0, ..record.clone() }.matches(&config, 123, 0));
+        for other in [
+            ServerConfig { key: "another config".into(), ..config.clone() },
+            ServerConfig { command: "npm run dev".into(), ..config.clone() },
+            ServerConfig { cwd: "another directory".into(), ..config.clone() },
+        ] { assert!(!record.matches(&other, 123, 456)); }
+    }
+
+    #[test]
+    fn shared_ports_reconnect_only_the_recorded_config_on_restart_and_refresh() {
+        let owner = identity_test_config();
+        let other = identity_test_config();
+        let pid = std::process::id();
+        write_process_record(&owner, pid).unwrap();
+        let mut services = vec![Service::new(other), Service::new(owner.clone())];
+        reconnect_services(&mut services);
+        assert_eq!(services[0].state, ServiceState::Stopped);
+        assert_eq!(services[0].pid, None);
+        assert_eq!(services[1].state, ServiceState::Running);
+        assert_eq!(services[1].pid, Some(pid));
+        // Refresh must not let a second config take ownership of an already attached PID.
+        write_process_record(&services[0].config, pid).unwrap();
+        reconnect_services(&mut services);
+        assert_eq!(services[0].state, ServiceState::Stopped);
+        assert_eq!(services[1].pid, Some(pid));
+        for service in services { if let Ok(path) = pid_file(&service.config) { let _ = std::fs::remove_file(path); } }
+    }
+
+    #[test]
+    fn conflicting_records_and_stale_start_times_do_not_attach() {
+        let first = identity_test_config();
+        let second = identity_test_config();
+        let pid = std::process::id();
+        write_process_record(&first, pid).unwrap();
+        write_process_record(&second, pid).unwrap();
+        let mut services = vec![Service::new(first), Service::new(second)];
+        reconnect_services(&mut services);
+        assert!(services.iter().all(|service| service.state == ServiceState::Stopped));
+        let ProcessRecord::Identity(mut identity) = read_process_record(&services[0].config).unwrap() else { panic!("Expected identity record"); };
+        identity.start_time += 1;
+        write_identity(&services[0].config, &identity).unwrap();
+        reconnect_services(&mut services[..1]);
+        assert_eq!(services[0].state, ServiceState::Stopped);
+        for service in services { if let Ok(path) = pid_file(&service.config) { let _ = std::fs::remove_file(path); } }
+    }
+
+    #[test]
+    fn legacy_records_migrate_but_duplicate_pid_claims_are_rejected() {
+        let pid = std::process::id();
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[Pid::from_u32(pid)]), false, sysinfo::ProcessRefreshKind::nothing()
+            .with_cmd(sysinfo::UpdateKind::Always).with_cwd(sysinfo::UpdateKind::Always));
+        let process = sys.process(Pid::from_u32(pid)).unwrap();
+        let mut config = identity_test_config();
+        config.command = process.cmd().iter().map(|arg| arg.to_string_lossy()).collect::<Vec<_>>().join(" ");
+        config.cwd = process.cwd().unwrap().to_string_lossy().into_owned();
+        let mut duplicate = config.clone();
+        duplicate.key = identity_test_config().key;
+        for config in [&config, &duplicate] { std::fs::write(pid_file(config).unwrap(), pid.to_string()).unwrap(); }
+        let mut services = vec![Service::new(config), Service::new(duplicate)];
+        reconnect_services(&mut services);
+        assert!(services.iter().all(|service| service.state == ServiceState::Stopped));
+        // With only one claim, a validated old integer PID file becomes an identity record.
+        reconnect_services(&mut services[..1]);
+        assert_eq!(services[0].pid, Some(pid));
+        assert!(matches!(read_process_record(&services[0].config), Some(ProcessRecord::Identity(_))));
+        for service in services { if let Ok(path) = pid_file(&service.config) { let _ = std::fs::remove_file(path); } }
+    }
+
+    #[test]
+    fn legacy_pid_files_require_command_and_directory_evidence() {
+        let config = identity_test_config();
+        let cwd = std::env::current_dir().unwrap();
+        let args = ["sh".into(), "-c".into(), config.command.clone().into()];
+        assert!(legacy_process_matches(&config, &args, Some(&cwd)));
+        assert!(!legacy_process_matches(&config, &args, None));
+        assert!(!legacy_process_matches(&config, &["node".into(), "other.js".into()], Some(&cwd)));
+        assert!(matches!(serde_json::from_str::<ProcessRecord>("123\n").unwrap(), ProcessRecord::Legacy(123)));
+        assert!(serde_json::from_str::<ProcessRecord>("not a pid").is_err());
+        let console = ServerConfig { own_console: true, ..config.clone() };
+        let wrapper = std::env::temp_dir().join(format!("launcher_{}.sh", config.key));
+        assert!(legacy_process_matches(&console, &["bash".into(), wrapper.into_os_string()], Some(&cwd)));
+    }
+
     #[test]
     fn test_service_attach_existing_and_stop() {
         let cfg = ServerConfig {
@@ -1525,7 +1836,10 @@ mod tests {
 
         // Attach to current test process PID
         let current_pid = std::process::id();
-        s.attach_existing(current_pid, true);
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[Pid::from_u32(current_pid)]), false, sysinfo::ProcessRefreshKind::nothing());
+        let start_time = sys.process(Pid::from_u32(current_pid)).unwrap().start_time();
+        s.attach_existing(current_pid, start_time);
 
         assert_eq!(s.state, ServiceState::Running);
         assert_eq!(s.pid, Some(current_pid));

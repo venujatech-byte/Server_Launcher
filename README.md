@@ -299,3 +299,45 @@ All configurations are human-readable and automatically persisted to `servers.js
 ## 🛡️ License
 
 This project is licensed under the MIT License - feel free to use, modify, and distribute for personal and commercial projects.
+## Desktop updates and release packages
+
+In either Rust app, open **Settings → About → Check for updates**. GitHub builds
+publish a versioned update manifest with package sizes and SHA-256 digests.
+For older releases without a manifest, About uses GitHub-provided SHA-256
+digests for recognized installers.
+About selects the compatible package for your platform and installation.
+Fedora and other supported RPM distributions use RPM, and Debian and Ubuntu
+use DEB. Windows uses the detected installer type, and Microsoft Store
+installations use the Store’s update page. Choose **Install update** to
+download and verify the installer, then close the launcher through its
+normal exit confirmation. Canceling that confirmation also cancels the
+update. Linux package updates use the system package manager via Polkit.
+AppImage updates replace the original file if its directory is writable. The updater uses the system `curl`
+command, which the DEB and RPM declare as a dependency. AppImage and portable
+Linux users need `curl` installed on the host.
+
+To prepare GitHub release packages, run **Build and Publish Release** from
+Actions. For an official version, push a tag in the form `v1.2.3`. The workflow
+also publishes on `main` and `design`, using the run number as the patch
+version. Runs on `fix/ui-alignment` produce the `server_launcher-release-bundle`
+artifact for inspection, including the normalized packages and `latest.json`.
+Windows artifacts include the NSIS setup EXE, MSI, portable ZIP, and MSIX.
+The upload job waits for the Linux and Windows artifacts before publishing
+`latest.json` alongside them.
+
+For Microsoft Store submission, set the repository variables
+`WINDOWS_STORE_IDENTITY`, `WINDOWS_STORE_PUBLISHER`, and
+`WINDOWS_STORE_PUBLISHER_NAME` to the values in Partner Center, then download
+the `server_launcher-windows-store` artifact. Without those values the
+workflow uses a placeholder identity. The MSIX is unsigned for Store
+submission, so Windows requires a trusted signature for local sideloading.
+
+
+### Saved SSH credentials
+
+The desktop launcher protects saved passwords using the Linux Secret Service
+(`secret-tool` and a running keyring) or Windows DPAPI for the current user.
+On first launch after upgrading, old plaintext passwords are migrated before
+the config is replaced. If the credential store is unavailable, the old
+config stays intact. Fix or unlock the keyring and restart to retry migration.
+Backups made before migration may still contain passwords.

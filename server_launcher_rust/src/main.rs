@@ -1,3 +1,7 @@
+#[path = "../../shared/updater.rs"]
+mod updater;
+#[path = "../../shared/ssh_credentials.rs"]
+mod ssh_credentials;
 mod app;
 mod config;
 mod modals;
@@ -6,6 +10,7 @@ mod scanner;
 mod service;
 mod tauri_app;
 pub mod adb;
+pub mod apps;
 pub mod autostart;
 pub mod bluetooth;
 pub mod commands;
@@ -239,7 +244,9 @@ fn main() -> eframe::Result<()> {
 
             Ok(Box::new(LauncherApp::new(cc)))
         }),
-    )
+    )?;
+    updater::install_pending();
+    Ok(())
 }
 
 #[cfg(test)]

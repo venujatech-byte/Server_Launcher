@@ -97,7 +97,7 @@ impl LauncherApp {
 
         let p = self.palette();
         let screen = ctx.screen_rect();
-        let modal_w = 560.0_f32.min(screen.width() - 32.0);
+        let modal_w = 560.0_f32.min((screen.width() - 80.0).max(0.0));
         let compact = screen.height() < 420.0;
         let option_height = if compact { 82.0 } else { 100.0 };
 
@@ -157,7 +157,7 @@ impl LauncherApp {
                             .fill(p.bg_button)
                             .rounding(Rounding::same(999.0))
                             .min_size(Vec2::splat(26.0));
-                        if ui.add(btn_close).on_hover_text("Close dialog (Esc)").clicked() {
+                        if ui.add(btn_close).hover_tip("Close dialog (Esc)").clicked() {
                             self.add_device_selector_modal_open = false;
                         }
                     });
@@ -177,7 +177,11 @@ impl LauncherApp {
 
                 ui.painter().rect(ssh_rect, Rounding::same(12.0), ssh_bg, Stroke::new(1.0_f32, ssh_border));
 
-                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(ssh_rect.shrink(12.0)), |ui| {
+                {
+                    // The card was already reserved above; do not advance the parent cursor again.
+                    let mut card_ui = ui.new_child(egui::UiBuilder::new().max_rect(ssh_rect.shrink(12.0)));
+                    card_ui.set_clip_rect(ssh_rect.shrink(12.0));
+                    let ui = &mut card_ui;
                     ui.horizontal(|ui| {
                         Frame::none()
                             .fill(p.accent_subtle)
@@ -202,12 +206,12 @@ impl LauncherApp {
                             ui.label(RichText::new(crate::lucide::CHEVRON_RIGHT).size(16.0).color(arrow_col));
                         });
                     });
-                });
+                }
                 if ssh_resp.clicked() {
                     choose_ssh = true;
                 }
 
-                ui.add_space(if compact { 6.0 } else { 10.0 });
+                ui.add_space(12.0);
 
                 // Option 2: Android / ADB Device
                 let mut choose_adb = false;
@@ -221,7 +225,11 @@ impl LauncherApp {
 
                 ui.painter().rect(adb_rect, Rounding::same(12.0), adb_bg, Stroke::new(1.0_f32, adb_border));
 
-                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(adb_rect.shrink(12.0)), |ui| {
+                {
+                    // The card was already reserved above; do not advance the parent cursor again.
+                    let mut card_ui = ui.new_child(egui::UiBuilder::new().max_rect(adb_rect.shrink(12.0)));
+                    card_ui.set_clip_rect(adb_rect.shrink(12.0));
+                    let ui = &mut card_ui;
                     ui.horizontal(|ui| {
                         Frame::none()
                             .fill(Color32::from_rgb(14, 40, 58))
@@ -238,7 +246,7 @@ impl LauncherApp {
                                 ui.label(RichText::new("USB & Wireless ADB").size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
                             });
                             ui.add_space(3.0);
-                            ui.label(RichText::new("Full Android control suite: screen mirroring, clipboard, terminal, files, and recovery tools in the separate Android Cockpit app.")
+                            ui.label(RichText::new("Full Android control suite: screen mirroring, clipboard, terminal, files, and recovery tools in DroidM.")
                                 .size(10.5).color(p.text_muted));
                         });
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -246,7 +254,7 @@ impl LauncherApp {
                             ui.label(RichText::new(crate::lucide::CHEVRON_RIGHT).size(16.0).color(arrow_col));
                         });
                     });
-                });
+                }
                 if adb_resp.clicked() {
                     choose_adb = true;
                 }
@@ -337,7 +345,7 @@ impl LauncherApp {
                             .fill(p.bg_button)
                             .rounding(Rounding::same(999.0))
                             .min_size(Vec2::splat(26.0));
-                        if ui.add(btn_close).on_hover_text("Close dialog (Esc)").clicked() {
+                        if ui.add(btn_close).hover_tip("Close dialog (Esc)").clicked() {
                             self.adb_add_modal_open = false;
                         }
                     });
@@ -712,18 +720,18 @@ impl LauncherApp {
                             .color(palette.accent),
                     );
                     ui.add_space(14.0);
-                    ui.heading("Android Cockpit");
+                    ui.heading("DroidM");
                     ui.label(
                         RichText::new(format!("{} · {}", adb_dev.name, adb_dev.serial))
                             .color(palette.text_secondary),
                     );
                     ui.add_space(8.0);
                     ui.label(
-                        RichText::new("Device management opens in the GTK-style Android Cockpit window.")
+                        RichText::new("Device management opens in a separate DroidM window.")
                             .color(palette.text_muted),
                     );
                     ui.add_space(18.0);
-                    if ui.button("Open Android Cockpit").clicked() {
+                    if ui.button("Open DroidM").clicked() {
                         self.launch_adb_tauri_window(adb_dev);
                     }
                 });
@@ -760,14 +768,14 @@ impl LauncherApp {
                 match command.spawn() {
                     Ok(_) => {
                         self.adb_status_msg = Some((
-                            format!("Android Cockpit opened for {}", adb_dev.name),
+                            format!("DroidM opened for {}", adb_dev.name),
                             false,
                             Instant::now(),
                         ));
                     }
                     Err(error) => {
                         self.adb_status_msg = Some((
-                            format!("Could not open Android Cockpit: {error}"),
+                            format!("Could not open DroidM: {error}"),
                             true,
                             Instant::now(),
                         ));
@@ -935,7 +943,7 @@ impl LauncherApp {
                         let btn_disc = egui::Button::new(RichText::new(format!("{} Disconnect", crate::lucide::LOG_OUT)).size(10.5).color(p.text_secondary))
                             .fill(p.bg_button)
                             .rounding(Rounding::same(6.0));
-                        if ui.add(btn_disc).on_hover_text("Switch to local host and disconnect").clicked() {
+                        if ui.add(btn_disc).hover_tip("Switch to local host and disconnect").clicked() {
                             self.selected_machine = "local".to_string();
                         }
 
@@ -967,7 +975,7 @@ impl LauncherApp {
                         let btn_ref = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(10.5).color(p.text_secondary))
                             .fill(p.bg_button)
                             .rounding(Rounding::same(6.0));
-                        if ui.add(btn_ref).on_hover_text("Refresh device telemetry and metrics").clicked() {
+                        if ui.add(btn_ref).hover_tip("Refresh device telemetry and metrics").clicked() {
                             self.adb_telemetry_cache.remove(&serial);
                             if let Ok(mut results) = self.adb_telemetry_results.lock() {
                                 results.remove(&serial);
@@ -980,7 +988,7 @@ impl LauncherApp {
                         let btn_term = egui::Button::new(RichText::new(format!("{} Shell", crate::lucide::TERMINAL)).size(10.5).color(p.text_secondary))
                             .fill(p.bg_button)
                             .rounding(Rounding::same(6.0));
-                        if ui.add(btn_term).on_hover_text("Launch interactive ADB terminal in system emulator").clicked() {
+                        if ui.add(btn_term).hover_tip("Launch interactive ADB terminal in system emulator").clicked() {
                             match crate::adb::launch_external_adb_terminal(&serial) {
                                 Ok(_) => self.adb_status_msg = Some(("External ADB terminal opened".to_string(), false, Instant::now())),
                                 Err(e) => self.adb_status_msg = Some((format!("Terminal error: {}", e), true, Instant::now())),
@@ -999,7 +1007,7 @@ impl LauncherApp {
                         let btn_mirror = egui::Button::new(mirror_btn_text)
                             .fill(mirror_btn_bg)
                             .rounding(Rounding::same(6.0));
-                        if ui.add(btn_mirror).on_hover_text("Open and toggle real-time built-in screen mirroring").clicked() {
+                        if ui.add(btn_mirror).hover_tip("Open and toggle real-time built-in screen mirroring").clicked() {
                             self.adb_active_subtab = AdbSubTab::ScreenShare;
                             self.adb_mirror_mode = AdbScreenMirrorMode::BuiltIn;
                             if is_mirror_on {
@@ -1016,11 +1024,11 @@ impl LauncherApp {
                         } else {
                             RichText::new("⚡ scrcpy HD").size(10.5).strong().color(Color32::WHITE)
                         };
-                        let scrcpy_btn_bg = if is_scrcpy_on { Color32::from_rgb(220, 38, 38) } else { Color32::from_rgb(14, 116, 144) };
+                        let scrcpy_btn_bg = if is_scrcpy_on { p.danger } else { Color32::from_rgb(14, 116, 144) };
                         let btn_scrcpy = egui::Button::new(scrcpy_btn_text)
                             .fill(scrcpy_btn_bg)
                             .rounding(Rounding::same(6.0));
-                        if ui.add(btn_scrcpy).on_hover_text("Launch high-performance external scrcpy display window").clicked() {
+                        if ui.add(btn_scrcpy).hover_tip("Launch high-performance external scrcpy display window").clicked() {
                             self.launch_scrcpy_for_device(&serial);
                         }
                     });
@@ -1195,7 +1203,7 @@ impl LauncherApp {
                                         let btn_dnd = egui::Button::new(RichText::new(format!("{} DND", crate::lucide::BELL_OFF)).size(10.0).color(dnd_fg))
                                             .fill(dnd_bg)
                                             .rounding(Rounding::same(999.0));
-                                        if ui.add(btn_dnd).on_hover_text("Toggle Do Not Disturb").clicked() {
+                                        if ui.add(btn_dnd).hover_tip("Toggle Do Not Disturb").clicked() {
                                             let enabled = !self.adb_dnd_enabled;
                                             match crate::adb::toggle_dnd(Some(&serial), enabled) {
                                                 Ok(_) => self.adb_dnd_enabled = enabled,
@@ -1209,7 +1217,7 @@ impl LauncherApp {
                                         let btn_mute = egui::Button::new(RichText::new(format!("{} Audio", if self.adb_audio_muted { crate::lucide::VOLUME_X } else { crate::lucide::VOLUME_2 })).size(10.0).color(mute_fg))
                                             .fill(mute_bg)
                                             .rounding(Rounding::same(999.0));
-                                        if ui.add(btn_mute).on_hover_text("Toggle Audio Mute").clicked() {
+                                        if ui.add(btn_mute).hover_tip("Toggle Audio Mute").clicked() {
                                             match crate::adb::toggle_mute(Some(&serial)) {
                                                 Ok(_) => self.adb_audio_muted = !self.adb_audio_muted,
                                                 Err(e) => self.adb_status_msg = Some((format!("Audio control failed: {e}"), true, Instant::now())),
@@ -1221,7 +1229,7 @@ impl LauncherApp {
                                         let btn_media = egui::Button::new(RichText::new(format!("{} Media", media_icon)).size(10.0).color(p.text_secondary))
                                             .fill(p.bg_button)
                                             .rounding(Rounding::same(999.0));
-                                        if ui.add(btn_media).on_hover_text("Play/Pause Media playback").clicked() {
+                                        if ui.add(btn_media).hover_tip("Play/Pause Media playback").clicked() {
                                             match crate::adb::media_play_pause(Some(&serial)) {
                                                 Ok(_) => self.adb_media_playing = !self.adb_media_playing,
                                                 Err(e) => self.adb_status_msg = Some((format!("Media control failed: {e}"), true, Instant::now())),
@@ -1232,7 +1240,7 @@ impl LauncherApp {
                                         let btn_lock = egui::Button::new(RichText::new(format!("{} Lock", crate::lucide::LOCK)).size(10.0).color(p.text_secondary))
                                             .fill(p.bg_button)
                                             .rounding(Rounding::same(999.0));
-                                        if ui.add(btn_lock).on_hover_text("Lock/Wake screen (Power)").clicked() {
+                                        if ui.add(btn_lock).hover_tip("Lock/Wake screen (Power)").clicked() {
                                             let _ = crate::adb::send_keyevent(&serial, 26);
                                         }
                                     });
@@ -1390,7 +1398,7 @@ impl LauncherApp {
                                     let btn_reboot = egui::Button::new(RichText::new(format!("{} Reboot", crate::lucide::REFRESH_CW)).size(10.5).color(Color32::from_rgb(248, 113, 113)))
                                         .fill(Color32::from_rgb(45, 20, 20))
                                         .rounding(Rounding::same(6.0));
-                                    if ui.add(btn_reboot).on_hover_text("Reboot Android Device").clicked() {
+                                    if ui.add(btn_reboot).hover_tip("Reboot Android Device").clicked() {
                                         let _ = crate::adb::reboot_device(&serial, "system");
                                     }
                                 });
@@ -1513,7 +1521,7 @@ impl LauncherApp {
                                 .fill(p.bg_button)
                                 .rounding(Rounding::same(6.0))
                                 .min_size(Vec2::new(90.0, 30.0));
-                            if ui.add(btn_pwr).on_hover_text("Toggle device power / lock screen (Keycode 26)").clicked() {
+                            if ui.add(btn_pwr).hover_tip("Toggle device power / lock screen (Keycode 26)").clicked() {
                                 let _ = crate::adb::send_keyevent(&serial, 26);
                             }
 
@@ -1567,7 +1575,7 @@ impl LauncherApp {
                                 .fill(p.accent)
                                 .rounding(Rounding::same(6.0))
                                 .min_size(Vec2::new(100.0, 30.0));
-                            if ui.add(btn_shot).on_hover_text("Capture device screen and save to Pictures/Screenshots").clicked() {
+                            if ui.add(btn_shot).hover_tip("Capture device screen and save to Pictures/Screenshots").clicked() {
                                 let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
                                 let shot_dir = PathBuf::from(home).join("Pictures/Screenshots");
                                 let _ = std::fs::create_dir_all(&shot_dir);
@@ -1673,17 +1681,17 @@ impl LauncherApp {
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if is_scrcpy_on {
-                            let btn_stop = egui::Button::new(RichText::new("■ Stop scrcpy").size(10.5).color(Color32::from_rgb(248, 113, 113)))
-                                .fill(p.bg_button)
+                            let btn_stop = egui::Button::new(RichText::new("■ Stop scrcpy").size(10.5).color(Color32::WHITE))
+                                .fill(p.danger)
                                 .rounding(Rounding::same(6.0));
-                            if ui.add(btn_stop).on_hover_text("Terminate active external scrcpy process").clicked() {
+                            if ui.add(btn_stop).hover_tip("Terminate active external scrcpy process").clicked() {
                                 self.launch_scrcpy_for_device(&serial);
                             }
                         } else {
                             let btn_launch = egui::Button::new(RichText::new("⚡ Quick Launch scrcpy").size(10.5).color(Color32::from_rgb(56, 189, 248)))
                                 .fill(p.bg_button)
                                 .rounding(Rounding::same(6.0));
-                            if ui.add(btn_launch).on_hover_text("Launch high-performance external scrcpy window").clicked() {
+                            if ui.add(btn_launch).hover_tip("Launch high-performance external scrcpy window").clicked() {
                                 self.launch_scrcpy_for_device(&serial);
                             }
                         }
@@ -1790,7 +1798,7 @@ impl LauncherApp {
                             let btn_pop = egui::Button::new(RichText::new("⚡ Pop Out scrcpy").size(10.5).color(Color32::from_rgb(56, 189, 248)))
                                 .fill(p.bg_button)
                                 .rounding(Rounding::same(6.0));
-                            if ui.add(btn_pop).on_hover_text("Open external hardware-accelerated scrcpy window").clicked() {
+                            if ui.add(btn_pop).hover_tip("Open external hardware-accelerated scrcpy window").clicked() {
                                 self.launch_scrcpy_for_device(serial);
                             }
 
@@ -1798,7 +1806,7 @@ impl LauncherApp {
                             let btn_wake = egui::Button::new(RichText::new(format!("{} Power / Wake", crate::lucide::POWER)).size(10.5).color(p.text_primary))
                                 .fill(p.bg_button)
                                 .rounding(Rounding::same(6.0));
-                            if ui.add(btn_wake).on_hover_text("Send Power keyevent to wake or sleep device").clicked() {
+                            if ui.add(btn_wake).hover_tip("Send Power keyevent to wake or sleep device").clicked() {
                                 let ser = serial.to_string();
                                 std::thread::spawn(move || {
                                     let _ = crate::adb::wake_screen(Some(&ser));
@@ -1809,7 +1817,7 @@ impl LauncherApp {
                             let btn_shot = egui::Button::new(RichText::new(format!("{} Screenshot", crate::lucide::SAVE)).size(10.5).color(p.text_primary))
                                 .fill(p.bg_button)
                                 .rounding(Rounding::same(6.0));
-                            if ui.add(btn_shot).on_hover_text("Capture device screenshot and save to ~/Downloads").clicked() {
+                            if ui.add(btn_shot).hover_tip("Capture device screenshot and save to ~/Downloads").clicked() {
                                 let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
                                 let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
                                 let dest = std::path::PathBuf::from(home).join("Downloads").join(format!("screenshot_{}.png", ts));
@@ -2046,7 +2054,7 @@ impl LauncherApp {
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 if is_running {
                                     let btn_stop = egui::Button::new(RichText::new(format!("{} Stop Mirroring", crate::lucide::SQUARE)).size(12.0).strong().color(Color32::WHITE))
-                                        .fill(Color32::from_rgb(220, 38, 38))
+                                        .fill(p.danger)
                                         .rounding(Rounding::same(8.0))
                                         .min_size(Vec2::new(140.0, 34.0));
                                     if ui.add(btn_stop).clicked() {
@@ -2282,7 +2290,7 @@ impl LauncherApp {
                     let btn_ext = egui::Button::new(RichText::new(format!("{} External Shell", crate::lucide::EXTERNAL_LINK)).size(10.0).color(Color32::from_rgb(56, 189, 248)))
                         .fill(p.bg_button)
                         .rounding(Rounding::same(4.0));
-                    if ui.add(btn_ext).on_hover_text("Open interactive ADB shell session in system terminal emulator").clicked() {
+                    if ui.add(btn_ext).hover_tip("Open interactive ADB shell session in system terminal emulator").clicked() {
                         match crate::adb::launch_external_adb_terminal(&serial) {
                             Ok(_) => self.adb_status_msg = Some(("External ADB terminal opened".to_string(), false, Instant::now())),
                             Err(e) => self.adb_status_msg = Some((format!("Terminal error: {}", e), true, Instant::now())),
@@ -2428,7 +2436,7 @@ impl LauncherApp {
                             let btn_apk = egui::Button::new(RichText::new(format!("{} Install APK", crate::lucide::PACKAGE)).size(11.0).strong().color(Color32::WHITE))
                                 .fill(p.accent)
                                 .rounding(Rounding::same(6.0));
-                            if ui.add(btn_apk).on_hover_text("Select .apk from host PC and install to device").clicked() {
+                            if ui.add(btn_apk).hover_tip("Select .apk from host PC and install to device").clicked() {
                                 if let Some(path) = rfd::FileDialog::new().add_filter("Android APK (*.apk)", &["apk"]).pick_file() {
                                     match crate::adb::install_apk(&serial, &path) {
                                         Ok(_) => self.adb_status_msg = Some(("APK installed successfully".to_string(), false, Instant::now())),
@@ -2441,7 +2449,7 @@ impl LauncherApp {
                             let btn_push = egui::Button::new(RichText::new(format!("{} Push File", crate::lucide::UPLOAD)).size(11.0).color(p.text_primary))
                                 .fill(p.bg_button)
                                 .rounding(Rounding::same(6.0));
-                            if ui.add(btn_push).on_hover_text("Select local file and push to current folder on device").clicked() {
+                            if ui.add(btn_push).hover_tip("Select local file and push to current folder on device").clicked() {
                                 if let Some(path) = rfd::FileDialog::new().pick_file() {
                                     let dest = format!("{}/{}", self.adb_file_current_path.trim_end_matches('/'), path.file_name().unwrap_or_default().to_string_lossy());
                                     match crate::adb::push_file(&serial, &path, &dest) {
@@ -2523,14 +2531,14 @@ impl LauncherApp {
                                             let btn_del = egui::Button::new(RichText::new(format!("{} Delete", crate::lucide::TRASH)).size(9.5).color(Color32::from_rgb(239, 68, 68)))
                                                 .fill(p.bg_button)
                                                 .rounding(Rounding::same(4.0));
-                                            if ui.add(btn_del).on_hover_text("Delete file from Android device").clicked() {
+                                            if ui.add(btn_del).hover_tip("Delete file from Android device").clicked() {
                                                 delete_target = Some(entry.name.clone());
                                             }
 
                                             let btn_dl = egui::Button::new(RichText::new(format!("{} Pull", crate::lucide::DOWNLOAD)).size(9.5).color(p.text_primary))
                                                 .fill(p.bg_button)
                                                 .rounding(Rounding::same(4.0));
-                                            if ui.add(btn_dl).on_hover_text("Download to host PC ~/Downloads").clicked() {
+                                            if ui.add(btn_dl).hover_tip("Download to host PC ~/Downloads").clicked() {
                                                 pull_target = Some(entry.name.clone());
                                             }
 
@@ -2804,7 +2812,7 @@ impl LauncherApp {
                                             let btn_un = egui::Button::new(RichText::new("Uninstall").size(9.5).color(Color32::from_rgb(239, 68, 68)))
                                                 .fill(p.bg_button)
                                                 .rounding(Rounding::same(4.0));
-                                            if ui.add(btn_un).on_hover_text("Uninstall application from device").clicked() {
+                                            if ui.add(btn_un).hover_tip("Uninstall application from device").clicked() {
                                                 uninstall_target = Some(pkg.name.clone());
                                             }
                                         }
@@ -2813,15 +2821,15 @@ impl LauncherApp {
                                         let btn_clr = egui::Button::new(RichText::new("Clear").size(9.5).color(p.text_muted))
                                             .fill(p.bg_button)
                                             .rounding(Rounding::same(4.0));
-                                        if ui.add(btn_clr).on_hover_text("Clear all app cache & user data").clicked() {
+                                        if ui.add(btn_clr).hover_tip("Clear all app cache & user data").clicked() {
                                             clear_target = Some(pkg.name.clone());
                                         }
 
                                         // Force Stop
-                                        let btn_stp = egui::Button::new(RichText::new("Stop").size(9.5).color(p.text_secondary))
-                                            .fill(p.bg_button)
+                                        let btn_stp = egui::Button::new(RichText::new("Stop").size(9.5).color(Color32::WHITE))
+                                            .fill(p.danger)
                                             .rounding(Rounding::same(4.0));
-                                        if ui.add(btn_stp).on_hover_text("Force stop running process").clicked() {
+                                        if ui.add(btn_stp).hover_tip("Force stop running process").clicked() {
                                             stop_target = Some(pkg.name.clone());
                                         }
 
@@ -2829,7 +2837,7 @@ impl LauncherApp {
                                         let btn_run = egui::Button::new(RichText::new("Launch").size(9.5).color(Color32::from_rgb(56, 189, 248)))
                                             .fill(p.bg_button)
                                             .rounding(Rounding::same(4.0));
-                                        if ui.add(btn_run).on_hover_text("Launch main activity on device").clicked() {
+                                        if ui.add(btn_run).hover_tip("Launch main activity on device").clicked() {
                                             launch_target = Some(pkg.name.clone());
                                         }
                                     });
@@ -2926,7 +2934,7 @@ impl LauncherApp {
                                 let btn_usb = egui::Button::new(RichText::new(format!("{} Revert to USB Mode", crate::lucide::USB)).size(11.0).color(p.text_primary))
                                     .fill(p.bg_button)
                                     .rounding(Rounding::same(6.0));
-                                if ui.add(btn_usb).on_hover_text("Switch Android ADB back to USB mode (adb usb)").clicked() {
+                                if ui.add(btn_usb).hover_tip("Switch Android ADB back to USB mode (adb usb)").clicked() {
                                     match crate::adb::reset_to_usb(&serial) {
                                         Ok(res) => self.adb_status_msg = Some((format!("Reverted to USB: {}", res), false, Instant::now())),
                                         Err(e) => self.adb_status_msg = Some((format!("USB revert error: {}", e), true, Instant::now())),
@@ -2936,7 +2944,7 @@ impl LauncherApp {
                                 let btn_tcpip = egui::Button::new(RichText::new(format!("{} Enable TCP/IP (Port 5555)", crate::lucide::WIFI)).size(11.0).strong().color(Color32::WHITE))
                                     .fill(Color32::from_rgb(2, 132, 199))
                                     .rounding(Rounding::same(6.0));
-                                if ui.add(btn_tcpip).on_hover_text("Start ADB TCP/IP server on device port 5555 (adb tcpip 5555)").clicked() {
+                                if ui.add(btn_tcpip).hover_tip("Start ADB TCP/IP server on device port 5555 (adb tcpip 5555)").clicked() {
                                     match crate::adb::enable_tcpip(&serial, 5555) {
                                         Ok(res) => self.adb_status_msg = Some((format!("TCP/IP 5555 enabled: {}", res), false, Instant::now())),
                                         Err(e) => self.adb_status_msg = Some((format!("TCP/IP error: {}", e), true, Instant::now())),
@@ -3183,7 +3191,7 @@ impl LauncherApp {
                                     let btn_refresh = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(12.0).color(p.text_muted))
                                         .fill(p.bg_button)
                                         .rounding(Rounding::same(6.0));
-                                    if ui.add(btn_refresh).on_hover_text("Refresh SMS messages").clicked() {
+                                    if ui.add(btn_refresh).hover_tip("Refresh SMS messages").clicked() {
                                         self.adb_sms_messages = crate::adb::get_sms_messages(Some(&serial));
                                     }
                                 });
@@ -3352,7 +3360,7 @@ impl LauncherApp {
                                         .fill(Color32::from_rgb(22, 163, 74))
                                         .rounding(Rounding::same(6.0))
                                         .min_size(Vec2::new(75.0, 28.0));
-                                    if ui.add(btn_call).on_hover_text(format!("Call {}", sel_contact)).clicked() {
+                                    if ui.add(btn_call).hover_tip(format!("Call {}", sel_contact)).clicked() {
                                         action_switch_to_call = Some(contact_phone.clone());
                                     }
                                 });
@@ -3500,7 +3508,7 @@ impl LauncherApp {
                                     let btn_refresh = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(12.0).color(p.text_muted))
                                         .fill(p.bg_button)
                                         .rounding(Rounding::same(6.0));
-                                    if ui.add(btn_refresh).on_hover_text("Refresh call log").clicked() {
+                                    if ui.add(btn_refresh).hover_tip("Refresh call log").clicked() {
                                         self.adb_call_logs = crate::adb::get_call_logs(Some(&serial));
                                     }
                                 });
@@ -3607,7 +3615,7 @@ impl LauncherApp {
                                                             let btn_dial = egui::Button::new(RichText::new(crate::lucide::PHONE).size(11.0).color(Color32::from_rgb(74, 222, 128)))
                                                                 .fill(Color32::from_rgb(20, 45, 30))
                                                                 .rounding(Rounding::same(6.0));
-                                                            if ui.add(btn_dial).on_hover_text("Load into dialer and call").clicked() {
+                                                            if ui.add(btn_dial).hover_tip("Load into dialer and call").clicked() {
                                                                 self.adb_dialer_input = entry.number.clone();
                                                                 action_call = Some(entry.number.clone());
                                                             }
@@ -3658,13 +3666,13 @@ impl LauncherApp {
                                                 if !self.adb_dialer_input.is_empty() {
                                                     let btn_bs = egui::Button::new(RichText::new("⌫").size(14.0).color(p.text_secondary))
                                                         .fill(Color32::TRANSPARENT);
-                                                    if ui.add(btn_bs).on_hover_text("Backspace").clicked() {
+                                                    if ui.add(btn_bs).hover_tip("Backspace").clicked() {
                                                         self.adb_dialer_input.pop();
                                                     }
 
                                                     let btn_clear = egui::Button::new(RichText::new("✕").size(11.0).color(p.text_muted))
                                                         .fill(Color32::TRANSPARENT);
-                                                    if ui.add(btn_clear).on_hover_text("Clear all").clicked() {
+                                                    if ui.add(btn_clear).hover_tip("Clear all").clicked() {
                                                         self.adb_dialer_input.clear();
                                                     }
                                                 }
@@ -3741,7 +3749,7 @@ impl LauncherApp {
                                         .fill(Color32::from_rgb(22, 163, 74))
                                         .rounding(Rounding::same(999.0))
                                         .min_size(Vec2::new(130.0, 38.0));
-                                    if ui.add(btn_call).on_hover_text("Initiate call via Android device").clicked() {
+                                    if ui.add(btn_call).hover_tip("Initiate call via Android device").clicked() {
                                         if !self.adb_dialer_input.is_empty() {
                                             action_call = Some(self.adb_dialer_input.clone());
                                         }
@@ -3753,7 +3761,7 @@ impl LauncherApp {
                                         .fill(Color32::from_rgb(220, 38, 38))
                                         .rounding(Rounding::same(999.0))
                                         .min_size(Vec2::new(110.0, 38.0));
-                                    if ui.add(btn_hangup).on_hover_text("End active call (KEYCODE_ENDCALL)").clicked() {
+                                    if ui.add(btn_hangup).hover_tip("End active call (KEYCODE_ENDCALL)").clicked() {
                                         action_hangup = true;
                                     }
                                 });
@@ -3907,14 +3915,14 @@ impl LauncherApp {
                                             let btn_dl = egui::Button::new(RichText::new("💾 Save").size(10.0).color(Color32::from_rgb(74, 222, 128)))
                                                 .fill(Color32::from_rgb(20, 45, 30))
                                                 .rounding(Rounding::same(6.0));
-                                            if ui.add(btn_dl).on_hover_text("Download to host ~/Downloads").clicked() {
+                                            if ui.add(btn_dl).hover_tip("Download to host ~/Downloads").clicked() {
                                                 action_download = Some(photo_clone.path.clone());
                                             }
 
                                             let btn_del = egui::Button::new(RichText::new("🗑").size(10.0).color(Color32::from_rgb(248, 113, 113)))
                                                 .fill(Color32::from_rgb(45, 20, 20))
                                                 .rounding(Rounding::same(6.0));
-                                            if ui.add(btn_del).on_hover_text("Delete from phone").clicked() {
+                                            if ui.add(btn_del).hover_tip("Delete from phone").clicked() {
                                                 action_delete = Some(photo_clone.path.clone());
                                             }
                                         });

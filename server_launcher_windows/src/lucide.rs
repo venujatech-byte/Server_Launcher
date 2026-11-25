@@ -77,6 +77,9 @@ pub const REFRESH_CW: &str = "\u{e145}"; // refresh-cw
 pub const PLAY: &str = "\u{e13c}"; // play
 pub const SQUARE: &str = "\u{e167}"; // square
 pub const STOP: &str = "\u{e167}"; // square
+// Filled monochrome action symbols supplied by the bundled Inter font.
+pub const PLAY_FILLED: &str = "\u{25b6}";
+pub const STOP_FILLED: &str = "\u{25a0}";
 pub const PAUSE: &str = "\u{e12e}"; // pause
 pub const PLUS: &str = "\u{e13d}"; // plus
 pub const MINUS: &str = "\u{e11c}"; // minus
@@ -93,6 +96,7 @@ pub const FILE_TEXT: &str = "\u{e0cc}"; // file-text
 pub const CODE: &str = "\u{e093}"; // code
 pub const LOCK: &str = "\u{e10b}"; // lock
 pub const CLOCK: &str = "\u{e087}"; // clock
+pub const TIMER: &str = "\u{e1e0}"; // timer
 pub const CHECK: &str = "\u{e06c}"; // check
 pub const X: &str = "\u{e1b2}"; // x
 pub const CLOSE: &str = "\u{e1b2}"; // x

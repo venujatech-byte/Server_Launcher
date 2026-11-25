@@ -1,6 +1,7 @@
 use crate::config::SshRemoteHost;
 use crate::remote::build_ssh_command;
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone, Default)]
 pub struct ProcessDetails {
@@ -340,7 +341,8 @@ pub fn fetch_remote_open_files(host: &SshRemoteHost, pid: u32) -> Result<Vec<Ope
     Ok(parse_open_files(&content))
 }
 
-pub fn set_local_priority(pid: u32, nice: i32) -> Result<(), String> {
+pub fn set_local_priority(pid: u32, nice: i32, expected_start: Option<u64>) -> Result<(), String> {
+    verify_local_process(pid, expected_start)?;
     let out = Command::new("renice")
         .args(["-n", &nice.to_string(), "-p", &pid.to_string()])
         .output();
@@ -348,6 +350,7 @@ pub fn set_local_priority(pid: u32, nice: i32) -> Result<(), String> {
     match out {
         Ok(o) if o.status.success() => Ok(()),
         _ => {
+            verify_local_process(pid, expected_start)?;
             let sudo_out = Command::new("sudo")
                 .args(["-n", "renice", "-n", &nice.to_string(), "-p", &pid.to_string()])
                 .output();
@@ -360,28 +363,9 @@ pub fn set_local_priority(pid: u32, nice: i32) -> Result<(), String> {
     }
 }
 
-pub fn set_remote_priority(host: &SshRemoteHost, pid: u32, nice: i32) -> Result<(), String> {
-    let has_pass = !host.password.trim().is_empty();
-    let cmd_str = if has_pass {
-        let pass = host.password.trim();
-        format!(
-            "(echo '{}' | sudo -S renice -n {} -p {} 2>/dev/null) || (sudo -n renice -n {} -p {} 2>/dev/null) || (renice -n {} -p {} 2>/dev/null)",
-            pass, nice, pid, nice, pid, nice, pid
-        )
-    } else {
-        format!(
-            "(sudo -n renice -n {} -p {} 2>/dev/null) || (sudo renice -n {} -p {} 2>/dev/null) || (renice -n {} -p {} 2>/dev/null)",
-            nice, pid, nice, pid, nice, pid
-        )
-    };
-
-    let mut cmd = build_ssh_command(host, &cmd_str);
-    let out = cmd.output().map_err(|e| format!("SSH execution failed: {}", e))?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).to_string())
-    }
+pub fn set_remote_priority(host: &SshRemoteHost, pid: u32, nice: i32, expected_start: Option<u64>) -> Result<(), String> {
+    let command = guarded_remote_process_command(pid, expected_start, &format!("renice -n {} -p {}", nice, pid))?;
+    run_remote_process_command(host, &command)
 }
 
 pub fn get_local_affinity(pid: u32) -> Result<Vec<usize>, String> {
@@ -425,7 +409,8 @@ fn parse_affinity_list(stdout: &str) -> Result<Vec<usize>, String> {
     }
 }
 
-pub fn set_local_affinity(pid: u32, cores: &[usize]) -> Result<(), String> {
+pub fn set_local_affinity(pid: u32, cores: &[usize], expected_start: Option<u64>) -> Result<(), String> {
+    verify_local_process(pid, expected_start)?;
     if cores.is_empty() {
         return Err("Cannot set empty CPU affinity".to_string());
     }
@@ -437,6 +422,7 @@ pub fn set_local_affinity(pid: u32, cores: &[usize]) -> Result<(), String> {
     match out {
         Ok(o) if o.status.success() => Ok(()),
         _ => {
+            verify_local_process(pid, expected_start)?;
             let sudo_out = Command::new("sudo")
                 .args(["-n", "taskset", "-c", "-p", &list_str, &pid.to_string()])
                 .output();
@@ -449,45 +435,94 @@ pub fn set_local_affinity(pid: u32, cores: &[usize]) -> Result<(), String> {
     }
 }
 
-pub fn set_remote_affinity(host: &SshRemoteHost, pid: u32, cores: &[usize]) -> Result<(), String> {
+pub fn set_remote_affinity(host: &SshRemoteHost, pid: u32, cores: &[usize], expected_start: Option<u64>) -> Result<(), String> {
     if cores.is_empty() {
         return Err("Cannot set empty CPU affinity".to_string());
     }
-    let list_str = cores.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(",");
-    let has_pass = !host.password.trim().is_empty();
-    let cmd_str = if has_pass {
-        let pass = host.password.trim();
-        format!(
-            "(echo '{}' | sudo -S taskset -c -p {} {} 2>/dev/null) || (sudo -n taskset -c -p {} {} 2>/dev/null) || (taskset -c -p {} {} 2>/dev/null)",
-            pass, list_str, pid, list_str, pid, list_str, pid
-        )
-    } else {
-        format!(
-            "(sudo -n taskset -c -p {} {} 2>/dev/null) || (sudo taskset -c -p {} {} 2>/dev/null) || (taskset -c -p {} {} 2>/dev/null)",
-            list_str, pid, list_str, pid, list_str, pid
-        )
-    };
+    let list = cores.iter().map(|core| core.to_string()).collect::<Vec<_>>().join(",");
+    let command = guarded_remote_process_command(pid, expected_start, &format!("taskset -c -p {} {}", list, pid))?;
+    run_remote_process_command(host, &command)
+}
 
-    let mut cmd = build_ssh_command(host, &cmd_str);
-    let out = cmd.output().map_err(|e| format!("SSH execution failed: {}", e))?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).to_string())
+// shortcut: renice/taskset setters only take numeric PIDs; keep identity checks until handle-based setters exist.
+#[cfg(target_os = "linux")]
+fn verify_local_process(pid: u32, expected_start: Option<u64>) -> Result<(), String> {
+    let expected = expected_start.ok_or("Process identity is unavailable; refresh the list")?;
+    let actual = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()
+        .and_then(|stat| crate::sensors::parse_proc_start_marker(&stat));
+    if actual == Some(expected) { Ok(()) } else { Err("Process changed or exited; refresh the list".into()) }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn verify_local_process(_pid: u32, _expected_start: Option<u64>) -> Result<(), String> {
+    Err("Process scheduling controls are unavailable on this platform".into())
+}
+
+fn guarded_remote_process_command(pid: u32, expected_start: Option<u64>, command: &str) -> Result<String, String> {
+    let expected = expected_start.ok_or("Process identity is unavailable; refresh the list")?;
+    let script = r#"import os, sys
+pid, expected = map(int, sys.argv[1:3])
+with open('/proc/%d/stat' % pid) as f:
+    actual = int(f.read().rsplit(')', 1)[1].split()[19])
+if actual != expected:
+    sys.exit('Process changed or exited; refresh the list')
+os.execvp(sys.argv[3], sys.argv[3:])
+"#;
+    Ok(format!("python3 -c {} {} {} {}", crate::remote::shell_quote(script), pid, expected, command))
+}
+
+#[cfg(target_os = "linux")]
+pub fn send_local_signal(pid: u32, sig: &str, expected_start: Option<u64>) -> Result<(), String> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    let signal = match sig {
+        "STOP" => libc::SIGSTOP,
+        "CONT" => libc::SIGCONT,
+        "TERM" => libc::SIGTERM,
+        "KILL" => libc::SIGKILL,
+        _ => return Err("Unsupported process signal".to_string()),
+    };
+    let expected = expected_start.ok_or("Process identity is unavailable; refresh the list")?;
+    let raw_fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+    if raw_fd < 0 {
+        return Err(format!("Cannot open process handle: {}", std::io::Error::last_os_error()));
+    }
+    let fd = unsafe { OwnedFd::from_raw_fd(raw_fd as i32) };
+    let actual = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok().and_then(|stat| crate::sensors::parse_proc_start_marker(&stat));
+    if actual != Some(expected) {
+        return Err("Process changed or exited; refresh the list".to_string());
+    }
+    let result = unsafe { libc::syscall(libc::SYS_pidfd_send_signal, fd.as_raw_fd(), signal, std::ptr::null::<libc::siginfo_t>(), 0) };
+    if result == 0 { return Ok(()); }
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() != Some(libc::EPERM) {
+        return Err(format!("Cannot send signal: {error}"));
+    }
+    let script = r#"import os, signal, sys
+pid, expected, sig = map(int, sys.argv[1:])
+fd = os.pidfd_open(pid)
+with open('/proc/%d/stat' % pid) as f:
+    actual = int(f.read().rsplit(')', 1)[1].split()[19])
+if actual != expected:
+    sys.exit('Process changed or exited; refresh the list')
+signal.pidfd_send_signal(fd, sig)
+"#;
+    let output = Command::new("sudo")
+        .args(["-n", "python3", "-c", script, &pid.to_string(), &expected.to_string(), &signal.to_string()])
+        .output().map_err(|error| format!("Cannot request elevated signal: {error}"))?;
+    if output.status.success() { Ok(()) } else {
+        let detail = String::from_utf8_lossy(&output.stderr);
+        Err(format!("Cannot send signal with elevation: {}", detail.trim()))
     }
 }
 
-pub fn send_local_signal(pid: u32, sig: &str) -> Result<(), String> {
-    let out = Command::new("kill")
-        .args([&format!("-{}", sig), &pid.to_string()])
-        .output();
-
+#[cfg(not(target_os = "linux"))]
+pub fn send_local_signal(pid: u32, sig: &str, _expected_start: Option<u64>) -> Result<(), String> {
+    let out = Command::new("kill").args([&format!("-{}", sig), &pid.to_string()]).output();
     match out {
         Ok(o) if o.status.success() => Ok(()),
         _ => {
-            let sudo_out = Command::new("sudo")
-                .args(["-n", "kill", &format!("-{}", sig), &pid.to_string()])
-                .output();
+            let sudo_out = Command::new("sudo").args(["-n", "kill", &format!("-{}", sig), &pid.to_string()]).output();
             match sudo_out {
                 Ok(s) if s.status.success() => Ok(()),
                 Ok(s) => Err(String::from_utf8_lossy(&s.stderr).to_string()),
@@ -497,33 +532,237 @@ pub fn send_local_signal(pid: u32, sig: &str) -> Result<(), String> {
     }
 }
 
-pub fn send_remote_signal(host: &SshRemoteHost, pid: u32, sig: &str) -> Result<(), String> {
-    let has_pass = !host.password.trim().is_empty();
-    let cmd_str = if has_pass {
-        let pass = host.password.trim();
-        format!(
-            "(echo '{}' | sudo -S kill -{} {} 2>/dev/null) || (sudo -n kill -{} {} 2>/dev/null) || (kill -{} {} 2>/dev/null)",
-            pass, sig, pid, sig, pid, sig, pid
-        )
-    } else {
-        format!(
-            "(sudo -n kill -{} {} 2>/dev/null) || (sudo kill -{} {} 2>/dev/null) || (kill -{} {} 2>/dev/null)",
-            sig, pid, sig, pid, sig, pid
-        )
-    };
+pub fn send_remote_signal(host: &SshRemoteHost, pid: u32, sig: &str, expected_start: Option<u64>) -> Result<(), String> {
+    if !valid_process_signal(sig) { return Err("Unsupported process signal".to_string()); }
+    if matches!(sig, "TERM" | "KILL") {
+        if let Some(expected) = expected_start {
+            let windows = remote_windows_signal_command(pid, sig, expected);
+            match run_remote_windows_process_command(host, &windows) {
+                Ok(()) => return Ok(()),
+                Err(error) if remote_powershell_missing(&error) => {},
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    let command = remote_signal_command(pid, sig, expected_start)?;
+    run_remote_process_command(host, &command)
+}
 
-    let mut cmd = build_ssh_command(host, &cmd_str);
-    let out = cmd.output().map_err(|e| format!("SSH command failed: {}", e))?;
+fn run_remote_windows_process_command(host: &SshRemoteHost, command: &str) -> Result<(), String> {
+    let mut host = host.clone();
+    host.remote_cwd.clear();
+    let mut cmd = build_ssh_command(&host, command);
+    let out = cmd.output().map_err(|error| format!("SSH command failed: {error}"))?;
+    if out.status.success() { return Ok(()); }
+    let error = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    Err(if error.is_empty() { "Remote PowerShell process action failed".into() } else { error })
+}
+
+fn remote_windows_signal_command(pid: u32, sig: &str, expected_start: u64) -> String {
+    use base64::Engine;
+    let force = if sig == "KILL" { " -Force" } else { "" };
+    let script = format!("$ErrorActionPreference='Stop'; try {{ if ($env:OS -ne 'Windows_NT') {{ throw 'not Windows' }}; $p=Get-Process -Id {pid}; if ([int64]$p.StartTime.ToUniversalTime().ToFileTimeUtc() -ne [int64]{expected_start}) {{ throw 'Process changed or exited; refresh the list' }}; Stop-Process -Id {pid}{force} }} catch {{ [Console]::Error.WriteLine($_.Exception.Message); exit 1 }}");
+    let encoded = base64::engine::general_purpose::STANDARD.encode(script.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<_>>());
+    format!("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded}")
+}
+
+fn remote_powershell_missing(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    (error.contains("powershell") && (error.contains("command not found") || error.contains("not found") || error.contains("not recognized") || error.contains("not windows")))
+        || error.contains("sudo: command not found")
+}
+
+fn remote_signal_command(pid: u32, sig: &str, expected_start: Option<u64>) -> Result<String, String> {
+    if !valid_process_signal(sig) {
+        return Err("Unsupported process signal".to_string());
+    }
+    let expected = expected_start.ok_or("Process identity is unavailable; refresh the list")?;
+    let script = r#"import os, signal, sys
+pid, expected = map(int, sys.argv[1:3])
+fd = os.pidfd_open(pid)
+with open('/proc/%d/stat' % pid) as f:
+    actual = int(f.read().rsplit(')', 1)[1].split()[19])
+if actual != expected:
+    sys.exit('Process changed or exited; refresh the list')
+signal.pidfd_send_signal(fd, getattr(signal, 'SIG' + sys.argv[3]))
+"#;
+    Ok(format!("python3 -c {} {} {} {}", crate::remote::shell_quote(script), pid, expected, sig))
+}
+
+fn valid_process_signal(sig: &str) -> bool {
+    matches!(sig, "STOP" | "CONT" | "TERM" | "KILL")
+}
+
+fn run_remote_process_command(host: &SshRemoteHost, command: &str) -> Result<(), String> {
+    let password = host.password.trim();
+    if password.contains(['\n', '\r']) {
+        return Err("Passwords containing line breaks are not supported for sudo".to_string());
+    }
+    let sudo = if password.is_empty() { "sudo -n" } else { "sudo -S -p ''" };
+    let script = format!("({command}) 2>/dev/null || {sudo} {command}");
+    let mut cmd = build_ssh_command(host, &script);
+    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|error| format!("SSH command failed: {error}"))?;
+    let write_error = child.stdin.take().and_then(|mut stdin| {
+        if password.is_empty() { None } else { writeln!(stdin, "{password}").err() }
+    });
+    let out = child.wait_with_output().map_err(|error| format!("SSH command failed: {error}"))?;
     if out.status.success() {
         Ok(())
     } else {
-        Err(String::from_utf8_lossy(&out.stderr).to_string())
+        let error = String::from_utf8_lossy(&out.stderr);
+        Err(if !error.trim().is_empty() { error.trim().to_string() } else if let Some(error) = write_error { format!("Could not send sudo password: {error}") } else { "Remote process command failed".to_string() })
     }
 }
+
+#[cfg(windows)]
+mod windows_process {
+    use std::ffi::c_void;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileTime { low: u32, high: u32 }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
+        fn GetProcessTimes(handle: *mut c_void, creation: *mut FileTime, exit: *mut FileTime, kernel: *mut FileTime, user: *mut FileTime) -> i32;
+        fn TerminateProcess(handle: *mut c_void, exit_code: u32) -> i32;
+    }
+
+    const QUERY: u32 = 0x1000;
+    const TERMINATE: u32 = 0x0001;
+
+    fn open(pid: u32, access: u32) -> Result<OwnedHandle, String> {
+        let handle = unsafe { OpenProcess(access, 0, pid) };
+        if handle.is_null() { return Err(std::io::Error::last_os_error().to_string()); }
+        Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
+    }
+
+    fn creation(handle: &OwnedHandle) -> Result<u64, String> {
+        let (mut start, mut exit, mut kernel, mut user) = (FileTime::default(), FileTime::default(), FileTime::default(), FileTime::default());
+        let ok = unsafe { GetProcessTimes(handle.as_raw_handle(), &mut start, &mut exit, &mut kernel, &mut user) };
+        if ok == 0 { return Err(std::io::Error::last_os_error().to_string()); }
+        Ok(((start.high as u64) << 32) | start.low as u64)
+    }
+
+    pub(super) fn start_marker(pid: u32) -> Option<u64> {
+        creation(&open(pid, QUERY).ok()?).ok()
+    }
+
+    pub(super) fn graceful_stop(pid: u32, expected: Option<u64>) -> Result<(), String> {
+        use std::os::windows::process::CommandExt;
+        let expected = expected.ok_or("Process identity is unavailable; refresh the list")?;
+        let handle = open(pid, QUERY)?;
+        if creation(&handle)? != expected { return Err("Process changed or exited; refresh the list".into()); }
+        // Keep the handle open until taskkill exits so Windows cannot reuse the PID.
+        let result = std::process::Command::new("taskkill.exe")
+            .args(["/PID", &pid.to_string()]).creation_flags(0x08000000).output();
+        drop(handle);
+        let output = result.map_err(|error| error.to_string())?;
+        if output.status.success() { return Ok(()); }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let detail = if stderr.trim().is_empty() { stdout.trim() } else { stderr.trim() };
+        Err(if detail.is_empty() { "taskkill failed".into() } else { detail.into() })
+    }
+
+    pub(super) fn force_stop(pid: u32, expected: Option<u64>) -> Result<(), String> {
+        let expected = expected.ok_or("Process identity is unavailable; refresh the list")?;
+        let handle = open(pid, QUERY | TERMINATE)?;
+        if creation(&handle)? != expected { return Err("Process changed or exited; refresh the list".into()); }
+        if unsafe { TerminateProcess(handle.as_raw_handle(), 1) } == 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn windows_process_start_marker(pid: u32) -> Option<u64> { windows_process::start_marker(pid) }
+
+#[cfg(windows)]
+pub(crate) fn graceful_stop_windows_process(pid: u32, expected: Option<u64>) -> Result<(), String> { windows_process::graceful_stop(pid, expected) }
+
+#[cfg(windows)]
+pub(crate) fn force_stop_windows_process(pid: u32, expected: Option<u64>) -> Result<(), String> { windows_process::force_stop(pid, expected) }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn graceful_stop_rejects_a_changed_process_identity() {
+        let pid = std::process::id();
+        let marker = super::windows_process_start_marker(pid).unwrap();
+        let error = super::graceful_stop_windows_process(pid, Some(marker.wrapping_add(1))).unwrap_err();
+        assert!(error.contains("changed or exited"), "{error}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn force_stop_rejects_a_changed_process_identity() {
+        let pid = std::process::id();
+        let marker = super::windows_process_start_marker(pid).unwrap();
+        let error = super::force_stop_windows_process(pid, Some(marker.wrapping_add(1))).unwrap_err();
+        assert!(error.contains("changed or exited"), "{error}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn local_signal_rejects_a_changed_process_identity() {
+        let pid = std::process::id();
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+        let marker = crate::sensors::parse_proc_start_marker(&stat).unwrap();
+        let error = super::send_local_signal(pid, "TERM", Some(marker.wrapping_add(1))).unwrap_err();
+        assert!(error.contains("changed or exited"), "{error}");
+    }
+
+    #[test]
+    fn scheduling_commands_require_a_process_identity() {
+        assert!(super::guarded_remote_process_command(42, None, "renice -n 0 -p 42").is_err());
+        assert!(super::guarded_remote_process_command(42, Some(100), "renice -n 0 -p 42").unwrap().ends_with(" 42 100 renice -n 0 -p 42"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn scheduling_rejects_a_changed_process_identity() {
+        let pid = std::process::id();
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+        let marker = crate::sensors::parse_proc_start_marker(&stat).unwrap();
+        assert!(super::verify_local_process(pid, Some(marker)).is_ok());
+        assert!(super::verify_local_process(pid, Some(marker.wrapping_add(1))).is_err());
+    }
+
+    #[test]
+    fn remote_signal_requires_identity_and_valid_signal() {
+        assert!(super::remote_signal_command(42, "TERM", None).is_err());
+        assert!(super::remote_signal_command(42, "TERM; id", Some(100)).is_err());
+        assert!(super::remote_signal_command(42, "TERM", Some(100)).unwrap().ends_with(" 42 100 TERM"));
+    }
+
+    #[test]
+    fn process_signals_reject_shell_input() {
+        assert!(valid_process_signal("TERM"));
+        assert!(!valid_process_signal("TERM; id"));
+        assert!(!valid_process_signal(""));
+    }
+
+    #[test]
+    fn remote_windows_signal_is_encoded_and_checks_process_identity() {
+        use base64::Engine;
+        let command = super::remote_windows_signal_command(42, "KILL", 1337);
+        let encoded = command.strip_prefix("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ").unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
+        let words = bytes.chunks_exact(2).map(|word| u16::from_le_bytes([word[0], word[1]])).collect::<Vec<_>>();
+        let script = String::from_utf16(&words).unwrap();
+        assert!(script.contains("ToFileTimeUtc() -ne [int64]1337"));
+        assert!(script.contains("Stop-Process -Id 42 -Force"));
+        assert!(super::remote_powershell_missing("powershell.exe: command not found"));
+        assert!(!super::remote_powershell_missing("Process changed or exited; refresh the list"));
+    }
 
     #[test]
     fn test_parse_memory_maps() {

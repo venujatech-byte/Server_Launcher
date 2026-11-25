@@ -2,7 +2,7 @@ use crate::config::{SavedCommand, SshRemoteHost};
 use crate::remote::build_ssh_command;
 use crate::service::{LogEntry, LogKind};
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -478,36 +478,12 @@ impl TerminalSession {
                     lock.as_mut().and_then(|c| c.stderr.take())
                 };
 
-                let logs_out = Arc::clone(&logs_arc);
                 if let Some(out) = stdout {
-                    thread::spawn(move || {
-                        let reader = BufReader::new(out);
-                        for line in reader.lines() {
-                            if let Ok(l) = line {
-                                let mut q = logs_out.lock().unwrap();
-                                q.push_back(LogEntry::new(l, LogKind::Stdout));
-                                if q.len() > 2000 {
-                                    q.pop_front();
-                                }
-                            }
-                        }
-                    });
+                    crate::service::spawn_stream_reader(out, logs_arc.clone(), 2000, LogKind::Stdout);
                 }
 
-                let logs_err = Arc::clone(&logs_arc);
                 if let Some(err) = stderr {
-                    thread::spawn(move || {
-                        let reader = BufReader::new(err);
-                        for line in reader.lines() {
-                            if let Ok(l) = line {
-                                let mut q = logs_err.lock().unwrap();
-                                q.push_back(LogEntry::new(l, LogKind::Stderr));
-                                if q.len() > 2000 {
-                                    q.pop_front();
-                                }
-                            }
-                        }
-                    });
+                    crate::service::spawn_stream_reader(err, logs_arc.clone(), 2000, LogKind::Stderr);
                 }
 
                 let status_clone = Arc::clone(&status_arc);
@@ -618,36 +594,12 @@ impl TerminalSession {
                     lock.as_mut().and_then(|c| c.stderr.take())
                 };
 
-                let logs_out = Arc::clone(&logs_arc);
                 if let Some(out) = stdout {
-                    thread::spawn(move || {
-                        let reader = BufReader::new(out);
-                        for line in reader.lines() {
-                            if let Ok(l) = line {
-                                let mut q = logs_out.lock().unwrap();
-                                q.push_back(LogEntry::new(l, LogKind::Stdout));
-                                if q.len() > 2000 {
-                                    q.pop_front();
-                                }
-                            }
-                        }
-                    });
+                    crate::service::spawn_stream_reader(out, logs_arc.clone(), 2000, LogKind::Stdout);
                 }
 
-                let logs_err = Arc::clone(&logs_arc);
                 if let Some(err) = stderr {
-                    thread::spawn(move || {
-                        let reader = BufReader::new(err);
-                        for line in reader.lines() {
-                            if let Ok(l) = line {
-                                let mut q = logs_err.lock().unwrap();
-                                q.push_back(LogEntry::new(l, LogKind::Stderr));
-                                if q.len() > 2000 {
-                                    q.pop_front();
-                                }
-                            }
-                        }
-                    });
+                    crate::service::spawn_stream_reader(err, logs_arc.clone(), 2000, LogKind::Stderr);
                 }
 
                 let status_clone = Arc::clone(&status_arc);

@@ -54,14 +54,24 @@ pub fn fetch_local_journal(unit: &str, _: bool, lines: usize, _: Option<&str>) -
     powershell(&format!("$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-WinEvent -FilterHashtable @{{LogName='System'; ProviderName='Service Control Manager'}} -MaxEvents 1000 | Where-Object {{ $_.Message -like ('*' + {} + '*') }} | Select-Object -First {} TimeCreated,Id,LevelDisplayName,Message | Format-List | Out-String", quote(unit), lines.clamp(1,1000)))
 }
 
+pub fn is_local_service_enabled(unit: &str, _: bool) -> Result<bool,String> {
+    let service = get_local_unit_status(unit, false)?;
+    Ok(service.load_state == "Auto")
+}
+
+pub fn get_local_unit_status(unit: &str, user_mode: bool) -> Result<SystemdService,String> {
+    list_local_services(user_mode)?.into_iter().find(|service| service.name == unit).ok_or_else(|| format!("Service not found: {}", unit))
+}
+
 const UNSUPPORTED: &str = "systemd unit files and drop-ins apply to remote Linux hosts only. Use services.msc or sc.exe to configure local Windows services.";
 pub fn create_local_service(_: &NewServiceDefinition, _: Option<&str>) -> Result<String,String> { Err(UNSUPPORTED.into()) }
-pub fn get_local_unit_files(_: &str, _: bool) -> UnitFilesInfo { UnitFilesInfo::default() }
+pub fn get_local_unit_files(_: &str, _: bool) -> Result<UnitFilesInfo,String> { Err(UNSUPPORTED.into()) }
 pub fn read_local_unit_file(_: &str, _: Option<&str>) -> Result<String,String> { Err(UNSUPPORTED.into()) }
 pub fn write_local_unit_file(_: &str, _: &str, _: bool, _: Option<&str>) -> Result<String,String> { Err(UNSUPPORTED.into()) }
 pub fn delete_local_drop_in(_: &str, _: bool, _: Option<&str>) -> Result<String,String> { Err(UNSUPPORTED.into()) }
-pub fn get_local_unit_dependencies(_: &str, _: bool) -> UnitDependenciesInfo {
-    UnitDependenciesInfo { tree_output: "Use sc.exe enumdepend <service> for Windows service dependencies.".into(), ..Default::default() }
+pub fn create_local_drop_in(_: &str, _: &str, _: bool, _: Option<&str>) -> Result<String,String> { Err(UNSUPPORTED.into()) }
+pub fn get_local_unit_dependencies(_: &str, _: bool) -> Result<UnitDependenciesInfo,String> {
+    Ok(UnitDependenciesInfo { tree_output: "Use sc.exe enumdepend <service> for Windows service dependencies.".into(), ..Default::default() })
 }
 
 #[cfg(test)]

@@ -27,6 +27,7 @@ pub fn cidr_to_subnet_mask(prefix: u8) -> String {
 #[derive(Debug, Clone)]
 pub struct WifiSnapshot {
     pub interface: String,
+    pub interfaces: Vec<String>,
     pub product: String,
     pub mac_address: String,
     pub state: String,
@@ -36,7 +37,7 @@ pub struct WifiSnapshot {
     pub channel: u32,
     pub frequency_mhz: u32,
     pub rate: String,
-    pub signal_pct: u8,
+    pub signal_pct: Option<u8>,
     pub signal_dbm: i32,
     pub security: String,
     pub ip_v4: String,
@@ -62,6 +63,7 @@ impl Default for WifiSnapshot {
     fn default() -> Self {
         Self {
             interface: String::new(),
+            interfaces: Vec::new(),
             product: String::new(),
             mac_address: String::new(),
             state: "Unavailable".to_string(),
@@ -71,7 +73,7 @@ impl Default for WifiSnapshot {
             channel: 0,
             frequency_mhz: 0,
             rate: String::new(),
-            signal_pct: 0,
+            signal_pct: None,
             signal_dbm: 0,
             security: String::new(),
             ip_v4: String::new(),
@@ -97,64 +99,74 @@ impl Default for WifiSnapshot {
 
 use std::sync::OnceLock;
 
-static CACHED_IFACE_HW: OnceLock<(String, String, String, String, String)> = OnceLock::new();
 static CACHED_KVER: OnceLock<String> = OnceLock::new();
 
-/// Query real Wi-Fi status from nmcli, ip, sysfs, and ss.
-pub fn query_wifi_status() -> WifiSnapshot {
+fn choose_wifi_interface(candidates: &[(String, bool)], selected: Option<&str>) -> Option<String> {
+    selected.and_then(|name| candidates.iter().find(|(candidate, _)| candidate == name))
+        .or_else(|| candidates.iter().find(|(_, up)| *up))
+        .or_else(|| candidates.first()).map(|(name, _)| name.clone())
+}
+
+fn nmcli_fields(line: &str) -> Vec<String> {
+    let mut fields = vec![String::new()];
+    let mut chars = line.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => if let Some(next) = chars.next() { fields.last_mut().unwrap().push(next); },
+            ':' => fields.push(String::new()),
+            _ => fields.last_mut().unwrap().push(ch),
+        }
+    }
+    fields
+}
+
+#[cfg(test)]
+mod wifi_selection_tests {
+    #[test]
+    fn picks_requested_or_active_wireless_adapter() {
+        let devices = vec![("wifi0".to_string(), false), ("wlan1".to_string(), true)];
+        assert_eq!(super::choose_wifi_interface(&devices, Some("wifi0")).as_deref(), Some("wifi0"));
+        assert_eq!(super::choose_wifi_interface(&devices, Some("removed")).as_deref(), Some("wlan1"));
+        assert_eq!(super::choose_wifi_interface(&[], None), None);
+    }
+    #[test]
+    fn preserves_escaped_access_point_fields() {
+        let fields = super::nmcli_fields(r"yes:Office\:Guest:aa\:bb\:cc:11:54 Mbit/s:80:WPA2:2462 MHz");
+        assert_eq!(fields[1], "Office:Guest");
+        assert_eq!(fields[2], "aa:bb:cc");
+        assert_eq!(fields[7], "2462 MHz");
+    }
+}
+
+/// Query the selected Wi-Fi adapter using nmcli, ip and sysfs.
+pub fn query_wifi_status(selected: Option<&str>) -> WifiSnapshot {
     let mut snap = WifiSnapshot::default();
     snap.last_updated = Instant::now();
-
-    // 1-4 & 6. Detect and cache static interface hardware details once
-    let (iface, mac, drv, slot, prod) = CACHED_IFACE_HW.get_or_init(|| {
-        let mut iface = String::new();
-        if let Ok(entries) = fs::read_dir("/sys/class/net") {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with("wl") {
-                    iface = name;
-                    break;
-                }
-            }
+    let mut candidates: Vec<(String, bool)> = fs::read_dir("/sys/class/net").ok().into_iter().flatten()
+        .flatten().filter_map(|entry| {
+            let path = entry.path();
+            if !path.join("wireless").exists() && !path.join("phy80211").exists() { return None; }
+            let name = entry.file_name().into_string().ok()?;
+            let up = fs::read_to_string(path.join("operstate")).map(|state| state.trim() == "up").unwrap_or(false);
+            Some((name, up))
+        }).collect();
+    candidates.sort_by(|a, b| a.0.cmp(&b.0));
+    snap.interfaces = candidates.iter().map(|(name, _)| name.clone()).collect();
+    let Some(iface) = choose_wifi_interface(&candidates, selected) else { return snap; };
+    let base = format!("/sys/class/net/{iface}");
+    let mac = fs::read_to_string(format!("{base}/address")).map(|s| s.trim().to_uppercase()).unwrap_or_default();
+    let mut drv = String::new();
+    let mut slot = String::new();
+    if let Ok(uevent) = fs::read_to_string(format!("{base}/device/uevent")) {
+        for line in uevent.lines() {
+            if let Some(value) = line.strip_prefix("DRIVER=") { drv = value.trim().to_string(); }
+            if let Some(value) = line.strip_prefix("PCI_SLOT_NAME=") { slot = value.trim().to_string(); }
         }
-        let mac_path = format!("/sys/class/net/{}/address", iface);
-        let mac = fs::read_to_string(&mac_path)
-            .map(|s| s.trim().to_uppercase())
-            .unwrap_or_else(|_| "Unknown".to_string());
-
-        let uevent_path = format!("/sys/class/net/{}/device/uevent", iface);
-        let mut drv = "Unknown".to_string();
-        let mut slot = "Unknown".to_string();
-        if let Ok(uevent) = fs::read_to_string(&uevent_path) {
-            for line in uevent.lines() {
-                if let Some(d) = line.strip_prefix("DRIVER=") {
-                    drv = d.trim().to_string();
-                } else if let Some(s) = line.strip_prefix("PCI_SLOT_NAME=") {
-                    slot = s.trim().to_string();
-                }
-            }
-        }
-
-        let mut prod = "Wi-Fi Adapter".to_string();
-        let prod_out = Command::new("nmcli")
-            .args(["-t", "-f", "GENERAL.PRODUCT", "dev", "show", &iface])
-            .output();
-        if let Ok(out) = prod_out {
-            if out.status.success() {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                for line in stdout.lines() {
-                    if let Some(p) = line.strip_prefix("GENERAL.PRODUCT:") {
-                        let trimmed = p.trim();
-                        if !trimmed.is_empty() {
-                            prod = trimmed.to_string();
-                        }
-                    }
-                }
-            }
-        }
-
-        (iface, mac, drv, slot, prod)
-    }).clone();
+    }
+    let prod = Command::new("nmcli").args(["-t", "-f", "GENERAL.PRODUCT", "dev", "show", &iface]).output().ok()
+        .filter(|output| output.status.success()).and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|output| output.lines().find_map(|line| line.strip_prefix("GENERAL.PRODUCT:").map(str::to_string)))
+        .filter(|value| !value.trim().is_empty()).unwrap_or_else(|| "Wi-Fi adapter".into());
 
     snap.interface = iface;
     snap.mac_address = mac;
@@ -177,7 +189,7 @@ pub fn query_wifi_status() -> WifiSnapshot {
 
     // 5. Query active Wi-Fi connection via nmcli
     let nmcli_out = Command::new("nmcli")
-        .args(["-t", "-f", "active,ssid,bssid,chan,rate,signal,security,freq", "dev", "wifi"])
+        .args(["-t", "-f", "active,ssid,bssid,chan,rate,signal,security,freq", "dev", "wifi", "list", "ifname", &snap.interface, "--rescan", "no"])
         .output();
 
     if let Ok(out) = nmcli_out {
@@ -185,33 +197,15 @@ pub fn query_wifi_status() -> WifiSnapshot {
             let stdout = String::from_utf8_lossy(&out.stdout);
             for line in stdout.lines() {
                 if line.starts_with("yes:") {
-                    // Line format: yes:<ssid>:<bssid>:<chan>:<rate>:<signal>:<security>
-                    // Note that colons in bssid might be escaped as \:
-                    let raw = line.strip_prefix("yes:").unwrap_or("");
-                    // Replace escaped colons temporarily
-                    let placeholder = "___COLON___";
-                    let normalized = raw.replace(r"\:", placeholder);
-                    let parts: Vec<&str> = normalized.split(':').collect();
-
-                    if parts.len() >= 7 {
-                        snap.ssid = parts[0].replace(placeholder, ":").trim().to_string();
-                        snap.bssid = parts[1].replace(placeholder, ":").trim().to_string();
-                        if let Ok(ch) = parts[2].trim().parse::<u32>() {
-                            snap.channel = ch;
-                            snap.frequency_mhz = parts[6].split_whitespace().next().and_then(|value| value.parse().ok()).unwrap_or(0);
-                        }
-                        let raw_rate = parts[3].replace(placeholder, ":").trim().to_string();
-                        if !raw_rate.is_empty() {
-                            snap.rate = raw_rate;
-                        }
-                        if let Ok(sig) = parts[4].trim().parse::<u8>() {
-                            snap.signal_pct = sig;
-                            snap.signal_dbm = (sig as f32 / 2.0 - 100.0) as i32;
-                        }
-                        let sec = parts[5].replace(placeholder, ":").trim().to_string();
-                        if !sec.is_empty() {
-                            snap.security = sec;
-                        }
+                    let parts = nmcli_fields(line);
+                    if parts.len() >= 8 {
+                        snap.ssid = parts[1].trim().to_string();
+                        snap.bssid = parts[2].trim().to_string();
+                        snap.channel = parts[3].trim().parse().unwrap_or(0);
+                        snap.frequency_mhz = parts[7].split_whitespace().next().and_then(|value| value.parse().ok()).unwrap_or(0);
+                        snap.rate = parts[4].trim().to_string();
+                        snap.signal_pct = parts[5].trim().parse::<u8>().ok().filter(|value| *value <= 100);
+                        snap.security = parts[6].trim().to_string();
                         snap.is_connected = true;
                         snap.state = "CONNECTED".to_string();
                         break;
@@ -250,7 +244,7 @@ pub fn query_wifi_status() -> WifiSnapshot {
 
     // 8. Query Default Gateway via `ip route show default`
     let route_out = Command::new("ip")
-        .args(["route", "show", "default"])
+        .args(["route", "show", "default", "dev", &snap.interface])
         .output();
     if let Ok(out) = route_out {
         if out.status.success() {
@@ -370,36 +364,44 @@ pub fn query_wifi_status() -> WifiSnapshot {
     snap
 }
 
-/// Spawns an asynchronous Wi-Fi rescan via `nmcli dev wifi rescan`.
-pub fn trigger_wifi_rescan_async() {
-    std::thread::spawn(|| {
-        let _ = Command::new("nmcli")
-            .args(["dev", "wifi", "rescan"])
-            .output();
-    });
+fn command_result(success: bool, stderr: &str, operation: &str) -> Result<(), String> {
+    if success { Ok(()) } else if stderr.trim().is_empty() { Err(format!("{operation} failed")) } else { Err(format!("{operation} failed: {}", stderr.trim())) }
 }
 
-/// Flushes DNS caches using `resolvectl flush-caches` or `systemd-resolve --flush-caches`.
-pub fn trigger_flush_dns() -> Result<String, String> {
-    let out = Command::new("resolvectl")
-        .args(["flush-caches"])
-        .output();
+/// Request a NetworkManager scan on one selected interface.
+pub fn scan_wifi(interface: &str) -> Result<String, String> {
+    if interface.is_empty() || interface.len() > 15 || !interface.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')) {
+        return Err("Invalid Wi-Fi interface".into());
+    }
+    let output = Command::new("nmcli").args(["--wait", "15", "dev", "wifi", "rescan", "ifname", interface]).output()
+        .map_err(|error| format!("Could not start Wi-Fi scan: {error}"))?;
+    command_result(output.status.success(), &String::from_utf8_lossy(&output.stderr), "Wi-Fi scan")?;
+    Ok(format!("Wi-Fi scan requested for {interface}"))
+}
 
-    if let Ok(o) = out {
-        if o.status.success() {
-            return Ok("DNS resolver caches flushed successfully.".to_string());
+/// Flush the local resolver cache, preserving errors from the available tool.
+pub fn flush_dns() -> Result<String, String> {
+    for program in ["resolvectl", "systemd-resolve"] {
+        let argument = if program == "systemd-resolve" { "--flush-caches" } else { "flush-caches" };
+        match Command::new(program).arg(argument).output() {
+            Ok(output) => {
+                command_result(output.status.success(), &String::from_utf8_lossy(&output.stderr), "DNS cache flush")?;
+                return Ok("DNS resolver cache flushed".into());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("Could not start DNS cache flush: {error}")),
         }
     }
+    Err("DNS cache flush is unavailable: no supported resolver tool found".into())
+}
 
-    let out2 = Command::new("systemd-resolve")
-        .args(["--flush-caches"])
-        .output();
-
-    if let Ok(o) = out2 {
-        if o.status.success() {
-            return Ok("DNS caches flushed via systemd-resolve.".to_string());
-        }
+#[cfg(test)]
+mod wifi_action_tests {
+    #[test]
+    fn command_errors_and_invalid_interfaces_are_reported() {
+        assert!(super::command_result(false, "permission denied", "scan").unwrap_err().contains("permission denied"));
+        assert!(super::command_result(false, "", "scan").is_err());
+        assert!(super::command_result(true, "", "scan").is_ok());
+        assert!(super::scan_wifi("../bad").is_err());
     }
-
-    Ok("Flush command dispatched to resolver daemon.".to_string())
 }

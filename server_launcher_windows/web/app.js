@@ -4287,7 +4287,7 @@
 
   (async () => {
     if (!invoke) {
-      content.innerHTML = `<div class="card empty"><b>Tauri runtime is unavailable</b><span>Launch the Android cockpit from Server Launcher.</span></div>`;
+      content.innerHTML = `<div class="card empty"><b>Tauri runtime is unavailable</b><span>Open DroidM from Server Launcher.</span></div>`;
       return;
     }
     try {

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Server Launcher Android Cockpit",
+  "productName": "Server Launcher",
   "version": "0.1.0",
   "identifier": "com.serverlauncher.android-cockpit",
   "build": {
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "adb-cockpit",
-        "title": "Android Cockpit · Server Launcher",
+        "title": "DroidM",
         "width": 1360,
         "height": 860,
         "minWidth": 900,
@@ -27,6 +27,22 @@
   "bundle": {
     "active": true,
     "targets": ["deb", "rpm", "appimage"],
-    "icon": ["assets/icon.png"]
+    "icon": ["assets/icon.png"],
+    "linux": {
+      "deb": {
+        "depends": ["curl", "python3", "pkexec"],
+        "files": {
+          "/usr/libexec/server-launcher-sensors": "packaging/server-launcher-sensors",
+          "/usr/share/polkit-1/actions/com.serverlauncher.sensors.policy": "packaging/com.serverlauncher.sensors.policy"
+        }
+      },
+      "rpm": {
+        "depends": ["curl", "python3", "polkit"],
+        "files": {
+          "/usr/libexec/server-launcher-sensors": "packaging/server-launcher-sensors",
+          "/usr/share/polkit-1/actions/com.serverlauncher.sensors.policy": "packaging/com.serverlauncher.sensors.policy"
+        }
+      }
+    }
   }
 }

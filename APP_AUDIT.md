@@ -1,0 +1,177 @@
+# Server Launcher code map and audit
+
+This report covers the Linux and Windows desktop launchers, their shared updater, and the Android Cockpit boundary. Findings are from source inspection. Severity describes the impact and conditions visible in the code, without claiming a reproduced exploit. CPU and memory findings identify work the code performs and need runtime measurements before assigning a cost.
+
+## Where to make changes
+
+Both desktop crates use the same paths within `src`. The paths below are relative to `server_launcher_rust/src` or `server_launcher_windows/src`. The split moves existing renderers without redesigning their layouts or rewriting their command handlers. `app.rs` still owns application state, startup, frame dispatch, shared helpers and layout tests.
+
+| Page or control | File | Backend or shared logic |
+|---|---|---|
+| Workspace tabs and machine rail | `app/workspace.rs` | `app.rs`, `config.rs` |
+| Servers groups and cards, screenshot 1 | `app/servers.rs` | `service.rs`, `config.rs` |
+| Overview and other local listeners, screenshot 2 | `app/listeners.rs` | `scanner.rs`, `procmgr.rs` |
+| Selected server tabs, output and composer, screenshot 3 | `app/server_detail.rs` | `service.rs` |
+| Scripts | `app/scripts.rs` | `scripts.rs` |
+| Saved commands and interactive terminal | `app/commands.rs` | `commands.rs`, `service.rs` |
+| Systemd status, Files & Drop-ins, Dependencies | `app/systemd.rs` | `systemd.rs`, Windows `windows_services.rs` |
+| Settings, About and sudo prompt | `app/settings.rs` | `theme.rs`, `autostart.rs`, root `shared/updater.rs` |
+| SSH workspace and connection or scan coordination | `app/ssh.rs`, `app/ssh/connection.rs` | `remote.rs`, `config.rs` |
+| SSH listener list and terminal | `app/ssh/listeners.rs`, `app/ssh/terminal.rs` | `remote.rs`, `service.rs` |
+| Sensors navigation and routing | `app/sensors.rs` | `sensors.rs`, platform and SSH collectors |
+| Sensors overview | `app/sensors/overview.rs` | `sensors.rs` |
+| Top Apps and process dialogs | `app/sensors/processes.rs` | `sensors.rs`, `procmgr.rs` |
+| CPU, RAM and GPU | `app/sensors/cpu.rs`, `ram.rs`, `gpu.rs` under the same directory | `sensors.rs`, `power.rs` |
+| Storage, Wi-Fi and Data Usage | `app/sensors/storage.rs`, `wifi.rs`, `data_usage.rs` | `sensors.rs`, `wifi.rs` |
+| Power, Bluetooth and Temperature | `app/sensors/power.rs`, `bluetooth.rs`, `temperature.rs` | `power.rs`, `bluetooth.rs`, `sensors.rs` |
+| Server, script, command, host and confirmation dialogs | `modals.rs` | Main dispatch in `app.rs` |
+| Android device picker and Cockpit handoff | `adb_view.rs` | `adb.rs`, `tauri_app.rs`, separate frontend at each crate’s `web/app.js` |
+
+The Sensors split is for display code. Hardware collection remains in its existing platform modules. The Android Cockpit already runs as a separate Tauri frontend and was not moved in this pass.
+
+## Security and reliability findings
+
+| Priority | Evidence and impact | Proposed fix |
+|---|---|---|
+| High | `config.rs::SshRemoteHost` serializes its password and `ConfigFile::save_to_file` writes the config as JSON. `app.rs::persist_config` includes the SSH host list. Anyone with read access to that file or its backups can read saved SSH passwords. | Store credentials in the OS credential store, migrate old passwords with visible success or failure, and never include them in exports. Use restrictive permissions and atomic writes for configuration. |
+| High | `remote.rs::launch_external_ssh_terminal` and `launch_external_ssh_command` build shell scripts from host fields. The Linux script is written under a predictable temp filename before its permissions are modified. The Windows command path assembles a shell string. This risks exposing credentials or treating imported host fields as executable shell syntax. | Use argument arrays where the terminal supports them, validate SSH destinations, and use secure temporary files where a wrapper is required. Keep secrets out of wrapper contents, handle write errors and clean up after launch. |
+| High | `remote.rs::reboot_remote_device` and `shutdown_remote_device` interpolate the sudo password into the remote command string. It can be visible where process arguments or command auditing are recorded. | Pass credentials over stdin to the remote sudo command. Keep the displayed and logged command free of secrets. |
+| Medium | `modals.rs::SshHostModalState` displays strict host key and agent toggles, but `config.rs::SshRemoteHost` has no corresponding fields. `remote.rs` uses `StrictHostKeyChecking=accept-new` for connection checks and commands. Users cannot enforce the stricter behavior from that checkbox. | Persist and honor per-host policy consistently, including external terminals. Prefer explicit host key verification when a user requests strict mode. |
+| Medium | `app/ssh/listeners.rs` confirms SSH Stop/Kill against a cached listener snapshot. The identity match catches UI changes but does not prove the remote process still has that PID when the command runs. Review local Overview actions for the same gap. The Top Apps path already has identity checks to compare against. | Validate process start identity near mutation. Use safe service management where identity cannot be confirmed, and keep the SSH lockout confirmation. |
+| Medium | `app.rs::run_remote_ssh_command` moved to `app/ssh/terminal.rs`. It starts an independent SSH child and two reader threads for each submission and has no per-host command limit, application deadline, or cancel control there. SSH liveness settings do not end remote commands that are still running. | Bound concurrent commands per host and track the child so Cancel or host removal can terminate it. Preserve interactive sessions that explicitly require longer lifetimes. |
+| Medium | The updater verifies SHA-256 from the same release channel as the asset before starting an installer. A digest detects corruption, but is not a separate trust root if release credentials and metadata are compromised. Linux then requests package manager privileges. | Sign release manifests or enforce platform signing with a separately trusted identity. Preserve Microsoft Store’s independent update channel. |
+| Medium | `ConfigFile::save_to_file` overwrites the existing JSON directly, and `app.rs::persist_config` discards its error. A failed write can lose changes or leave a partial config without UI feedback. | Write a sibling temporary file, atomically replace the config, and surface failures. Cover malformed config recovery and preservation of the existing file. |
+| Review | Android Cockpit exposes multiple device operations through `tauri_app.rs::adb_action` and renders device data in `web/app.js` templates. The local asset CSP and escaping helpers are present. This audit did not establish a renderer injection or privileged command bypass. | Review every dynamic HTML interpolation and action handler against an explicit operation allowlist. Validate device and path at the Rust boundary. Include device names, messages, filenames, and stale device selection in fixture coverage. |
+| Review | Systemd already validates unit names and drop-in names, and has source tests covering shell and path rejection. It still crosses a privileged file boundary through `write_privileged_unit_content`. | Add adversarial path and symlink test coverage when a Linux service sandbox is available. Keep Windows service capabilities explicitly separate. |
+
+Scripts and saved commands intentionally run shell code selected by the user. Treat imported scripts, saved commands, and autostart configuration as executable content. Show the full target and command before enabling automation for a newly imported record.
+
+## CPU and memory audit
+
+| Priority | Evidence | Change to measure |
+|---|---|---|
+| High | `app/ssh/terminal.rs::render_remote_servers_right_panel` builds a layout job for each retained log entry while holding the log mutex. Producers need the same lock. | Cache rendered or measured entries by revision and viewport width. Paint visible rows without holding the writer lock. Measure typing latency and log throughput during a burst. |
+| High | `app/server_detail.rs::render_server_log_content` deep-clones the log deque into a vector every render even though visible rows are virtualized. Searches also normalize strings while rendering. | Cache an immutable snapshot until the log changes, and cache matching indexes by query and revision. Preserve wrapping, selection and copy output. |
+| High | `service.rs::Service::new` reserves 2,000 log entries for every configured server, including those that never run. Log entry count caps exist but are not uniform byte budgets across all subprocess output paths. | Allocate log storage on demand. Measure idle memory with many configured services and enforce a shared byte budget so unusually long output cannot dominate memory. |
+| Medium | SSH listener rendering clones the entire listener snapshot and then clones filtered rows. Stopped rows are pruned in the rendering path. `app/ssh/connection.rs` has a second delayed scan path in addition to the normal scan gate. | Publish immutable snapshots by generation, filter by reference or index, coalesce scans per host and discard stale results. |
+| Medium | The Commands and Systemd lists already virtualize rows. Commands still scans the catalog and rebuilds filtered indexes on rendered frames. Systemd logs and dependency results need their own payload limits. | Cache results by query, host, scope and catalog revision. Retain the existing fixed-height virtualization. |
+| Medium | `sensors.rs` refreshes process lists and has per-PID reads. Top Apps, hardware inventory, GPU, Wi-Fi and Bluetooth have different collection costs. Parts of the collectors already gate expensive work by selection and cadence. | Log elapsed sample time and sample size by collector. Compare Overview and Top Apps at the same interval before changing refresh policy. Keep slow inventory and fast utilization sampling separate. |
+| Medium | Android screen preview schedules screenshots every three seconds on the active screen tab in `web/app.js`. Device media paths hold image data and rebuild some DOM trees. The desktop opens a separate Cockpit process. | Measure combined parent and WebView memory. Prevent overlapping captures on slow ADB links and verify caches evict on device or tab changes. |
+| Medium | Host-scoped maps in `LauncherApp` can retain logs, inputs and snapshots after host deletion. The removal code in `app/workspace.rs` removes the host record but does not clear all related maps there. | Give host removal a single cleanup path and prevent late workers from recreating deleted entries. Measure memory after repeated add/connect/remove cycles. |
+
+For a repeatable baseline, record 30 seconds each for idle Servers, scrolling Overview, a busy terminal, Sensors Overview, and Top Apps. Use the same window size, log volume and refresh interval before and after changes. Record CPU time over the interval, RSS on Linux or working set and private bytes on Windows, and frame time or input delay. Include child SSH and Cockpit processes separately. No active launcher process was observed during this audit, so there are no measured before-and-after CPU or RAM claims.
+
+## Cleanup candidates
+
+1. **Legacy Android egui Cockpit.** `adb_view.rs::render_adb_cockpit_view` has no call site in the inspected Rust source. The current desktop routes through `render_adb_tauri_handoff`. Trace shared mirror and device helpers separately before deleting the old view and its state.
+2. **Silent host options.** Fix the strict-host-key and agent settings or remove the controls. A visible control that silently does nothing is worse than an explicit unsupported state.
+3. **Suppressed dead code.** Review the isolated `allow(dead_code)` items in `remote.rs`, `app.rs`, and `modals.rs` before deletion. Keep target-specific entry points that a Linux-only check cannot see.
+4. **Duplicated platform UI.** Both crates now have the same module boundaries. Compare each pair before sharing files. Start with byte-identical pages and leave service, process and sensor collectors platform-specific.
+
+## Suggested work order
+
+1. Protect SSH passwords and centralize SSH argument and host-key handling. Verify configuration migration with dummy credentials.
+2. Stop retaining removed host data, add command lifecycle limits, and remove unnecessary log allocations. Benchmark each change separately.
+3. Fix process identity checks and audit privileged systemd and ADB operations against disposable fixtures.
+4. Remove proven dead view code and consolidate identical UI modules only after Linux and native Windows builds agree.
+
+The moved Rust modules were checked with `cargo check --locked --offline --tests` in both crates on Linux. This compiles test code but does not run it. Native Windows, UI rendering, dependency advisory scans, and runtime profiling were outside the verification performed here. The report does not claim a clean bill of security.
+
+## Remediation progress
+
+- `f7de58e` stages configuration writes before replacing the previous file and reports save failures. External SSH launches no longer put passwords in temporary scripts or interpolate the destination into a Windows command shell. Remote power actions send sudo credentials through SSH stdin. Stopped services allocate log storage on demand.
+- `5048742` saves and enforces the per-host host-key and agent options. Existing records retain their previous defaults.
+- `4b85f44` shares immutable log text across snapshots and moves SSH terminal layout out of the log lock. The terminal still lays out all retained rows. A runtime profile is needed before assigning CPU or memory savings.
+
+Android Cockpit is deferred by request. The desktop now migrates legacy SSH passwords on startup using Linux Secret Service or Windows DPAPI. JSON retains a credential reference or protected blob, and migration failure leaves the previous file in place. Existing backups made before migration are outside the app’s control. Remaining work also includes SSH command lifecycle and host removal cleanup, trusted update signing, and runtime profiling. External password authentication now prompts in the terminal instead of copying the saved credential into a launcher script.
+
+Local Overview now requires a captured process start identity for Stop. On Linux, Restart verifies fresh launch details before stopping the process and refuses to relaunch while the process or port is still active. Windows currently exposes verified Stop only in Other processes.
+
+SSH Servers Stop and Kill now use the existing guarded process signaling backend. The scan captures Linux process start markers before collecting sockets, and the SSH lockout confirmation compares those markers. Listener rows without an observable PID and start marker have Stop and Kill disabled. Restart now verifies the listener against the systemd service’s main PID and process start marker. It excludes SSH listeners and uses noninteractive sudo on the remote host. Unused batch Stop and Restart builders were removed.
+
+SSH launch and retry now share one command builder. Service operands are validated, labels and working paths are quoted as data, and retries retain the configured working directory. A failed explicit directory change aborts the launch. Background process startup remains asynchronous.
+
+Both SSH host deletion entry points now share cleanup for connection status, listener scans, saved stopped rows, terminal state, search and cached sudo input. Delayed and immediate scans share one per-host gate, and an in-flight listener scan or connection test cannot publish after deletion. Other remote workers and SSH subprocess lifetimes still need review.
+
+SSH connection probes and port scans now have 10-second and 20-second subprocess deadlines after spawn. Expired probes release their worker slots, and Unix cleanup also terminates the local SSH wrapper process group. Interactive SSH commands retain their existing lifecycle.
+
+The Add/Edit SSH Host dialog now runs Test Connection on a background thread. The form shows pending feedback, accepts Cancel or Escape, and discards results from closed dialogs. The test uses the existing SSH probe deadline.
+
+SSH terminal output wraps to the viewport and scrolls vertically. This restores readable line starts after horizontal scrolling clipped output. Wrapped rows are laid out from the retained snapshot outside the log lock. CPU and memory impact still need runtime measurement.
+
+SSH Servers now shares each completed listener scan as an immutable snapshot. Search borrows rows, and successful scans prune stopped entries by port. The renderer still hides a stopped entry while the same port appears in its current listener snapshot.
+
+Local server logs now reuse a single active-view snapshot and cache matching row indexes until the log or filter changes. Display and retained log limits are unchanged. Runtime CPU and memory impact remain unmeasured.
+
+The saved Commands list caches category counts by host and matching row indexes by host, category, and query. Imports, saves, and deletions invalidate the cached catalog view. Runtime impact remains unmeasured.
+
+Systemd journal and dependency commands now cap captured output at 2 MiB per stream. Oversized output is drained without retaining the excess and returns a clear error instead of caching incomplete content.
+
+Command terminals now reuse the bounded stream reader used by server and SSH output. Retained terminal entries are capped at 8 KiB on a UTF-8 boundary, with a visible truncation marker. This limits individual entries while retaining the existing per-stream row limits.
+
+Linux server reattachment now streams recent journal lines through the bounded terminal reader and reaps the journal reader process. The query stays within the current boot to avoid showing logs for the same numeric PID from earlier boots.
+
+The local external terminal now quotes Unix display text and directory operands and uses a uniquely named owner-only bootstrap script. On Windows the working directory is set on the child process directly, and cmd opens a new console with its default title.
+
+Unix server launch in an external console now passes the environment and working directory directly to the child, quotes its title, and uses an owner-only temporary bootstrap script. Its legacy PID marker is created without overwriting an existing file.
+
+The SSH Servers terminal now limits submissions and quick actions to four concurrent commands per host, releases slots on child exit or spawn failure, and disconnects inherited stdin. SSH Servers commands default to a five-minute inactivity timeout. Settings → Startup controls the delay and whether to time out when the page or window is inactive, only when the window is inactive, or never. Expiration closes the local SSH child and releases its slot. Cancel all closes the local command connections for the selected host, and host removal also requests cancellation. Remote process termination is still not guaranteed.
+
+Settings → Startup also controls the local subprocess deadlines for new SSH connection tests and listener scans (defaults 10 and 20 seconds). The OpenSSH handshake timeout still applies independently.
+
+The SSH Servers page now shows port-scan failures with diagnostic details on hover and keeps the last successful rows. Missing or failing remote scan tools produce an error instead of an empty successful scan.
+
+SSH Servers output readers request a repaint after publishing rows, including final partial output. A short repaint delay lets output bursts coalesce without requiring a periodic repaint while the command is quiet.
+
+A refresh requested during an SSH port scan queues one follow-up for that host. Repeated requests coalesce, and the follow-up respects the latest requested delay.
+
+SSH Stop and Kill schedule a listener refresh after the signaling request finishes, with a short settling delay. The launcher only queues that refresh if the host is still configured.
+
+SSH Start and Restart also use the completion-based port refresh. A rejected submission, failed local spawn, timeout, or cancellation does not add a follow-up scan.
+
+The SSH Servers terminal now logs unsuccessful command exit statuses, including when the command produces no output. Existing stderr and completion-triggered port refreshes are preserved.
+
+SSH host deletion now revokes a per-host lifetime token and removes its remote Sensors, Bluetooth, listener, connection, Systemd service, journal, unit-file and dependency caches. Sensor, Bluetooth, service, unit-file and dependency workers, SSH connection/scan workers, process-signal refreshes and queued Systemd results check that token before publishing. Editing a host also invalidates the previous lifetime. Cleanup also clears host-bound editor and confirmation state while preserving unrelated host records. A regression test covers deletion and reuse of the same host ID; the required `cargo check --tests` command compiles but does not execute it.
+
+SSH command cancellation increments a per-host generation and leaves the activity entry alive until the owning worker kills and waits for its child. App close, including the close confirmation choices, now cancels embedded SSH commands and delays window exit until those workers have reaped their local children. Linux cancellation kills the SSH/sshpass process group; interactive external terminals are not part of this cancellation path. A regression test covers per-host cancellation generations and the post-cancel generation used by new commands; `cargo check --tests` compiles but does not execute it. Native runtime process-fixture verification remains outstanding.
+
+Launcher process records now validate server keys before constructing PID paths, use same-directory temporary files with atomic replacement for structured identity records, and retain compatibility with valid legacy numeric PID markers. The external-console bootstrap uses the same key validation and preserves its no-clobber marker creation. Process attachment still requires matching command and working-directory evidence for legacy records or exact identity fields for structured records. Source regression checks cover unsafe keys, legacy decoding/migration, abandoned temporary writes, and restrictive Unix file mode; both test targets compile, but tests were not run under the cargo-check-only repository rule. Windows ACL behavior and real crash/power-loss handling remain unverified.
+
+Systemd unit writes are limited to the system override directory or the user Systemd configuration subtree; vendor unit paths and traversal are rejected. Local writes check canonical parent containment and reject symlink destinations. Local and remote edits stage content before replacement, while new files preserve no-overwrite behavior. User-scope write and delete errors do not escalate to sudo; system-scope operations retain the existing sudo prompt and stdin password transport. Regression source covers allowed and rejected roots, preservation of an outside fixture, and local symlink rejection. Linux and Windows crate test targets compile, but no tests ran; privileged Linux, SSH-host, and native Windows verification remain outstanding. Windows Services code was not changed.
+
+### Linux desktop measurements
+
+Single 30-second runs on Fedora using `pidstat -u -r` at one-second intervals and launcher PID 200914. CPU is percent of one core. RSS is the process-wide average for each run.
+
+| Scenario | Average CPU | Average RSS |
+|---|---:|---:|
+| Servers Overview, idle | 0.33% | 127.4 MiB |
+| Servers Overview, continuous scrolling | 69.51% | 127.4 MiB |
+| Embedded SSH terminal, about 20 lines per second | 18.74% | 129.4 MiB |
+| Local SSH child during terminal run | 0.10% | 8.7 MiB |
+| Sensors Overview | 5.10% | 146.3 MiB |
+| Sensors Top Apps | 21.37% | 150.2 MiB |
+
+The preliminary idle run (4.90% CPU) included interaction and was excluded. The remaining runs used the same launcher process, so RSS includes state retained across pages. The exact sensor refresh setting, frame timing and executable revision were not independently recorded. Repeat Overview scrolling and profile the launcher before selecting a Stage 6 change. Scrolling was the highest CPU workload measured in this round.
+
+A second 30-second Overview scrolling run on the same launcher PID averaged 75.50% of one core and 150.3 MiB RSS. The process had visited Sensors between the two runs, so the RSS readings reflect different session histories. The host lacked `perf`. One usable `eu-stack` snapshot showed the UI thread registering egui label widgets from `app/listeners.rs::render_overview_contents`. This identifies a candidate for profiling. A single stack cannot establish how much CPU the renderer used.
+
+A separate 30-second main-thread sampling pass used `eu-stack -1` during another Overview scrolling run. Of 19 snapshots with a top frame, 9 included `render_overview_contents` and 2 included tessellation. Some stacks reached the frame limit, and debugger snapshots can perturb timing. The renderer already skips offscreen rows when their cached height is valid. These samples point to UI work but do not isolate the cost of the skip path, visible widgets, or tessellation. The next comparison needs an identified executable build and a repeatable profile before changing the renderer.
+
+The measured process (PID 200914), installed launcher, and workspace `server_launcher_rust/target/debug/server_launcher` were byte-identical. Their SHA-256 was `9fef08e6c8634ff3af7234670f71f7360f3b7aed5804dfcbd6184b08f056cd76`. Treat these samples as a debug-artifact baseline. The source revision and compiler flags are unverified. No packaged or release executable was found in the workspace, so release performance remains unmeasured.
+
+RPM `0.1.153-153.x86_64` supplied a stripped release executable. The running process (PID 241436) matched the extracted executable by SHA-256 (`58abb21f535c62e130eaadcfe2624bb06d0d17dbcbae5583e9750afc7061bc8e`). A 30-second Overview scrolling run sampled at one-second intervals averaged 7.60% of one core and 105.9 MiB RSS. The debug runs averaged 69.51% and 75.50% CPU. The package and debug executable have different build identities, so this comparison does not isolate compiler optimization or any source change. Repeat the release run before deciding whether scrolling warrants a Stage 6 change.
+
+The second 30-second RPM Overview scrolling run on PID 241436 averaged 12.77% of one core and 105.9 MiB RSS. Both release samples are substantially below the two debug samples, but the variation between release runs and the different build identities prevent attributing the difference to a specific change. Keep Stage 6 open until a release workload shows a bottleneck worth fixing. The next comparable target is Sensors Top Apps, which averaged 21.37% CPU in the debug baseline.
+
+The RPM launcher (PID 241436) averaged 9.80% of one core (2.53% user, 7.27% system) and 113.2 MiB RSS during the 30-second Top Apps sampling window. The page and refresh interval were not independently confirmed, so this is a provisional reading. The kernel CPU share makes collection a candidate for profiling after confirming the refresh interval. It does not identify a specific collector.
+
+The operator confirmed Top Apps was open throughout the initial RPM sample at a 1-second refresh interval. A repeat at the same setting averaged 9.60% CPU (2.40% user and 7.20% system) and 113.4 MiB RSS. An additional eight-second aggregate trace across launcher threads and followed children counted 40,008 reads, 23,001 opens, 16,294 statx calls, and 4,854 directory reads. The trace perturbs timing and does not attribute calls to a collector. The local Top Apps refresh runs sysinfo's full process scan and a separate TCP counter collection. The next diagnostic should distinguish those paths before changing collection cadence or reported data.
+
+A six-second Top Apps trace separated selected filesystem calls by process. Launcher threads issued 25,840 calls, `ss` children issued 3,261, and other exec children issued 168. Of all calls counted, 8,997 explicitly referenced `/proc/PID/task` paths. These are call counts, not CPU attribution. The Linux collector requests a full sysinfo process refresh and drops thread rows afterward. The pinned sysinfo 0.31 API does not expose a task-enumeration switch. Evaluate a supported process-only refresh before changing TCP cadence, and compare against the same RPM workload before claiming improvement.
+
+Stage 6 candidate implementation upgrades both desktop crates to sysinfo 0.34.2, retains the prior multithread feature, and skips Linux task enumeration in the local Top Apps refresh. Other process refreshes preserve their prior dead-process removal policy. The migration adapts disk, network, and temperature refresh APIs. The measured 1-second RPM baseline is 9.60–9.80% CPU. A matching post-change release run and native Windows verification are still required.
+
+The post-change Linux RPM `0.1.154-154` corresponds to CI run 154 for `f074a68`. PID 278674 matched the extracted executable by SHA-256 (`efe6cd2bdc71b5de2d83462cd90ccdb2d5aba1141971ddf978b4b7f31937d61b`). In two untraced 30-second Top Apps runs at 1-second refresh, CPU averaged 4.13% and 4.17% of one core with 111.2 MiB RSS in each run. The prior RPM averaged 9.60% and 9.80% CPU and 113.2–113.4 MiB RSS. Mean CPU fell from 9.70% to 4.15%, about 57% lower. A separate six-second trace counted 8,687 selected launcher filesystem calls and 3,775 from `ss`, versus 25,840 and 3,261 before. Explicit `/proc/PID/task` accesses fell from 8,997 to zero. This comparison covers local Linux Top Apps on the measured machine. Process population was not controlled and native Windows runtime performance was not measured.
+
+Overview scrolling follow-up: commit `21446dd` batches offscreen process cards. CI RPM `0.1.155-155` averaged 10.23% and 10.50% of one core in two 30-second runs, with 106.8 MiB RSS in both. The earlier CI RPM averaged 7.60% and 12.77%. The measured runs show no clear CPU reduction. List lengths and scrolling speed were not instrumented. Expanded cards, inline terminals, and long-list behavior still need runtime verification.

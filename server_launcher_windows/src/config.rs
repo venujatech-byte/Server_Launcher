@@ -90,10 +90,20 @@ pub struct SshRemoteHost {
     pub user: String,
     #[serde(default)]
     pub key_path: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub password: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_ref: Option<String>,
     #[serde(default)]
     pub remote_cwd: String,
+    #[serde(default = "ssh_agent_default")]
+    pub use_agent: bool,
+    #[serde(default)]
+    pub strict_host_key: bool,
+}
+
+fn ssh_agent_default() -> bool {
+    true
 }
 
 fn default_ssh_port() -> u16 {
@@ -163,9 +173,46 @@ pub struct AdbDeviceConfig {
     pub scrcpy_no_audio: bool,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SshIdleMode {
+    #[default]
+    PageOrWindowInactive,
+    WindowInactive,
+    Never,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SshIdleSettings {
+    pub mode: SshIdleMode,
+    pub minutes: u32,
+}
+
+impl Default for SshIdleSettings {
+    fn default() -> Self {
+        Self { mode: SshIdleMode::default(), minutes: 5 }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SshProbeTimeouts {
+    pub connection_test_seconds: u32,
+    pub port_scan_seconds: u32,
+}
+
+impl Default for SshProbeTimeouts {
+    fn default() -> Self {
+        Self { connection_test_seconds: 10, port_scan_seconds: 20 }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConfigFile {
     pub servers: Vec<ServerConfig>,
+    #[serde(default)]
+    pub server_tab_order: Vec<String>,
     #[serde(default)]
     pub ssh_hosts: Vec<SshRemoteHost>,
     #[serde(default)]
@@ -182,6 +229,10 @@ pub struct ConfigFile {
     pub app_autostart: bool,
     #[serde(default)]
     pub journal_refresh_interval: Option<u32>,
+    #[serde(default)]
+    pub ssh_idle: SshIdleSettings,
+    #[serde(default)]
+    pub ssh_probe_timeouts: SshProbeTimeouts,
 }
 
 impl ConfigFile {
@@ -211,9 +262,24 @@ impl ConfigFile {
     }
 
     pub fn save_to_file(&self, path: &Path) -> Result<(), String> {
+        if self.ssh_hosts.iter().any(|host| !host.password.is_empty()) {
+            return Err("Cannot save an unprotected SSH password.".into());
+        }
         let content = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Serialization error: {}", e))?;
-        fs::write(path, content).map_err(|e| format!("Write error: {}", e))?;
+        use std::io::Write;
+        // Resolve an existing symlink before replacing the file it points to.
+        let target = if fs::symlink_metadata(path).is_ok() {
+            path.canonicalize().map_err(|e| format!("Config path error: {e}"))?
+        } else {
+            path.to_path_buf()
+        };
+        let directory = target.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+        let mut temp = tempfile::NamedTempFile::new_in(directory)
+            .map_err(|e| format!("Could not stage configuration: {e}"))?;
+        temp.write_all(content.as_bytes()).and_then(|()| temp.as_file().sync_all())
+            .map_err(|e| format!("Write error: {e}"))?;
+        temp.persist(&target).map_err(|e| format!("Could not replace configuration: {e}"))?;
         Ok(())
     }
 }

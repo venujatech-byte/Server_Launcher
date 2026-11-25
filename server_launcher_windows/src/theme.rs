@@ -734,3 +734,25 @@ mod tests {
         assert_eq!(ThemeMode::from_id_str("unknown"), ThemeMode::Dark);
     }
 }
+
+/// Standard tooltip text stays compact without changing the surrounding UI font.
+pub(crate) trait CompactTooltip {
+    fn hover_tip(self, text: impl Into<eframe::egui::WidgetText>) -> Self;
+    fn disabled_hover_tip(self, text: impl Into<eframe::egui::WidgetText>) -> Self;
+}
+
+impl CompactTooltip for eframe::egui::Response {
+    fn hover_tip(self, text: impl Into<eframe::egui::WidgetText>) -> Self {
+        self.on_hover_ui(|ui| compact_tooltip_label(ui, text))
+    }
+
+    fn disabled_hover_tip(self, text: impl Into<eframe::egui::WidgetText>) -> Self {
+        self.on_disabled_hover_ui(|ui| compact_tooltip_label(ui, text))
+    }
+}
+
+fn compact_tooltip_label(ui: &mut eframe::egui::Ui, text: impl Into<eframe::egui::WidgetText>) {
+    ui.set_max_width(ui.spacing().tooltip_width);
+    ui.style_mut().override_font_id = Some(eframe::egui::FontId::proportional(11.0));
+    ui.label(text);
+}

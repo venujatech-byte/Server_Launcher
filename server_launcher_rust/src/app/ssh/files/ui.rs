@@ -594,143 +594,146 @@ fn details(
             });
             ui.separator();
             let row_height = 26.0;
-            egui::ScrollArea::vertical()
+            let mut rows = egui::ScrollArea::vertical()
                 .id_salt(id.with("rows"))
-                .auto_shrink([false, false])
-                .show_rows(
-                    ui,
-                    row_height - ui.spacing().item_spacing.y,
-                    order.len() + 1,
-                    |ui, range| {
-                        for index in range {
-                            if index == order.len() {
-                                let height =
-                                    (ui.clip_rect().bottom() - ui.cursor().top()).max(row_height);
-                                let (rect, empty) = ui.allocate_exact_size(
-                                    egui::vec2(table_width, height),
-                                    egui::Sense::click(),
-                                );
-                                if empty.clicked() {
-                                    files.selected.clear();
-                                    ui.memory_mut(|memory| memory.request_focus(focus));
-                                }
-                                empty.context_menu(|ui| {
-                                    menu(
-                                        ui,
-                                        files,
-                                        &[
-                                            Paste,
-                                            NewFolder,
-                                            NewFile,
-                                            UploadFiles,
-                                            UploadFolder,
-                                            Refresh,
-                                        ],
-                                        action,
-                                        p,
-                                    )
-                                });
-                                if order.is_empty() && files.worker.is_none() {
-                                    let message = if files.listing.is_none() {
-                                        "No directory loaded"
-                                    } else if files.filter.is_empty() {
-                                        "This folder is empty or has hidden items"
-                                    } else {
-                                        "No matching items"
-                                    };
-                                    ui.painter().text(
-                                        rect.center(),
-                                        egui::Align2::CENTER_CENTER,
-                                        message,
-                                        egui::FontId::proportional(13.0),
-                                        p.text_muted,
-                                    );
-                                }
-                                continue;
-                            }
-                            let entry = order[index];
-                            let (rect, response) = ui.allocate_exact_size(
-                                egui::vec2(table_width, row_height - ui.spacing().item_spacing.y),
+                .auto_shrink([false, false]);
+            if std::mem::take(&mut files.scroll_to_top) {
+                rows = rows.vertical_scroll_offset(0.0);
+            }
+            rows.show_rows(
+                ui,
+                row_height - ui.spacing().item_spacing.y,
+                order.len() + 1,
+                |ui, range| {
+                    for index in range {
+                        if index == order.len() {
+                            let height =
+                                (ui.clip_rect().bottom() - ui.cursor().top()).max(row_height);
+                            let (rect, empty) = ui.allocate_exact_size(
+                                egui::vec2(table_width, height),
                                 egui::Sense::click(),
                             );
-                            if response.clicked() || response.secondary_clicked() {
-                                ui.memory_mut(|memory| memory.request_focus(focus));
-                                let modifiers = ui.input(|input| input.modifiers);
-                                if response.secondary_clicked() {
-                                    if !files.selected.contains(&entry.name) {
-                                        files.selected.clear();
-                                        files.selected.insert(entry.name.clone());
-                                        files.anchor = Some(entry.name.clone());
-                                    }
-                                } else if modifiers.shift {
-                                    let anchor = files
-                                        .anchor
-                                        .as_ref()
-                                        .and_then(|name| {
-                                            order.iter().position(|entry| &entry.name == name)
-                                        })
-                                        .unwrap_or(index);
-                                    if !modifiers.command {
-                                        files.selected.clear();
-                                    }
-                                    files.selected.extend(
-                                        order[anchor.min(index)..=anchor.max(index)]
-                                            .iter()
-                                            .map(|entry| entry.name.clone()),
-                                    );
-                                } else {
-                                    if !modifiers.command {
-                                        files.selected.clear();
-                                    }
-                                    if !files.selected.insert(entry.name.clone()) {
-                                        files.selected.remove(&entry.name);
-                                    }
-                                    files.anchor = Some(entry.name.clone());
-                                }
-                            }
-                            if response.double_clicked()
-                                && (entry.kind == Kind::Folder || entry.opens_in_micro())
-                            {
+                            if empty.clicked() {
                                 files.selected.clear();
-                                files.selected.insert(entry.name.clone());
-                                *action = Some(Open);
+                                ui.memory_mut(|memory| memory.request_focus(focus));
                             }
-                            response.context_menu(|ui| {
+                            empty.context_menu(|ui| {
                                 menu(
                                     ui,
                                     files,
                                     &[
-                                        Open,
-                                        RunPython,
-                                        RunShell,
-                                        Download,
-                                        Cut,
-                                        Copy,
-                                        Rename,
-                                        Delete,
-                                        Compress,
-                                        ExtractHere,
-                                        ExtractTo,
+                                        Paste,
+                                        NewFolder,
+                                        NewFile,
+                                        UploadFiles,
+                                        UploadFolder,
+                                        Refresh,
                                     ],
                                     action,
                                     p,
                                 )
                             });
-                            response
-                                .clone()
-                                .on_hover_text(entry.name.escape_debug().to_string());
-                            if files.selected.contains(&entry.name) || response.hovered() {
-                                let fill = if files.selected.contains(&entry.name) {
-                                    p.bg_card_active
+                            if order.is_empty() && files.worker.is_none() {
+                                let message = if files.listing.is_none() {
+                                    "No directory loaded"
+                                } else if files.filter.is_empty() {
+                                    "This folder is empty or has hidden items"
                                 } else {
-                                    p.bg_button_hover
+                                    "No matching items"
                                 };
-                                ui.painter().rect_filled(rect, Rounding::same(4.0), fill);
+                                ui.painter().text(
+                                    rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    message,
+                                    egui::FontId::proportional(13.0),
+                                    p.text_muted,
+                                );
                             }
-                            paint_row(ui, rect, widths, entry, p);
+                            continue;
                         }
-                    },
-                );
+                        let entry = order[index];
+                        let (rect, response) = ui.allocate_exact_size(
+                            egui::vec2(table_width, row_height - ui.spacing().item_spacing.y),
+                            egui::Sense::click(),
+                        );
+                        if response.clicked() || response.secondary_clicked() {
+                            ui.memory_mut(|memory| memory.request_focus(focus));
+                            let modifiers = ui.input(|input| input.modifiers);
+                            if response.secondary_clicked() {
+                                if !files.selected.contains(&entry.name) {
+                                    files.selected.clear();
+                                    files.selected.insert(entry.name.clone());
+                                    files.anchor = Some(entry.name.clone());
+                                }
+                            } else if modifiers.shift {
+                                let anchor = files
+                                    .anchor
+                                    .as_ref()
+                                    .and_then(|name| {
+                                        order.iter().position(|entry| &entry.name == name)
+                                    })
+                                    .unwrap_or(index);
+                                if !modifiers.command {
+                                    files.selected.clear();
+                                }
+                                files.selected.extend(
+                                    order[anchor.min(index)..=anchor.max(index)]
+                                        .iter()
+                                        .map(|entry| entry.name.clone()),
+                                );
+                            } else {
+                                if !modifiers.command {
+                                    files.selected.clear();
+                                }
+                                if !files.selected.insert(entry.name.clone()) {
+                                    files.selected.remove(&entry.name);
+                                }
+                                files.anchor = Some(entry.name.clone());
+                            }
+                        }
+                        if response.double_clicked()
+                            && (entry.kind == Kind::Folder || entry.opens_in_micro())
+                        {
+                            files.selected.clear();
+                            files.selected.insert(entry.name.clone());
+                            *action = Some(Open);
+                        }
+                        response.context_menu(|ui| {
+                            menu(
+                                ui,
+                                files,
+                                &[
+                                    Open,
+                                    RunPython,
+                                    RunShell,
+                                    Download,
+                                    Cut,
+                                    Copy,
+                                    Rename,
+                                    Delete,
+                                    Compress,
+                                    ExtractHere,
+                                    ExtractTo,
+                                ],
+                                action,
+                                p,
+                            )
+                        });
+                        response
+                            .clone()
+                            .on_hover_text(entry.name.escape_debug().to_string());
+                        if files.selected.contains(&entry.name) || response.hovered() {
+                            let fill = if files.selected.contains(&entry.name) {
+                                p.bg_card_active
+                            } else {
+                                p.bg_button_hover
+                            };
+                            ui.painter().rect_filled(rect, Rounding::same(4.0), fill);
+                        }
+                        paint_row(ui, rect, widths, entry, p);
+                    }
+                },
+            );
         });
 }
 

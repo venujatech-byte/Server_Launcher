@@ -23,6 +23,7 @@ enum Prompt {
 #[derive(Clone, Default)]
 struct RemoteFiles {
     listing: Option<Arc<Listing>>,
+    scroll_to_top: bool,
     worker: Option<Worker>,
     transfer: bool,
     changing: bool,
@@ -95,6 +96,7 @@ impl RemoteFiles {
                     self.history_index = self.history.len() - 1;
                 }
                 if self.directory() != Some(&listing.path) {
+                    self.scroll_to_top = true;
                     self.selected.clear();
                     self.anchor = None;
                     self.filter.clear();

@@ -39,53 +39,64 @@ pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePale
         let drawer_h = if state.log_drawer_open { 165.0 } else { 32.0 };
         let main_h = (ui.available_height() - drawer_h - 8.0).max(180.0);
 
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), main_h),
-            egui::Layout::left_to_right(egui::Align::Min),
-            |ui| {
+        // Permanent Split-Pane inside a unified Explorer-style card with 1px vertical divider
+        Frame::none()
+            .fill(p.bg_card)
+            .rounding(Rounding::same(8.0))
+            .inner_margin(egui::Margin::ZERO)
+            .show(ui, |ui| {
+                let total_w = ui.available_width();
+                ui.set_width(total_w);
                 ui.set_height(main_h);
+
                 if state.filter == AppFilter::Repos {
                     ui.allocate_ui_with_layout(
-                        egui::vec2(ui.available_width(), main_h),
+                        egui::vec2(total_w, main_h),
                         egui::Layout::top_down(egui::Align::Min),
                         |ui| {
                             render_repos_table(state, ui, p, main_h);
                         },
                     );
                 } else {
-                    let has_inspector = state.selected_key.is_some();
-                    let inspector_w = if has_inspector { 340.0 } else { 0.0 };
-                    let gap = if has_inspector { 10.0 } else { 0.0 };
-                    let table_w = (ui.available_width() - inspector_w - gap).max(320.0);
+                    let inspector_w = (total_w * 0.30).clamp(280.0, 380.0);
+                    let table_w = (total_w - inspector_w - 1.0).max(300.0);
 
                     ui.allocate_ui_with_layout(
-                        egui::vec2(table_w, main_h),
-                        egui::Layout::top_down(egui::Align::Min),
+                        egui::vec2(total_w, main_h),
+                        egui::Layout::left_to_right(egui::Align::Min),
                         |ui| {
-                            render_apps_table(state, ui, p, table_w, main_h, &mut pending_action);
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(table_w, main_h),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    render_apps_table(state, ui, p, table_w, main_h, &mut pending_action);
+                                },
+                            );
+
+                            // 1px vertical hairline divider
+                            let (div_rect, _) =
+                                ui.allocate_exact_size(egui::vec2(1.0, main_h), egui::Sense::hover());
+                            ui.painter().rect_filled(div_rect, Rounding::ZERO, p.bg_button);
+
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(inspector_w, main_h),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    render_inspector_panel(
+                                        state,
+                                        ui,
+                                        p,
+                                        inspector_w,
+                                        main_h,
+                                        &mut pending_action,
+                                    );
+                                },
+                            );
                         },
                     );
-
-                    if has_inspector {
-                        ui.add_space(gap);
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(inspector_w, main_h),
-                            egui::Layout::top_down(egui::Align::Min),
-                            |ui| {
-                                render_inspector_panel(
-                                    state,
-                                    ui,
-                                    p,
-                                    inspector_w,
-                                    main_h,
-                                    &mut pending_action,
-                                );
-                            },
-                        );
-                    }
                 }
-            },
-        );
+            });
 
         render_task_drawer(state, ui, p);
     });
@@ -663,6 +674,74 @@ fn render_repos_table(state: &AppsManagerState, ui: &mut Ui, p: &ThemePalette, h
         });
 }
 
+fn render_inspector_empty_state(state: &AppsManagerState, ui: &mut Ui, p: &ThemePalette, inner_w: f32) {
+    ui.add_space(28.0);
+    ui.vertical_centered(|ui| {
+        ui.label(
+            RichText::new(crate::lucide::PACKAGE)
+                .size(28.0)
+                .color(p.text_muted),
+        );
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new("Select an app or package")
+                .size(13.5)
+                .strong()
+                .color(p.text_primary),
+        );
+        ui.add_space(4.0);
+        ui.add(
+            egui::Label::new(
+                RichText::new(
+                    "Click any item in the list to view its description, install location, and actions.",
+                )
+                .size(11.5)
+                .color(p.text_muted),
+            )
+            .wrap(),
+        );
+    });
+
+    ui.add_space(20.0);
+    ui.separator();
+    ui.add_space(10.0);
+
+    ui.label(
+        RichText::new("Summary by Source")
+            .size(11.0)
+            .strong()
+            .color(p.text_muted),
+    );
+    ui.add_space(6.0);
+
+    Frame::none()
+        .fill(p.bg_subtle)
+        .rounding(Rounding::same(8.0))
+        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+        .show(ui, |ui| {
+            ui.set_width((inner_w - 24.0).max(160.0));
+            for &f in AppFilter::all() {
+                if f == AppFilter::All {
+                    continue;
+                }
+                let count = if f == AppFilter::Repos {
+                    state.repos.len()
+                } else {
+                    state.apps.iter().filter(|a| a.source.matches_filter(f)).count()
+                };
+                if count == 0 {
+                    continue;
+                }
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(f.label()).size(11.5).color(p.text_secondary));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(RichText::new(format!("{}", count)).size(11.5).strong().color(p.text_primary));
+                    });
+                });
+            }
+        });
+}
+
 fn render_inspector_panel(
     state: &mut AppsManagerState,
     ui: &mut Ui,
@@ -671,27 +750,30 @@ fn render_inspector_panel(
     height: f32,
     pending_action: &mut Option<AppAction>,
 ) {
-    let Some(ref key) = state.selected_key else {
-        return;
-    };
-    let Some(app) = state
-        .apps
-        .iter()
-        .find(|a| a.id == key.0 && a.source == key.1)
-        .cloned()
-    else {
+    let selected_app = state.selected_key.as_ref().and_then(|key| {
+        state
+            .apps
+            .iter()
+            .find(|a| a.id == key.0 && a.source == key.1)
+            .cloned()
+    });
+    if state.selected_key.is_some() && selected_app.is_none() {
         state.selected_key = None;
-        return;
-    };
+    }
 
     Frame::none()
-        .fill(p.bg_card)
-        .rounding(Rounding::same(10.0))
-        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+        .fill(p.bg_sidebar)
+        .rounding(Rounding::ZERO)
+        .inner_margin(egui::Margin::same(16.0))
         .show(ui, |ui| {
-            let inner_w = (width - 28.0).max(200.0);
+            let inner_w = (width - 32.0).max(200.0);
             ui.set_width(inner_w);
-            ui.set_height((height - 24.0).max(120.0));
+            ui.set_height((height - 32.0).max(120.0));
+
+            let Some(app) = selected_app else {
+                render_inspector_empty_state(state, ui, p, inner_w);
+                return;
+            };
 
             // Header bar with app name and close button
             ui.horizontal(|ui| {

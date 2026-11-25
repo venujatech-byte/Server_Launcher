@@ -10,6 +10,7 @@ mod scanner;
 mod service;
 mod tauri_app;
 pub mod adb;
+pub mod apps;
 pub mod autostart;
 pub mod bluetooth;
 pub mod commands;

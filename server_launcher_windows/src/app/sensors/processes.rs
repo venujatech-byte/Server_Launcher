@@ -770,23 +770,6 @@ impl LauncherApp {
         }
     }
 
-    pub(in crate::app) fn render_local_apps(&mut self, ui: &mut Ui) {
-        if self.current_sensors_host.take().is_some() {
-            self.sensors_top_apps_selected_pid = None;
-            self.sensors_top_apps_selected_start = None;
-            self.clear_sensor_telemetry_history();
-        }
-        let snapshot = Arc::clone(&self.sensors_snapshot);
-        let interval = self.sensors_refresh_interval;
-        if interval > 0 && (!snapshot.processes_collected
-            || self.last_sensors_refresh.elapsed() >= Duration::from_secs(interval as u64))
-        {
-            self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
-            self.last_sensors_refresh = Instant::now();
-        }
-        self.render_sensors_top_apps_tab(ui, &snapshot, None);
-    }
-
     pub(in crate::app) fn render_sensors_top_apps_tab(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         if self.sensors_top_apps_selected_pid.is_some_and(|pid| {
             !selected_process_present(&snap.top_apps, pid, self.sensors_top_apps_selected_start)

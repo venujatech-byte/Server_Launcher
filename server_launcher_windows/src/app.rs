@@ -708,6 +708,9 @@ pub struct LauncherApp {
     pub proc_affinity_error: Option<String>,
     pub proc_affinity_loading: bool,
     pub proc_affinity_receiver: Arc<Mutex<Option<(u32, Result<Vec<usize>, String>)>>>,
+
+    // Local Host Apps Manager State
+    pub apps_manager: crate::apps::AppsManagerState,
 }
 
 pub struct ExternalTerminalSession {
@@ -1062,6 +1065,8 @@ impl LauncherApp {
             proc_affinity_error: None,
             proc_affinity_loading: false,
             proc_affinity_receiver: Arc::new(Mutex::new(None)),
+
+            apps_manager: crate::apps::AppsManagerState::default(),
 
             // ADB / Android Device Cockpit State
             adb_devices,
@@ -3064,7 +3069,8 @@ impl eframe::App for LauncherApp {
                 .show(ctx, |ui| {
                     if self.active_sidebar_tab == SidebarTab::Apps {
                         ui.add_space(8.0);
-                        self.render_local_apps(ui);
+                        let p = self.palette();
+                        crate::apps::ui::render_apps_page(&mut self.apps_manager, ui, &p);
                         return;
                     }
                     let header_rect = ui.available_rect_before_wrap();
@@ -3427,7 +3433,13 @@ impl eframe::App for LauncherApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(1000));
         } else if is_scanning || has_remote_bg_work {
             ctx.request_repaint_after(std::time::Duration::from_millis(250));
-        } else if matches!(self.active_sidebar_tab, SidebarTab::Sensors | SidebarTab::Apps) && self.sensors_refresh_interval > 0 {
+        } else if self.active_sidebar_tab == SidebarTab::Apps
+            && (self.apps_manager.loading
+                || self.apps_manager.checking_updates
+                || self.apps_manager.task_running)
+        {
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        } else if self.active_sidebar_tab == SidebarTab::Sensors && self.sensors_refresh_interval > 0 {
             // Repaint at 1-second intervals on Sensors tab so real-time waveforms and second-by-second telemetry scroll smoothly
             ctx.request_repaint_after(std::time::Duration::from_millis(1000));
         } else if any_running {

@@ -144,7 +144,7 @@ impl eframe::App for Viewer {
                 ui.label(if self.test_pattern {
                     "Test pattern"
                 } else if connected {
-                    "Connected"
+                    &status
                 } else {
                     "Disconnected"
                 });

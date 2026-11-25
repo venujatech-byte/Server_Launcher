@@ -146,7 +146,7 @@ pub fn is_sshpass_available() -> bool {
     }
 }
 
-fn ssh_policy_args(host: &SshRemoteHost) -> Vec<&'static str> {
+pub(crate) fn ssh_policy_args(host: &SshRemoteHost) -> Vec<&'static str> {
     let host_key = if host.strict_host_key {
         "StrictHostKeyChecking=yes"
     } else {

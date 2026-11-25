@@ -100,3 +100,15 @@ DES is used only for this legacy challenge response. The session itself is
 unencrypted on a direct connection, and public endpoints remain blocked.
 A configured password requires VNC authentication and rules out unauthenticated
 negotiation. Username-based security modes need a separate implementation.
+
+## SSH stream transport
+
+VNC uses OpenSSH stdio forwarding (`ssh -W 127.0.0.1:PORT`) over a private
+Unix socket pair. This reaches the same remote loopback service as a local
+forward, without binding a local listening port or racing another process
+for that port. It uses the host's key, agent, and host-key preferences. On
+Unix, password authentication uses an inherited descriptor with sshpass.
+The viewer worker owns the child and reaps it when the stream ends. Linux
+also requests a parent-death signal for the direct child. Forced termination
+of the password wrapper's descendants has not been verified. Windows and
+editor connection tests do not yet use this transport.

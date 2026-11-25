@@ -1,6 +1,7 @@
 use super::{
     credentials::{self, DesktopProtocol},
     framebuffer::{Framebuffer, Region},
+    tunnel::{self, DesktopStream},
 };
 use crate::config::SshRemoteHost;
 use des::{
@@ -68,9 +69,6 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
         .as_ref()
         .filter(|p| p.enabled)
         .ok_or_else(|| error("VNC is disabled for this host."))?;
-    if profile.tunnel_via_ssh {
-        return Err(error("VNC through an SSH tunnel is not available yet."));
-    }
     if !profile.username.trim().is_empty() {
         return Err(error(
             "This VNC viewer supports classic password authentication without a username.",
@@ -86,29 +84,32 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
             "Classic VNC requires a password from one to eight bytes.",
         ));
     }
-    let address = host.host.trim().trim_matches(['[', ']']);
-    let addresses = (address, profile.port)
-        .to_socket_addrs()
-        .map_err(|_| error("Could not resolve the VNC host."))?;
-    let mut stream = addresses
-        .filter(|addr| private(addr.ip()))
-        .take(3)
-        .find_map(|addr| TcpStream::connect_timeout(&addr, TIMEOUT).ok())
-        .ok_or_else(|| {
-            error("Could not connect to VNC on a private address. Check the server and port.")
-        })?;
-    stream.set_read_timeout(Some(TIMEOUT))?;
-    stream.set_write_timeout(Some(TIMEOUT))?;
+    let mut stream: Box<dyn DesktopStream> = if profile.tunnel_via_ssh {
+        tunnel::open(host, profile.port, TIMEOUT)?
+    } else {
+        Box::new(open_direct(host, profile.port)?)
+    };
     let mut size = handshake(
         &mut stream,
         profile.shared,
         password.as_deref().map(String::as_bytes),
-    )?;
+    ).map_err(|err| {
+        if profile.tunnel_via_ssh && matches!(err.kind(), io::ErrorKind::UnexpectedEof | io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset | io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock) {
+            error("The SSH tunnel did not reach the VNC server. Check SSH access and whether VNC is listening on the remote loopback address.")
+        } else {
+            err
+        }
+    })?;
     drop(password);
     {
         let mut state = state.lock().unwrap();
         state.framebuffer.resize(size).map_err(error)?;
-        state.status = "Connected".into();
+        state.status = if profile.tunnel_via_ssh {
+            "Connected · SSH tunnel"
+        } else {
+            "Connected"
+        }
+        .into();
         state.connected = true;
     }
     // Request little-endian 32-bit pixels with R, G and B in the first three bytes.
@@ -174,6 +175,23 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
             _ => return Err(error("The VNC server sent an unsupported message.")),
         }
     }
+}
+
+fn open_direct(host: &SshRemoteHost, port: u16) -> io::Result<TcpStream> {
+    let address = host.host.trim().trim_matches(['[', ']']);
+    let addresses = (address, port)
+        .to_socket_addrs()
+        .map_err(|_| error("Could not resolve the VNC host."))?;
+    let stream = addresses
+        .filter(|addr| private(addr.ip()))
+        .take(3)
+        .find_map(|addr| TcpStream::connect_timeout(&addr, TIMEOUT).ok())
+        .ok_or_else(|| {
+            error("Could not connect to VNC on a private address. Check the server and port.")
+        })?;
+    stream.set_read_timeout(Some(TIMEOUT))?;
+    stream.set_write_timeout(Some(TIMEOUT))?;
+    Ok(stream)
 }
 
 fn handshake(

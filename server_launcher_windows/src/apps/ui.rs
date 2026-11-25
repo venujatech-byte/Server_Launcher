@@ -4,19 +4,14 @@ use super::AppsManagerState;
 use crate::theme::ThemePalette;
 use eframe::egui::{self, Color32, Frame, RichText, Rounding, Stroke, Ui};
 
-const ROW_HEIGHT: f32 = 34.0;
+const ROW_HEIGHT: f32 = 30.0;
 
 fn source_badge_colors(source: AppSource, p: &ThemePalette) -> (Color32, Color32) {
     match source {
-        AppSource::Flatpak => (p.info_subtle, p.info),
-        AppSource::Desktop | AppSource::Appx => (p.accent_subtle, p.accent),
-        AppSource::ChromePwa => (p.success_subtle, p.success),
-        AppSource::DnfRpm | AppSource::AptDpkg | AppSource::Pacman | AppSource::Snap => {
-            (p.bg_button, p.text_secondary)
-        }
-        AppSource::Win32 | AppSource::Winget | AppSource::Scoop | AppSource::Choco => {
-            (p.warning_subtle, p.warning)
-        }
+        AppSource::Flatpak => (p.bg_button, p.info),
+        AppSource::Desktop | AppSource::Appx => (p.bg_button, p.accent),
+        AppSource::ChromePwa => (p.bg_button, p.success),
+        _ => (p.bg_button, p.text_muted),
     }
 }
 
@@ -39,53 +34,64 @@ pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePale
         let drawer_h = if state.log_drawer_open { 165.0 } else { 32.0 };
         let main_h = (ui.available_height() - drawer_h - 8.0).max(180.0);
 
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), main_h),
-            egui::Layout::left_to_right(egui::Align::Min),
-            |ui| {
+        // Permanent Split-Pane inside a unified Explorer-style card with 1px vertical divider
+        Frame::none()
+            .fill(p.bg_card)
+            .rounding(Rounding::same(8.0))
+            .inner_margin(egui::Margin::ZERO)
+            .show(ui, |ui| {
+                let total_w = ui.available_width();
+                ui.set_width(total_w);
                 ui.set_height(main_h);
+
                 if state.filter == AppFilter::Repos {
                     ui.allocate_ui_with_layout(
-                        egui::vec2(ui.available_width(), main_h),
+                        egui::vec2(total_w, main_h),
                         egui::Layout::top_down(egui::Align::Min),
                         |ui| {
                             render_repos_table(state, ui, p, main_h);
                         },
                     );
                 } else {
-                    let has_inspector = state.selected_key.is_some();
-                    let inspector_w = if has_inspector { 340.0 } else { 0.0 };
-                    let gap = if has_inspector { 10.0 } else { 0.0 };
-                    let table_w = (ui.available_width() - inspector_w - gap).max(320.0);
+                    let inspector_w = (total_w * 0.30).clamp(280.0, 380.0);
+                    let table_w = (total_w - inspector_w - 1.0).max(300.0);
 
                     ui.allocate_ui_with_layout(
-                        egui::vec2(table_w, main_h),
-                        egui::Layout::top_down(egui::Align::Min),
+                        egui::vec2(total_w, main_h),
+                        egui::Layout::left_to_right(egui::Align::Min),
                         |ui| {
-                            render_apps_table(state, ui, p, table_w, main_h, &mut pending_action);
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(table_w, main_h),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    render_apps_table(state, ui, p, table_w, main_h, &mut pending_action);
+                                },
+                            );
+
+                            // 1px vertical hairline divider
+                            let (div_rect, _) =
+                                ui.allocate_exact_size(egui::vec2(1.0, main_h), egui::Sense::hover());
+                            ui.painter().rect_filled(div_rect, Rounding::ZERO, p.bg_button);
+
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(inspector_w, main_h),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    render_inspector_panel(
+                                        state,
+                                        ui,
+                                        p,
+                                        inspector_w,
+                                        main_h,
+                                        &mut pending_action,
+                                    );
+                                },
+                            );
                         },
                     );
-
-                    if has_inspector {
-                        ui.add_space(gap);
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(inspector_w, main_h),
-                            egui::Layout::top_down(egui::Align::Min),
-                            |ui| {
-                                render_inspector_panel(
-                                    state,
-                                    ui,
-                                    p,
-                                    inspector_w,
-                                    main_h,
-                                    &mut pending_action,
-                                );
-                            },
-                        );
-                    }
                 }
-            },
-        );
+            });
 
         render_task_drawer(state, ui, p);
     });
@@ -97,6 +103,18 @@ pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePale
     }
 }
 
+fn ghost_button(ui: &mut Ui, label: impl Into<String>, color: Color32, p: &ThemePalette, enabled: bool) -> egui::Response {
+    let btn = egui::Button::new(RichText::new(label.into()).size(11.5).color(color))
+        .fill(Color32::TRANSPARENT)
+        .stroke(Stroke::NONE)
+        .rounding(Rounding::same(6.0));
+    let prev_hover = ui.visuals().widgets.hovered.weak_bg_fill;
+    ui.visuals_mut().widgets.hovered.weak_bg_fill = p.bg_button_hover;
+    let resp = ui.add_enabled(enabled, btn);
+    ui.visuals_mut().widgets.hovered.weak_bg_fill = prev_hover;
+    resp
+}
+
 fn render_top_bar(
     state: &mut AppsManagerState,
     ui: &mut Ui,
@@ -106,38 +124,46 @@ fn render_top_bar(
 ) {
     Frame::none()
         .fill(p.bg_card)
-        .rounding(Rounding::same(10.0))
+        .rounding(Rounding::same(8.0))
         .inner_margin(egui::Margin::symmetric(12.0, 8.0))
         .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().interact_size.y = 24.0;
+            ui.spacing_mut().button_padding = egui::vec2(8.0, 3.0);
+            ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::NONE;
+            ui.visuals_mut().widgets.hovered.bg_stroke = Stroke::NONE;
+            ui.visuals_mut().widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
+            ui.visuals_mut().widgets.hovered.weak_bg_fill = p.bg_button_hover;
+
+            // Row 1: Title + status on left, search + ghost action buttons on right
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new(format!("{} Local Apps & Packages", crate::lucide::LAYOUT_GRID))
-                        .size(15.0)
+                    RichText::new("Local Apps & Packages")
+                        .size(14.5)
                         .strong()
                         .color(p.text_primary),
                 );
 
-                let count_label = if state.filter == AppFilter::Repos {
+                let count_str = if state.filter == AppFilter::Repos {
                     format!("{} repos", state.repos.len())
+                } else if state.filtered_indices.len() == state.apps.len() {
+                    format!("{} items", state.apps.len())
                 } else {
-                    format!("{} of {}", state.filtered_indices.len(), state.apps.len())
+                    format!("{} of {} items", state.filtered_indices.len(), state.apps.len())
                 };
-                Frame::none()
-                    .fill(p.bg_button)
-                    .rounding(Rounding::same(10.0))
-                    .inner_margin(egui::Margin::symmetric(8.0, 2.0))
-                    .show(ui, |ui| {
-                        ui.label(RichText::new(count_label).size(11.0).color(p.text_muted));
-                    });
-
+                let status_line = if state.status_text.is_empty() {
+                    count_str
+                } else {
+                    format!("{} · {}", count_str, state.status_text)
+                };
                 if state.loading || state.checking_updates {
                     ui.spinner();
                 }
-                if !state.status_text.is_empty() {
-                    ui.label(RichText::new(&state.status_text).size(11.5).color(p.text_muted));
-                }
+                ui.label(RichText::new(status_line).size(11.5).color(p.text_muted));
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+
                     let updatable: Vec<AppEntry> = state
                         .apps
                         .iter()
@@ -153,45 +179,60 @@ fn render_top_bar(
                                 .color(p.accent_text),
                         )
                         .fill(p.success)
-                        .rounding(Rounding::same(8.0));
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(6.0));
                         if ui.add_enabled(!state.task_running, btn).clicked() {
                             *pending_action = Some(AppAction::UpdateAll(updatable));
                         }
                     }
 
-                    let check_btn = egui::Button::new(
-                        RichText::new(format!("{} Check Updates", crate::lucide::SPARKLES))
-                            .size(11.5)
-                            .color(p.text_primary),
+                    if ghost_button(
+                        ui,
+                        format!("{} Check Updates", crate::lucide::SPARKLES),
+                        p.text_secondary,
+                        p,
+                        !state.checking_updates && !state.loading,
                     )
-                    .fill(p.bg_button)
-                    .rounding(Rounding::same(8.0));
-                    if ui.add_enabled(!state.checking_updates && !state.loading, check_btn).clicked() {
+                    .clicked()
+                    {
                         state.trigger_check_updates(ctx);
                     }
 
-                    let refresh_btn = egui::Button::new(
-                        RichText::new(format!("{} Refresh", crate::lucide::REFRESH_CW))
-                            .size(11.5)
-                            .color(p.text_primary),
+                    if ghost_button(
+                        ui,
+                        format!("{} Refresh", crate::lucide::REFRESH_CW),
+                        p.text_secondary,
+                        p,
+                        !state.loading,
                     )
-                    .fill(p.bg_button)
-                    .rounding(Rounding::same(8.0));
-                    if ui.add_enabled(!state.loading, refresh_btn).clicked() {
+                    .clicked()
+                    {
                         state.trigger_discovery(ctx);
                     }
 
+                    // Search box matching File Explorer's "Filter this folder"
                     Frame::none()
                         .fill(p.bg_input)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                        .rounding(Rounding::same(6.0))
+                        .inner_margin(egui::Margin::symmetric(7.0, 3.0))
                         .show(ui, |ui| {
+                            ui.spacing_mut().interact_size.y = 21.0;
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(crate::lucide::SEARCH).size(12.0).color(p.text_muted));
-                                let resp = ui.add(
+                                ui.label(
+                                    RichText::new(crate::lucide::SEARCH)
+                                        .size(11.5)
+                                        .color(p.text_muted),
+                                );
+                                let resp = ui.add_sized(
+                                    [210.0, 21.0],
                                     egui::TextEdit::singleline(&mut state.search_query)
-                                        .hint_text("Filter by name, ID, or description…")
-                                        .desired_width(220.0)
+                                        .hint_text(
+                                            RichText::new("Filter by name, ID, or description…")
+                                                .color(p.text_muted),
+                                        )
+                                        .font(egui::FontId::proportional(11.5))
+                                        .vertical_align(egui::Align::Center)
+                                        .margin(egui::Margin::ZERO)
                                         .frame(false),
                                 );
                                 if resp.changed() {
@@ -200,8 +241,12 @@ fn render_top_bar(
                                 if !state.search_query.is_empty()
                                     && ui
                                         .add(
-                                            egui::Button::new(RichText::new(crate::lucide::X).size(11.0).color(p.text_muted))
-                                                .frame(false),
+                                            egui::Button::new(
+                                                RichText::new(crate::lucide::X)
+                                                    .size(11.0)
+                                                    .color(p.text_muted),
+                                            )
+                                            .frame(false),
                                         )
                                         .clicked()
                                 {
@@ -212,73 +257,48 @@ fn render_top_bar(
                         });
                 });
             });
-        });
-}
 
-fn render_filter_and_sort_bar(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePalette) {
-    ui.horizontal(|ui| {
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            for &f in AppFilter::all() {
-                let active = state.filter == f;
-                let count = if f == AppFilter::Repos {
-                    state.repos.len()
-                } else {
-                    state.apps.iter().filter(|a| a.source.matches_filter(f)).count()
-                };
-                let bg = if active { p.accent } else { p.bg_button };
-                let fg = if active { p.accent_text } else { p.text_secondary };
-                let btn = egui::Button::new(
-                    RichText::new(format!("{} ({})", f.label(), count))
-                        .size(11.5)
-                        .strong()
-                        .color(fg),
-                )
-                .fill(bg)
-                .stroke(Stroke::NONE)
-                .rounding(Rounding::same(14.0));
-                if ui.add(btn).clicked() && state.filter != f {
-                    state.filter = f;
-                    state.mark_filter_dirty();
-                }
-            }
-        });
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(4.0);
 
-        if state.filter != AppFilter::Repos {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // Row 2: Low-profile segmented filter tabs (no redundant Sort bar)
+            ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                let dir_lbl = if state.sort_desc { "Desc ▼" } else { "Asc ▲" };
-                let dir_btn = egui::Button::new(RichText::new(dir_lbl).size(11.0).color(p.text_primary))
-                    .fill(p.bg_button)
-                    .rounding(Rounding::same(8.0));
-                if ui.add(dir_btn).on_hover_text("Toggle sort direction").clicked() {
-                    state.sort_desc = !state.sort_desc;
-                    state.mark_filter_dirty();
-                }
-
-                for &col in AppSortCol::all().iter().rev() {
-                    let active = state.sort_col == col;
+                for &f in AppFilter::all() {
+                    let active = state.filter == f;
+                    let count = if f == AppFilter::Repos {
+                        state.repos.len()
+                    } else {
+                        state.apps.iter().filter(|a| a.source.matches_filter(f)).count()
+                    };
+                    let bg = if active { p.bg_card_active } else { Color32::TRANSPARENT };
+                    let fg = if active { p.text_primary } else { p.text_muted };
+                    let label = match f {
+                        AppFilter::WebApps => format!("Web Apps ({})", count),
+                        _ => format!("{} ({})", f.label(), count),
+                    };
                     let btn = egui::Button::new(
-                        RichText::new(col.label())
-                            .size(11.0)
-                            .color(if active { p.accent_text } else { p.text_secondary }),
+                        RichText::new(label)
+                            .size(11.5)
+                            .strong()
+                            .color(fg),
                     )
-                    .fill(if active { p.accent } else { p.bg_button })
-                    .rounding(Rounding::same(8.0));
-                    if ui.add(btn).clicked() {
-                        if state.sort_col == col {
-                            state.sort_desc = !state.sort_desc;
-                        } else {
-                            state.sort_col = col;
-                            state.sort_desc = matches!(col, AppSortCol::Size | AppSortCol::InstalledDate);
-                        }
+                    .fill(bg)
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding::same(6.0));
+                    if ui.add(btn).clicked() && state.filter != f {
+                        state.filter = f;
                         state.mark_filter_dirty();
                     }
                 }
-                ui.label(RichText::new("Sort:").size(11.0).color(p.text_muted));
             });
-        }
-    });
+        });
+}
+
+fn render_filter_and_sort_bar(_state: &mut AppsManagerState, _ui: &mut Ui, _p: &ThemePalette) {
+    // Filter tabs are now integrated cleanly into Row 2 of the top card;
+    // sorting lives exclusively on the clickable table column headers.
 }
 
 fn cell_ui(ui: &mut Ui, width: f32, height: f32, align_right: bool, add_contents: impl FnOnce(&mut Ui)) {
@@ -302,23 +322,22 @@ fn render_apps_table(
     pending_action: &mut Option<AppAction>,
 ) {
     Frame::none()
-        .fill(p.bg_card)
-        .rounding(Rounding::same(10.0))
+        .fill(Color32::TRANSPARENT)
         .inner_margin(egui::Margin::symmetric(10.0, 8.0))
         .show(ui, |ui| {
             let inner_w = (width - 20.0).max(260.0);
             ui.set_width(inner_w);
             ui.set_height((height - 16.0).max(120.0));
 
-            let col_source_w = 96.0;
-            let col_ver_w = 135.0;
-            let col_size_w = 74.0;
-            let col_date_w = 88.0;
-            let col_actions_w = 112.0;
-            let col_name_w = (inner_w - col_source_w - col_ver_w - col_size_w - col_date_w - col_actions_w - 28.0)
+            let col_source_w = 88.0;
+            let col_ver_w = 130.0;
+            let col_size_w = 72.0;
+            let col_date_w = 84.0;
+            let col_actions_w = 84.0;
+            let col_name_w = (inner_w - col_source_w - col_ver_w - col_size_w - col_date_w - col_actions_w - 24.0)
                 .max(120.0);
 
-            // Header row
+            // Header row matching File Explorer
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 sort_header(state, ui, p, "Name", AppSortCol::Name, col_name_w);
@@ -326,9 +345,7 @@ fn render_apps_table(
                 sort_header(state, ui, p, "Version", AppSortCol::Version, col_ver_w);
                 sort_header(state, ui, p, "Size", AppSortCol::Size, col_size_w);
                 sort_header(state, ui, p, "Installed", AppSortCol::InstalledDate, col_date_w);
-                cell_ui(ui, col_actions_w, 22.0, true, |ui| {
-                    ui.label(RichText::new("Actions").size(11.0).strong().color(p.text_muted));
-                });
+                cell_ui(ui, col_actions_w, 22.0, true, |_ui| {});
             });
             ui.separator();
 
@@ -351,7 +368,7 @@ fn render_apps_table(
                 .max_height(scroll_h)
                 .auto_shrink([false, false])
                 .show_rows(ui, ROW_HEIGHT, total_rows, |ui, row_range| {
-                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.spacing_mut().item_spacing.y = 1.0;
                     for idx_pos in row_range {
                         let app_idx = state.filtered_indices[idx_pos];
                         let app = state.apps[app_idx].clone();
@@ -360,23 +377,19 @@ fn render_apps_table(
                             .as_ref()
                             .is_some_and(|(id, src)| id == &app.id && *src == app.source);
 
-                        let row_bg = if is_selected {
-                            p.bg_card_active
-                        } else if idx_pos % 2 == 1 {
-                            p.bg_subtle
-                        } else {
-                            Color32::TRANSPARENT
-                        };
-
                         let row_w = ui.available_width();
                         let (row_rect, _) =
-                            ui.allocate_exact_size(egui::vec2(row_w, ROW_HEIGHT - 2.0), egui::Sense::hover());
-                        if row_bg != Color32::TRANSPARENT {
-                            ui.painter().rect_filled(row_rect, Rounding::same(6.0), row_bg);
+                            ui.allocate_exact_size(egui::vec2(row_w, ROW_HEIGHT - 1.0), egui::Sense::hover());
+
+                        let row_hovered = ui.rect_contains_pointer(row_rect);
+                        if is_selected {
+                            ui.painter().rect_filled(row_rect, Rounding::same(4.0), p.bg_card_active);
+                        } else if row_hovered {
+                            ui.painter().rect_filled(row_rect, Rounding::same(4.0), p.bg_button_hover);
                         }
 
                         // Left info area is clickable to select row (never overlaps action buttons!)
-                        let info_w = (row_w - col_actions_w - 8.0).max(120.0);
+                        let info_w = (row_w - col_actions_w - 6.0).max(120.0);
                         let info_rect = egui::Rect::from_min_size(
                             row_rect.min,
                             egui::vec2(info_w, row_rect.height()),
@@ -386,9 +399,6 @@ fn render_apps_table(
                             egui::Id::new(("app_row_sel", idx_pos)),
                             egui::Sense::click(),
                         );
-                        if info_resp.hovered() && !is_selected {
-                            ui.painter().rect_filled(row_rect, Rounding::same(6.0), p.bg_card_hover);
-                        }
                         if info_resp.clicked() {
                             state.selected_key = Some((app.id.clone(), app.source));
                             *pending_action = Some(AppAction::ResolveDetails(app.clone()));
@@ -396,48 +406,42 @@ fn render_apps_table(
 
                         let mut row_ui = ui.new_child(
                             egui::UiBuilder::new()
-                                .max_rect(row_rect.shrink2(egui::vec2(4.0, 2.0)))
+                                .max_rect(row_rect.shrink2(egui::vec2(6.0, 2.0)))
                                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
                         );
                         row_ui.spacing_mut().item_spacing.x = 4.0;
 
-                        // Name + Update badge
-                        cell_ui(&mut row_ui, col_name_w, 26.0, false, |ui| {
+                        // Name + Update indicator
+                        cell_ui(&mut row_ui, col_name_w, 24.0, false, |ui| {
                             ui.add(
                                 egui::Label::new(
-                                    RichText::new(&app.name).size(12.5).strong().color(p.text_primary),
+                                    RichText::new(&app.name).size(12.0).color(p.text_primary),
                                 )
                                 .truncate(),
                             );
                             if let Some(ref new_v) = app.update_available {
-                                Frame::none()
-                                    .fill(p.success_subtle)
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(5.0, 1.0))
-                                    .show(ui, |ui| {
-                                        ui.label(
-                                            RichText::new(format!("-> {}", new_v))
-                                                .size(10.0)
-                                                .color(p.success),
-                                        );
-                                    });
+                                ui.label(
+                                    RichText::new(format!("• {}", new_v))
+                                        .size(10.5)
+                                        .color(p.success),
+                                );
                             }
                         });
 
-                        // Source badge
-                        cell_ui(&mut row_ui, col_source_w, 26.0, false, |ui| {
+                        // Subtle muted Source tag
+                        cell_ui(&mut row_ui, col_source_w, 24.0, false, |ui| {
                             let (sbg, sfg) = source_badge_colors(app.source, p);
                             Frame::none()
                                 .fill(sbg)
-                                .rounding(Rounding::same(6.0))
-                                .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                .rounding(Rounding::same(4.0))
+                                .inner_margin(egui::Margin::symmetric(5.0, 1.0))
                                 .show(ui, |ui| {
-                                    ui.label(RichText::new(app.source.label()).size(10.5).color(sfg));
+                                    ui.label(RichText::new(app.source.label()).size(10.0).color(sfg));
                                 });
                         });
 
                         // Version
-                        cell_ui(&mut row_ui, col_ver_w, 26.0, false, |ui| {
+                        cell_ui(&mut row_ui, col_ver_w, 24.0, false, |ui| {
                             ui.add(
                                 egui::Label::new(
                                     RichText::new(&app.version).size(11.5).color(p.text_secondary),
@@ -447,56 +451,42 @@ fn render_apps_table(
                         });
 
                         // Size
-                        cell_ui(&mut row_ui, col_size_w, 26.0, false, |ui| {
+                        cell_ui(&mut row_ui, col_size_w, 24.0, false, |ui| {
                             ui.label(RichText::new(&app.size_display).size(11.5).color(p.text_muted));
                         });
 
                         // Installed Date
-                        cell_ui(&mut row_ui, col_date_w, 26.0, false, |ui| {
+                        cell_ui(&mut row_ui, col_date_w, 24.0, false, |ui| {
                             let d = app.installed_date.as_deref().unwrap_or("—");
                             ui.label(RichText::new(d).size(11.0).color(p.text_muted));
                         });
 
-                        // Actions (isolated from row click!)
-                        cell_ui(&mut row_ui, col_actions_w, 26.0, true, |ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0;
-                            if app.can_uninstall {
-                                let btn = egui::Button::new(
-                                    RichText::new(crate::lucide::TRASH).size(12.0).color(p.danger),
-                                )
-                                .fill(p.bg_button)
-                                .rounding(Rounding::same(6.0));
-                                if ui
-                                    .add_enabled(!state.task_running, btn)
+                        // Minimal borderless ghost icons shown ONLY on row hover or selection
+                        cell_ui(&mut row_ui, col_actions_w, 24.0, true, |ui| {
+                            if !row_hovered && !is_selected {
+                                return;
+                            }
+                            ui.spacing_mut().item_spacing.x = 2.0;
+                            if app.can_uninstall
+                                && ghost_button(ui, crate::lucide::TRASH, p.danger, p, !state.task_running)
                                     .on_hover_text("Uninstall")
                                     .clicked()
-                                {
-                                    state.confirm_uninstall = Some(app.clone());
-                                }
+                            {
+                                state.confirm_uninstall = Some(app.clone());
                             }
-                            if app.can_update {
-                                let btn = egui::Button::new(
-                                    RichText::new(crate::lucide::DOWNLOAD).size(12.0).color(p.accent),
-                                )
-                                .fill(p.bg_button)
-                                .rounding(Rounding::same(6.0));
-                                if ui
-                                    .add_enabled(!state.task_running, btn)
+                            if app.can_update
+                                && ghost_button(ui, crate::lucide::DOWNLOAD, p.accent, p, !state.task_running)
                                     .on_hover_text("Update")
                                     .clicked()
-                                {
-                                    *pending_action = Some(AppAction::Update(app.clone()));
-                                }
+                            {
+                                *pending_action = Some(AppAction::Update(app.clone()));
                             }
-                            if app.can_launch {
-                                let btn = egui::Button::new(
-                                    RichText::new(crate::lucide::PLAY).size(12.0).color(p.success),
-                                )
-                                .fill(p.bg_button)
-                                .rounding(Rounding::same(6.0));
-                                if ui.add(btn).on_hover_text("Launch").clicked() {
-                                    *pending_action = Some(AppAction::Launch(app.clone()));
-                                }
+                            if app.can_launch
+                                && ghost_button(ui, crate::lucide::PLAY, p.success, p, true)
+                                    .on_hover_text("Launch")
+                                    .clicked()
+                            {
+                                *pending_action = Some(AppAction::Launch(app.clone()));
                             }
                         });
                     }
@@ -514,7 +504,7 @@ fn sort_header(
 ) {
     let active = state.sort_col == col;
     let arrow = if active {
-        if state.sort_desc { " ▼" } else { " ▲" }
+        if state.sort_desc { " ↓" } else { " ↑" }
     } else {
         ""
     };
@@ -649,6 +639,74 @@ fn render_repos_table(state: &AppsManagerState, ui: &mut Ui, p: &ThemePalette, h
         });
 }
 
+fn render_inspector_empty_state(state: &AppsManagerState, ui: &mut Ui, p: &ThemePalette, inner_w: f32) {
+    ui.add_space(28.0);
+    ui.vertical_centered(|ui| {
+        ui.label(
+            RichText::new(crate::lucide::PACKAGE)
+                .size(28.0)
+                .color(p.text_muted),
+        );
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new("Select an app or package")
+                .size(13.5)
+                .strong()
+                .color(p.text_primary),
+        );
+        ui.add_space(4.0);
+        ui.add(
+            egui::Label::new(
+                RichText::new(
+                    "Click any item in the list to view its description, install location, and actions.",
+                )
+                .size(11.5)
+                .color(p.text_muted),
+            )
+            .wrap(),
+        );
+    });
+
+    ui.add_space(20.0);
+    ui.separator();
+    ui.add_space(10.0);
+
+    ui.label(
+        RichText::new("Summary by Source")
+            .size(11.0)
+            .strong()
+            .color(p.text_muted),
+    );
+    ui.add_space(6.0);
+
+    Frame::none()
+        .fill(p.bg_subtle)
+        .rounding(Rounding::same(8.0))
+        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+        .show(ui, |ui| {
+            ui.set_width((inner_w - 24.0).max(160.0));
+            for &f in AppFilter::all() {
+                if f == AppFilter::All {
+                    continue;
+                }
+                let count = if f == AppFilter::Repos {
+                    state.repos.len()
+                } else {
+                    state.apps.iter().filter(|a| a.source.matches_filter(f)).count()
+                };
+                if count == 0 {
+                    continue;
+                }
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(f.label()).size(11.5).color(p.text_secondary));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(RichText::new(format!("{}", count)).size(11.5).strong().color(p.text_primary));
+                    });
+                });
+            }
+        });
+}
+
 fn render_inspector_panel(
     state: &mut AppsManagerState,
     ui: &mut Ui,
@@ -657,73 +715,78 @@ fn render_inspector_panel(
     height: f32,
     pending_action: &mut Option<AppAction>,
 ) {
-    let Some(ref key) = state.selected_key else {
-        return;
-    };
-    let Some(app) = state
-        .apps
-        .iter()
-        .find(|a| a.id == key.0 && a.source == key.1)
-        .cloned()
-    else {
+    let selected_app = state.selected_key.as_ref().and_then(|key| {
+        state
+            .apps
+            .iter()
+            .find(|a| a.id == key.0 && a.source == key.1)
+            .cloned()
+    });
+    if state.selected_key.is_some() && selected_app.is_none() {
         state.selected_key = None;
-        return;
-    };
+    }
 
     Frame::none()
-        .fill(p.bg_card)
-        .rounding(Rounding::same(10.0))
-        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+        .fill(p.bg_sidebar)
+        .rounding(Rounding::ZERO)
+        .inner_margin(egui::Margin::same(16.0))
         .show(ui, |ui| {
-            let inner_w = (width - 28.0).max(200.0);
+            let inner_w = (width - 32.0).max(200.0);
             ui.set_width(inner_w);
-            ui.set_height((height - 24.0).max(120.0));
+            ui.set_height((height - 32.0).max(120.0));
 
-            // Header bar with app name and close button
+            let Some(app) = selected_app else {
+                render_inspector_empty_state(state, ui, p, inner_w);
+                return;
+            };
+
+            // Header bar with app name + source badge + click-to-copy ID
             ui.horizontal(|ui| {
                 ui.set_width(inner_w);
                 ui.add(
-                    egui::Label::new(RichText::new(&app.name).size(15.5).strong().color(p.text_primary))
-                        .truncate(),
+                    egui::Label::new(RichText::new(&app.name).size(16.0).strong().color(p.text_primary))
+                        .wrap(),
                 );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add(
-                            egui::Button::new(RichText::new(crate::lucide::X).size(12.0).color(p.text_muted))
-                                .frame(false),
-                        )
-                        .clicked()
-                    {
-                        state.selected_key = None;
-                    }
-                });
             });
 
             ui.add_space(4.0);
-            let (sbg, sfg) = source_badge_colors(app.source, p);
             ui.horizontal_wrapped(|ui| {
+                let (sbg, sfg) = source_badge_colors(app.source, p);
                 Frame::none()
                     .fill(sbg)
-                    .rounding(Rounding::same(6.0))
+                    .rounding(Rounding::same(4.0))
                     .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                     .show(ui, |ui| {
                         ui.label(RichText::new(app.source.label()).size(10.5).color(sfg));
                     });
-                ui.label(RichText::new(&app.version).size(11.5).color(p.text_secondary));
-                if !app.size_display.is_empty() && app.size_display != "—" {
-                    ui.label(RichText::new(format!("· {}", app.size_display)).size(11.5).color(p.text_muted));
+
+                let id_btn = egui::Button::new(
+                    RichText::new(&app.id)
+                        .size(11.0)
+                        .monospace()
+                        .color(p.text_muted),
+                )
+                .fill(Color32::TRANSPARENT)
+                .stroke(Stroke::NONE);
+                if ui
+                    .add(id_btn)
+                    .on_hover_text("Click to copy package / app ID")
+                    .clicked()
+                {
+                    ui.ctx().copy_text(app.id.clone());
+                    state.status_text = format!("Copied '{}'", app.id);
                 }
             });
 
             if let Some(ref new_ver) = app.update_available {
-                ui.add_space(6.0);
+                ui.add_space(8.0);
                 Frame::none()
                     .fill(p.success_subtle)
-                    .rounding(Rounding::same(8.0))
-                    .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                    .rounding(Rounding::same(6.0))
+                    .inner_margin(egui::Margin::symmetric(8.0, 5.0))
                     .show(ui, |ui| {
                         ui.label(
-                            RichText::new(format!("Update available: {}", new_ver))
+                            RichText::new(format!("{} Update available: {}", crate::lucide::DOWNLOAD, new_ver))
                                 .size(11.5)
                                 .strong()
                                 .color(p.success),
@@ -731,11 +794,11 @@ fn render_inspector_panel(
                     });
             }
 
-            ui.add_space(8.0);
+            ui.add_space(10.0);
             ui.separator();
-            ui.add_space(6.0);
+            ui.add_space(8.0);
 
-            let scroll_h = (ui.available_height() - 78.0).max(80.0);
+            let scroll_h = (ui.available_height() - 82.0).max(80.0);
             egui::ScrollArea::vertical()
                 .id_salt("apps_inspector_scroll")
                 .max_height(scroll_h)
@@ -743,48 +806,90 @@ fn render_inspector_panel(
                 .show(ui, |ui| {
                     ui.set_width(inner_w);
 
-                    // Description Card (always shown prominently)
+                    // Description Section
                     ui.label(RichText::new("Description").size(11.0).strong().color(p.text_muted));
-                    ui.add_space(3.0);
-                    Frame::none()
-                        .fill(p.bg_subtle)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                    ui.add_space(4.0);
+                    let desc = if app.description.trim().is_empty() {
+                        "No description available"
+                    } else {
+                        app.description.trim()
+                    };
+                    ui.add(egui::Label::new(RichText::new(desc).size(12.0).color(p.text_secondary)).wrap());
+                    ui.add_space(12.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+
+                    // 2-Column Metadata Grid
+                    let label_w = 96.0;
+                    let val_w = (inner_w - label_w - 8.0).max(100.0);
+                    egui::Grid::new("apps_inspector_meta_grid")
+                        .num_columns(2)
+                        .spacing([8.0, 6.0])
                         .show(ui, |ui| {
-                            ui.set_width((inner_w - 20.0).max(160.0));
-                            let desc = if app.description.trim().is_empty() {
-                                "No description provided for this package."
-                            } else {
-                                app.description.trim()
-                            };
-                            ui.add(egui::Label::new(RichText::new(desc).size(12.0).color(p.text_primary)).wrap());
+                            meta_row(ui, p, label_w, val_w, "Version", &app.version);
+                            meta_row(ui, p, label_w, val_w, "Size", &app.size_display);
+                            meta_row(
+                                ui,
+                                p,
+                                label_w,
+                                val_w,
+                                "Installed",
+                                app.installed_date.as_deref().unwrap_or("Unknown"),
+                            );
+                            if !app.publisher_or_origin.is_empty() {
+                                meta_row(ui, p, label_w, val_w, "Origin", &app.publisher_or_origin);
+                            }
+
+                            // Install Location with inline Open Folder ghost button
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(label_w, 18.0),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.label(RichText::new("Location").size(11.0).color(p.text_muted));
+                                },
+                            );
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(val_w, 18.0),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    let loc_text = app
+                                        .install_location
+                                        .as_deref()
+                                        .or(app.desktop_file.as_deref())
+                                        .unwrap_or("System-wide");
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(loc_text).size(11.5).color(p.text_primary),
+                                        )
+                                        .truncate(),
+                                    )
+                                    .on_hover_text(loc_text);
+                                    if (app.install_location.is_some() || app.desktop_file.is_some())
+                                        && ghost_button(
+                                            ui,
+                                            crate::lucide::FOLDER_OPEN,
+                                            p.accent,
+                                            p,
+                                            true,
+                                        )
+                                        .on_hover_text("Open Folder")
+                                        .clicked()
+                                    {
+                                        *pending_action = Some(AppAction::OpenLocation(app.clone()));
+                                    }
+                                },
+                            );
+                            ui.end_row();
                         });
+
                     ui.add_space(10.0);
 
-                    inspector_field(ui, p, "Package / App ID", &app.id);
-                    inspector_field(
-                        ui,
-                        p,
-                        "Installed Date",
-                        app.installed_date.as_deref().unwrap_or("Unknown"),
-                    );
-                    if !app.publisher_or_origin.is_empty() {
-                        inspector_field(ui, p, "Origin / Publisher", &app.publisher_or_origin);
-                    }
-
-                    let loc_text = app
-                        .install_location
-                        .as_deref()
-                        .or(app.desktop_file.as_deref())
-                        .unwrap_or("Not resolved / system-wide");
-                    inspector_field(ui, p, "Install Location", loc_text);
-
                     // Data Paths
-                    ui.label(RichText::new("App Data Folders").size(11.0).strong().color(p.text_muted));
-                    ui.add_space(2.0);
+                    ui.label(RichText::new("Data Paths").size(11.0).strong().color(p.text_muted));
+                    ui.add_space(4.0);
                     if app.data_paths.is_empty() {
                         ui.label(
-                            RichText::new("No verified user data folders found.")
+                            RichText::new("No local user data folders found.")
                                 .size(11.5)
                                 .color(p.text_muted),
                         );
@@ -877,53 +982,66 @@ fn render_inspector_panel(
         });
 }
 
-fn inspector_field(ui: &mut Ui, p: &ThemePalette, label: &str, value: &str) {
-    ui.label(RichText::new(label).size(10.5).strong().color(p.text_muted));
-    ui.add(egui::Label::new(RichText::new(value).size(12.0).color(p.text_primary)).wrap());
-    ui.add_space(6.0);
+fn meta_row(ui: &mut Ui, p: &ThemePalette, label_w: f32, val_w: f32, label: &str, value: &str) {
+    ui.allocate_ui_with_layout(
+        egui::vec2(label_w, 18.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.label(RichText::new(label).size(11.0).color(p.text_muted));
+        },
+    );
+    ui.allocate_ui_with_layout(
+        egui::vec2(val_w, 18.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.add(egui::Label::new(RichText::new(value).size(11.5).color(p.text_primary)).truncate())
+                .on_hover_text(value);
+        },
+    );
+    ui.end_row();
 }
 
 fn render_task_drawer(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePalette) {
     Frame::none()
         .fill(p.bg_card)
-        .rounding(Rounding::same(10.0))
-        .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+        .rounding(Rounding::same(8.0))
+        .inner_margin(egui::Margin::symmetric(12.0, 6.0))
         .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().button_padding = egui::vec2(8.0, 2.0);
             ui.horizontal(|ui| {
                 if state.task_running {
                     ui.spinner();
                 }
-                let title = if state.task_title.is_empty() {
-                    "Task Output".to_string()
-                } else {
+                let left_text = if state.task_running {
                     state.task_title.clone()
+                } else if state.filter == AppFilter::Repos {
+                    format!("Showing {} repositories", state.repos.len())
+                } else {
+                    format!(
+                        "Showing {} of {} items",
+                        state.filtered_indices.len(),
+                        state.apps.len()
+                    )
                 };
-                ui.label(RichText::new(title).size(11.5).strong().color(p.text_primary));
-                ui.label(
-                    RichText::new(format!("({} lines)", state.task_logs.len()))
-                        .size(11.0)
-                        .color(p.text_muted),
-                );
+                ui.label(RichText::new(left_text).size(11.0).color(p.text_secondary));
+
+                if !state.task_running && !state.task_title.is_empty() {
+                    ui.label(
+                        RichText::new(format!("· {} ({} lines)", state.task_title, state.task_logs.len()))
+                            .size(11.0)
+                            .color(p.text_muted),
+                    );
+                }
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
                     let toggle_lbl = if state.log_drawer_open { "Hide Log" } else { "Show Log" };
-                    if ui
-                        .add(
-                            egui::Button::new(RichText::new(toggle_lbl).size(11.0).color(p.text_secondary))
-                                .fill(p.bg_button)
-                                .rounding(Rounding::same(6.0)),
-                        )
-                        .clicked()
-                    {
+                    if ghost_button(ui, toggle_lbl, p.text_secondary, p, true).clicked() {
                         state.log_drawer_open = !state.log_drawer_open;
                     }
                     if !state.task_logs.is_empty()
-                        && ui
-                            .add(
-                                egui::Button::new(RichText::new("Clear").size(11.0).color(p.text_muted))
-                                    .fill(p.bg_button)
-                                    .rounding(Rounding::same(6.0)),
-                            )
-                            .clicked()
+                        && ghost_button(ui, "Clear", p.text_muted, p, true).clicked()
                     {
                         state.task_logs.clear();
                     }

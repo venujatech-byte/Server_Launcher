@@ -178,6 +178,23 @@ X-GNOME-UsesNotifications=true\n",
 pub fn ensure_linux_desktop_integration() {}
 
 fn main() -> eframe::Result<()> {
+    let mut session_args = std::env::args_os().skip(1);
+    if session_args.next().is_some_and(|arg| arg == "--remote-session") {
+        use remote_desktop::credentials::DesktopProtocol;
+        let host = session_args.next().and_then(|arg| arg.into_string().ok());
+        let protocol = match session_args.next().as_deref().and_then(std::ffi::OsStr::to_str) {
+            Some("RDP") => Some(DesktopProtocol::Rdp),
+            Some("VNC") => Some(DesktopProtocol::Vnc),
+            _ => None,
+        };
+        let path = session_args.next().map(std::path::PathBuf::from);
+        let theme = session_args.next().and_then(|arg| arg.into_string().ok());
+        if let (Some(host), Some(protocol), Some(path), Some(theme)) = (host, protocol, path, theme) {
+            return remote_desktop::viewer::run(&host, protocol, &path, &theme);
+        }
+        eprintln!("Invalid remote desktop session arguments.");
+        return Ok(());
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(index) = args.iter().position(|arg| arg == "--adb-cockpit" || arg.starts_with("--adb-cockpit=")) {
         if let Some(serial) = args[index].strip_prefix("--adb-cockpit=") {

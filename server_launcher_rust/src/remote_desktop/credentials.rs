@@ -4,7 +4,7 @@ use crate::{config::SshRemoteHost, ssh_credentials};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DesktopProtocol {
     Rdp,
     Vnc,

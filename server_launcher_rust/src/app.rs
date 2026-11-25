@@ -429,6 +429,7 @@ pub struct LauncherApp {
     remote_host_lifetimes: Arc<Mutex<HashMap<String, Arc<()>>>>,
     saved_host_credential_refs: BTreeSet<String>,
     ssh_host_modal: SshHostModalState,
+    desktop_sessions: crate::remote_desktop::session::Sessions,
     remote_listeners: Arc<Mutex<HashMap<String, RemoteListenerSnapshot>>>,
     remote_scanning: Arc<Mutex<HashMap<String, Option<(Instant, u32)>>>>,
     remote_terminal_logs: Arc<Mutex<HashMap<String, Arc<Mutex<VecDeque<crate::service::LogEntry>>>>>>,
@@ -977,6 +978,7 @@ impl LauncherApp {
             remote_host_lifetimes: Arc::new(Mutex::new(HashMap::new())),
             saved_host_credential_refs,
             ssh_host_modal,
+            desktop_sessions: Default::default(),
             remote_listeners,
             remote_scanning,
             remote_terminal_logs,
@@ -2146,6 +2148,24 @@ impl LauncherApp {
     }
 
 
+    fn open_remote_desktop(
+        &mut self,
+        ctx: &Context,
+        host: &SshRemoteHost,
+        protocol: crate::remote_desktop::credentials::DesktopProtocol,
+    ) {
+        use crate::remote_desktop::credentials::DesktopProtocol;
+        let configured = match protocol {
+            DesktopProtocol::Rdp => host.rdp.as_ref().is_some_and(|profile| profile.enabled),
+            DesktopProtocol::Vnc => host.vnc.as_ref().is_some_and(|profile| profile.enabled),
+        };
+        if !configured {
+            self.ssh_host_modal.open_desktop(host, protocol);
+        } else if let Err(error) = self.desktop_sessions.open(&host.id, protocol, &self.config_path, self.theme.id_str(), ctx) {
+            self.import_status_msg = Some((format!("Could not open {} viewer: {error}", protocol.label()), true, Instant::now()));
+        }
+    }
+
     fn collect_palette_actions(&self) -> Vec<(String, PaletteAction)> {
         let mut items = Vec::new();
 
@@ -3210,7 +3230,7 @@ impl eframe::App for LauncherApp {
                                         let action = ui.button(format!("{}   {}", protocol.label(), status))
                                             .hover_tip(detail.as_deref().unwrap_or("Open protocol settings"));
                                         if action.clicked() {
-                                            self.ssh_host_modal.open_desktop(host, protocol);
+                                            self.open_remote_desktop(ctx, host, protocol);
                                             ui.memory_mut(|memory| memory.close_popup());
                                         }
                                     }
@@ -3475,8 +3495,8 @@ impl eframe::App for LauncherApp {
         let palette_action = render_command_palette(ctx, &mut self.palette_modal, &palette_items, &p);
         match palette_action {
             ModalAction::ExecutePaletteAction(PaletteAction::OpenRemoteDesktop(id, protocol)) => {
-                if let Some(host) = self.ssh_hosts.iter().find(|host| host.id == id) {
-                    self.ssh_host_modal.open_desktop(host, protocol);
+                if let Some(host) = self.ssh_hosts.iter().find(|host| host.id == id).cloned() {
+                    self.open_remote_desktop(ctx, &host, protocol);
                 }
             }
             ModalAction::ExecutePaletteAction(PaletteAction::StartServer(k)) => {

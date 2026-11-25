@@ -3075,7 +3075,7 @@ impl eframe::App for LauncherApp {
                     });
                 });
                 if let Some((left, right, remote)) = tabs_bounds {
-                    let tabs_width = if remote { 486.0 } else { 417.0 };
+                    let tabs_width = 486.0;
                     let x = header_center - tabs_width * 0.5;
                     if x >= left && x + tabs_width <= right {
                         let rect = egui::Rect::from_min_size(
@@ -3151,7 +3151,6 @@ impl eframe::App for LauncherApp {
                 )
                 .show(ctx, |ui| {
                     if self.active_sidebar_tab == SidebarTab::Apps {
-                        ui.add_space(8.0);
                         let p = self.palette();
                         crate::apps::ui::render_apps_page(&mut self.apps_manager, ui, &p, None);
                         return;

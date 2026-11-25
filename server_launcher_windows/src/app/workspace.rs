@@ -317,10 +317,10 @@ impl LauncherApp {
             .inner_margin(egui::Margin::symmetric(3.0, 3.0))
             .show(ui, |ui| {
                 const TAB_GAP: f32 = 3.0;
-                let count = if remote { 7.0 } else { 6.0 };
-                let gaps = (count - 1.0) * TAB_GAP;
-                let tab_width = ((ui.available_width() - gaps) / count).clamp(0.0, 66.0);
-                let tabs_width = count * tab_width + gaps;
+                let count = if remote { 7 } else { 6 };
+                let gaps = 6.0 * TAB_GAP;
+                let tab_width = ((ui.available_width() - gaps) / 7.0).clamp(0.0, 66.0);
+                let tabs_width = count as f32 * tab_width + (count - 1) as f32 * TAB_GAP;
                 ui.set_min_width(tabs_width);
                 ui.set_max_width(tabs_width);
                 ui.horizontal(|ui| {
@@ -336,7 +336,7 @@ impl LauncherApp {
                         (SidebarTab::Files, SidebarTab::Files.label()),
                     ];
 
-                    for (tab, label) in tabs.into_iter().take(count as usize) {
+                    for (tab, label) in tabs.into_iter().take(count) {
                         let is_active = self.active_sidebar_tab == tab;
                         let bg = if is_active {
                             p.accent

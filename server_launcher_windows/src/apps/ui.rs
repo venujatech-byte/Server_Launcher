@@ -28,6 +28,7 @@ pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePale
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 8.0;
 
+        ui.add_space(8.0);
         render_top_bar(state, ui, p, &ctx, &mut pending_action, remote);
 
         egui::TopBottomPanel::bottom(ui.id().with("apps_bottom")).show_separator_line(false)

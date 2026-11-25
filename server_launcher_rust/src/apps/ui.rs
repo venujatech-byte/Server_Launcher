@@ -160,7 +160,7 @@ fn render_top_bar(
                 }
                 ui.label(RichText::new(status_line).size(11.5).color(p.text_muted));
 
-                ui.horizontal_wrapped(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
 
                     let updatable: Vec<AppEntry> = state

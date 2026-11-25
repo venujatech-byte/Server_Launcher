@@ -370,10 +370,7 @@ fn render_apps_table(
                     for idx_pos in row_range {
                         let app_idx = state.filtered_indices[idx_pos];
                         let app = state.apps[app_idx].clone();
-                        let is_selected = state
-                            .selected_key
-                            .as_ref()
-                            .is_some_and(|(id, src)| id == &app.id && *src == app.source);
+                        let is_selected = state.selected_index == Some(app_idx);
 
                         let row_w = ui.available_width();
                         let (row_rect, _) =
@@ -394,11 +391,11 @@ fn render_apps_table(
                         );
                         let info_resp = ui.interact(
                             info_rect,
-                            egui::Id::new(("app_row_sel", &app.id, app.source)),
+                            ui.id().with(("app_row_sel", app_idx)),
                             egui::Sense::click(),
                         );
                         if info_resp.clicked() {
-                            state.selected_key = Some((app.id.clone(), app.source));
+                            state.selected_index = Some(app_idx);
                             state.inspector_scroll_to_top = true;
                             *pending_action = Some(AppAction::ResolveDetails(app.clone()));
                         }
@@ -715,14 +712,12 @@ fn render_inspector_panel(
     height: f32,
     pending_action: &mut Option<AppAction>,
 ) {
-    let selected_app = state.selected_key.as_ref().and_then(|key| {
-        state.filtered_indices.iter()
-            .filter_map(|&index| state.apps.get(index))
-            .find(|app| app.id == key.0 && app.source == key.1)
-            .cloned()
-    });
-    if state.selected_key.is_some() && selected_app.is_none() && !state.loading {
-        state.selected_key = None;
+    let selected_app = state.selected_index
+        .filter(|index| state.filtered_indices.contains(index))
+        .and_then(|index| state.apps.get(index))
+        .cloned();
+    if selected_app.is_none() {
+        state.selected_index = None;
     }
 
     Frame::none()

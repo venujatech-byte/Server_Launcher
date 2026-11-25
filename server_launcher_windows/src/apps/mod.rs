@@ -20,7 +20,7 @@ pub struct AppsManagerState {
     pub filter: AppFilter,
     pub sort_col: AppSortCol,
     pub sort_desc: bool,
-    pub selected_key: Option<(String, AppSource)>,
+    pub selected_index: Option<usize>,
     pub inspector_scroll_to_top: bool,
     pub resolved_keys: HashSet<(String, AppSource)>,
     pub loading: bool,
@@ -49,7 +49,7 @@ impl Default for AppsManagerState {
             filter: AppFilter::All,
             sort_col: AppSortCol::Name,
             sort_desc: false,
-            selected_key: None,
+            selected_index: None,
             inspector_scroll_to_top: false,
             resolved_keys: HashSet::new(),
             loading: false,
@@ -75,6 +75,7 @@ impl AppsManagerState {
         self.status_text = "Discovering installed apps & packages…".to_string();
         self.apps.clear();
         self.filtered_indices.clear();
+        self.selected_index = None;
         self.repos.clear();
         self.resolved_keys.clear();
         self.dirty_filter = true;

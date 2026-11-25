@@ -1508,8 +1508,18 @@ pub fn render_command_palette(
     action
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum RemotePcTab {
+    #[default]
+    General,
+    Ssh,
+    Rdp,
+    Vnc,
+}
+
 #[derive(Default)]
 pub struct SshHostModalState {
+    tab: RemotePcTab,
     pub open: bool,
     pub is_edit: bool,
     pub editing_id: Option<String>,
@@ -1531,6 +1541,7 @@ pub struct SshHostModalState {
 
 impl SshHostModalState {
     pub fn open_add(&mut self) {
+        self.tab = RemotePcTab::General;
         self.open = true;
         self.is_edit = false;
         self.editing_id = None;
@@ -1551,6 +1562,7 @@ impl SshHostModalState {
     }
 
     pub fn open_edit(&mut self, h: &crate::config::SshRemoteHost) {
+        self.tab = RemotePcTab::General;
         self.open = true;
         self.is_edit = true;
         self.editing_id = Some(h.id.clone());
@@ -1597,7 +1609,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
     let testing = state.pending_test.is_some();
 
     let mut action = ModalAction::None;
-    let title = if state.is_edit { "Edit SSH Remote PC" } else { "Add SSH Remote PC" };
+    let title = if state.is_edit { "Edit Remote PC" } else { "Add Remote PC" };
 
     let screen = ctx.screen_rect();
     let modal_w = 560.0_f32.min((screen.width() - 48.0).max(200.0));
@@ -1630,183 +1642,185 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             ui.add_space(4.0);
             ui.set_max_width(ui.available_width());
 
+            ui.horizontal_wrapped(|ui| {
+                for (tab, label) in [
+                    (RemotePcTab::General, "General"),
+                    (RemotePcTab::Ssh, "SSH"),
+                    (RemotePcTab::Rdp, "RDP"),
+                    (RemotePcTab::Vnc, "VNC"),
+                ] {
+                    ui.selectable_value(&mut state.tab, tab, label);
+                }
+            });
+
             egui::ScrollArea::vertical()
-                .id_salt("ssh_host_form")
+                .id_salt(("ssh_host_form", state.tab as u8))
                 .max_width(ui.available_width())
                 .max_height((max_h - 145.0).max(80.0))
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-            if testing { ui.disable(); }
-            ui.label(RichText::new("Configure an SSH connection. Required fields are marked *.").size(11.5).color(palette.text_muted));
-            ui.add_space(4.0);
-
-            // ── Card: Automatic SSH Config Import Banner ──
-            egui::Frame::none()
-                .fill(palette.bg_subtle)
-                .stroke(Stroke::NONE)
-                .rounding(Rounding::same(8.0))
-                .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        egui::Frame::none()
-                            .fill(palette.bg_button)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::same(6.0))
-                            .show(ui, |ui| {
-                                ui.label(RichText::new(crate::lucide::ZAP).size(13.0).color(palette.accent));
-                            });
-                        ui.add_space(6.0);
-                        ui.vertical(|ui| {
-                            ui.set_width((ui.available_width() - 110.0).max(0.0));
-                            ui.label(RichText::new("Automatic SSH config import available").size(12.0).strong().color(palette.text_primary));
-                            ui.label(RichText::new("Auto-detect hosts and identities defined in ~/.ssh/config").size(10.5).color(palette.text_muted));
-                        });
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let scan_btn = egui::Button::new(RichText::new("Scan Hosts").size(11.0).color(palette.text_primary))
-                                .fill(palette.bg_button)
+                    if testing {
+                        ui.disable();
+                    }
+                    match state.tab {
+                        RemotePcTab::General => {
+                            // ── Card: Automatic SSH Config Import Banner ──
+                            egui::Frame::none()
+                                .fill(palette.bg_subtle)
                                 .stroke(Stroke::NONE)
-                                .rounding(Rounding::same(8.0));
-                            if ui.add(scan_btn).clicked() {
-                                let imported = crate::remote::import_from_ssh_config();
-                                if let Some(first) = imported.first() {
-                                    state.name = first.name.clone();
-                                    state.host = first.host.clone();
-                                    state.port_str = first.port.to_string();
-                                    state.user = first.user.clone();
-                                    state.key_path = first.key_path.clone();
-                                    state.test_result = Some(Ok(format!("Detected '{}' ({} hosts in ~/.ssh/config)", first.name, imported.len())));
-                                } else {
-                                    state.test_result = Some(Err("No hosts found in ~/.ssh/config".to_string()));
+                                .rounding(Rounding::same(8.0))
+                                .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        egui::Frame::none()
+                                            .fill(palette.bg_button)
+                                            .rounding(Rounding::same(8.0))
+                                            .inner_margin(egui::Margin::same(6.0))
+                                            .show(ui, |ui| {
+                                                ui.label(RichText::new(crate::lucide::ZAP).size(13.0).color(palette.accent));
+                                            });
+                                        ui.add_space(6.0);
+                                        ui.vertical(|ui| {
+                                            ui.set_width((ui.available_width() - 110.0).max(0.0));
+                                            ui.label(RichText::new("Automatic SSH config import available").size(12.0).strong().color(palette.text_primary));
+                                            ui.label(RichText::new("Auto-detect hosts and identities defined in ~/.ssh/config").size(10.5).color(palette.text_muted));
+                                        });
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            let scan_btn = egui::Button::new(RichText::new("Scan Hosts").size(11.0).color(palette.text_primary))
+                                                .fill(palette.bg_button)
+                                                .stroke(Stroke::NONE)
+                                                .rounding(Rounding::same(8.0));
+                                            if ui.add(scan_btn).clicked() {
+                                                let imported = crate::remote::import_from_ssh_config();
+                                                if let Some(first) = imported.first() {
+                                                    state.name = first.name.clone();
+                                                    state.host = first.host.clone();
+                                                    state.port_str = first.port.to_string();
+                                                    state.user = first.user.clone();
+                                                    state.key_path = first.key_path.clone();
+                                                    state.test_result = Some(Ok(format!("Detected '{}' ({} hosts in ~/.ssh/config)", first.name, imported.len())));
+                                                } else {
+                                                    state.test_result = Some(Err("No hosts found in ~/.ssh/config".to_string()));
+                                                }
+                                            }
+                                        });
+                                    });
+                                });
+
+                            ui.add_space(4.0);
+
+                            // Display Name *
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 2.0;
+                                ui.label(RichText::new("Display Name").size(12.0).strong().color(palette.text_primary));
+                                ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
+                            });
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.name)
+                                    .hint_text(RichText::new("e.g. Dev Cloud Server, Staging VPS").color(palette.text_muted))
+                                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true)
+                                    .desired_width(ui.available_width()),
+                            );
+                            ui.add_space(4.0);
+
+                            ui.label("Host / IP Address *");
+                            ui.add(egui::TextEdit::singleline(&mut state.host)
+                                .hint_text("e.g. 192.168.1.100 or vps.example.com")
+                                .desired_width(ui.available_width()));
+                            ui.add_space(4.0);
+
+                            // Default Remote Directory (optional)
+                            ui.label(RichText::new("Default Remote Directory (optional)").size(12.0).strong().color(palette.text_primary));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.remote_cwd)
+                                    .hint_text(RichText::new("e.g. /var/www or /home/ubuntu/app").color(palette.text_muted))
+                                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true)
+                                    .desired_width(ui.available_width()),
+                            );
+                            ui.add_space(4.0);
+
+                        }
+                        RemotePcTab::Ssh => {
+                            ui.label("SSH Port *");
+                            ui.add(egui::TextEdit::singleline(&mut state.port_str)
+                                .hint_text("22")
+                                .desired_width(75.0));
+                            ui.add_space(4.0);
+
+                            // SSH Username *
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 2.0;
+                                ui.label(RichText::new("SSH Username").size(12.0).strong().color(palette.text_primary));
+                                ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
+                            });
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.user)
+                                    .hint_text(RichText::new("ubuntu").color(palette.text_muted))
+                                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true)
+                                    .desired_width(ui.available_width()),
+                            );
+                            ui.add_space(4.0);
+
+                            // SSH Private Key Path (optional)
+                            ui.label(RichText::new("SSH Private Key Path (optional if using agent/default)").size(12.0).strong().color(palette.text_primary));
+                            ui.horizontal(|ui| {
+                                let browse_w = 85.0;
+                                let input_w = (ui.available_width() - browse_w - ui.spacing().item_spacing.x).max(80.0);
+                                ui.add_sized(
+                                    [input_w, 20.0],
+                                    egui::TextEdit::singleline(&mut state.key_path)
+                                        .hint_text(RichText::new("e.g. ~/.ssh/id_ed25519 or /home/user/.ssh/id_rsa").color(palette.text_muted))
+                                        .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true),
+                                );
+                                let browse_btn = egui::Button::new(RichText::new(format!("{} Browse...", crate::lucide::FOLDER)).size(11.0).color(palette.text_secondary))
+                                    .fill(palette.bg_button)
+                                    .stroke(Stroke::NONE)
+                                    .rounding(Rounding::same(8.0));
+                                if ui.add(browse_btn).clicked() {
+                                    if let Some(path) = rfd::FileDialog::new().pick_file() {
+                                        state.key_path = path.to_string_lossy().to_string();
+                                    }
                                 }
-                            }
-                        });
-                    });
-                });
+                            });
+                            ui.add_space(4.0);
 
-            ui.add_space(4.0);
+                            // SSH Password (optional)
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("SSH Password (optional if using key/agent)").size(12.0).strong().color(palette.text_primary));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let eye_label = if state.show_password {
+                                        format!("{} Hide", crate::lucide::EYE_OFF)
+                                    } else {
+                                        format!("{} Show", crate::lucide::EYE)
+                                    };
+                                    if ui.small_button(eye_label).clicked() {
+                                        state.show_password = !state.show_password;
+                                    }
+                                });
+                            });
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.password)
+                                    .password(!state.show_password)
+                                    .hint_text(RichText::new("Enter SSH password (for password-based authentication)").color(palette.text_muted))
+                                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true)
+                                    .desired_width(ui.available_width()),
+                            );
+                            ui.add_space(4.0);
 
-            // Display Name *
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
-                ui.label(RichText::new("Display Name").size(12.0).strong().color(palette.text_primary));
-                ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
-            });
-            ui.add(
-                egui::TextEdit::singleline(&mut state.name)
-                    .hint_text(RichText::new("e.g. Dev Cloud Server, Staging VPS").color(palette.text_muted))
-                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true)
-                    .desired_width(ui.available_width()),
-            );
-            ui.add_space(4.0);
-
-            // Host & Port row
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 2.0;
-                        ui.label(RichText::new("Host / IP Address").size(12.0).strong().color(palette.text_primary));
-                        ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
-                    });
-                    let host_w = (ui.available_width() - 95.0).max(80.0);
-                    ui.add_sized(
-                        [host_w, 20.0],
-                        egui::TextEdit::singleline(&mut state.host)
-                            .hint_text(RichText::new("e.g. 192.168.1.100 or vps.example.com").color(palette.text_muted))
-                            .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true),
-                    );
-                });
-                ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 2.0;
-                        ui.label(RichText::new("Port").size(12.0).strong().color(palette.text_primary));
-                        ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
-                    });
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.port_str)
-                            .hint_text(RichText::new("22").color(palette.text_muted))
-                            .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true)
-                            .desired_width(75.0),
-                    );
-                });
-            });
-            ui.add_space(4.0);
-
-            // SSH Username *
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
-                ui.label(RichText::new("SSH Username").size(12.0).strong().color(palette.text_primary));
-                ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
-            });
-            ui.add(
-                egui::TextEdit::singleline(&mut state.user)
-                    .hint_text(RichText::new("ubuntu").color(palette.text_muted))
-                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true)
-                    .desired_width(ui.available_width()),
-            );
-            ui.add_space(4.0);
-
-            // SSH Private Key Path (optional)
-            ui.label(RichText::new("SSH Private Key Path (optional if using agent/default)").size(12.0).strong().color(palette.text_primary));
-            ui.horizontal(|ui| {
-                let browse_w = 85.0;
-                let input_w = (ui.available_width() - browse_w - ui.spacing().item_spacing.x).max(80.0);
-                ui.add_sized(
-                    [input_w, 20.0],
-                    egui::TextEdit::singleline(&mut state.key_path)
-                        .hint_text(RichText::new("e.g. ~/.ssh/id_ed25519 or /home/user/.ssh/id_rsa").color(palette.text_muted))
-                        .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true),
-                );
-                let browse_btn = egui::Button::new(RichText::new(format!("{} Browse...", crate::lucide::FOLDER)).size(11.0).color(palette.text_secondary))
-                    .fill(palette.bg_button)
-                    .stroke(Stroke::NONE)
-                    .rounding(Rounding::same(8.0));
-                if ui.add(browse_btn).clicked() {
-                    if let Some(path) = rfd::FileDialog::new().pick_file() {
-                        state.key_path = path.to_string_lossy().to_string();
+                            // Checkboxes: Use local SSH agent authentication & Strict host key check
+                            ui.horizontal_wrapped(|ui| {
+                                ui.checkbox(&mut state.use_agent, RichText::new("Use local SSH agent authentication").size(11.5).color(palette.text_secondary));
+                                ui.add_space(12.0);
+                                ui.checkbox(&mut state.strict_host_key, RichText::new("Strict host key check").size(11.5).color(palette.text_secondary));
+                            });
+                        }
+                        RemotePcTab::Rdp => {
+                            ui.label("RDP settings are not available yet.");
+                        }
+                        RemotePcTab::Vnc => {
+                            ui.label("VNC settings are not available yet.");
+                        }
                     }
-                }
-            });
-            ui.add_space(4.0);
-
-            // SSH Password (optional)
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("SSH Password (optional if using key/agent)").size(12.0).strong().color(palette.text_primary));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let eye_label = if state.show_password {
-                        format!("{} Hide", crate::lucide::EYE_OFF)
-                    } else {
-                        format!("{} Show", crate::lucide::EYE)
-                    };
-                    if ui.small_button(eye_label).clicked() {
-                        state.show_password = !state.show_password;
-                    }
-                });
-            });
-            ui.add(
-                egui::TextEdit::singleline(&mut state.password)
-                    .password(!state.show_password)
-                    .hint_text(RichText::new("Enter SSH password (for password-based authentication)").color(palette.text_muted))
-                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true)
-                    .desired_width(ui.available_width()),
-            );
-            ui.add_space(4.0);
-
-            // Default Remote Directory (optional)
-            ui.label(RichText::new("Default Remote Directory (optional)").size(12.0).strong().color(palette.text_primary));
-            ui.add(
-                egui::TextEdit::singleline(&mut state.remote_cwd)
-                    .hint_text(RichText::new("e.g. /var/www or /home/ubuntu/app").color(palette.text_muted))
-                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true)
-                    .desired_width(ui.available_width()),
-            );
-            ui.add_space(4.0);
-
-            // Checkboxes: Use local SSH agent authentication & Strict host key check
-            ui.horizontal_wrapped(|ui| {
-                ui.checkbox(&mut state.use_agent, RichText::new("Use local SSH agent authentication").size(11.5).color(palette.text_secondary));
-                ui.add_space(12.0);
-                ui.checkbox(&mut state.strict_host_key, RichText::new("Strict host key check").size(11.5).color(palette.text_secondary));
-            });
                 });
             ui.add_space(4.0);
             ui.separator();
@@ -1816,7 +1830,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             // Footer
             ui.horizontal(|ui| {
                 // Test Connection button
-                let test_btn = egui::Button::new(RichText::new(format!("{} Test Connection", crate::lucide::ZAP)).size(11.5).color(palette.accent))
+                let test_btn = egui::Button::new(RichText::new(format!("{} Test SSH Connection", crate::lucide::ZAP)).size(11.5).color(palette.accent))
                     .fill(palette.bg_button)
                     .stroke(Stroke::NONE)
                     .rounding(Rounding::same(8.0));

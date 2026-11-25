@@ -974,31 +974,87 @@ fn render_confirmation_modals(
     p: &ThemePalette,
     pending_action: &mut Option<AppAction>,
 ) {
+    let screen = ctx.screen_rect();
+    let modal_frame = Frame::none()
+        .fill(p.bg_card)
+        .stroke(Stroke::NONE)
+        .rounding(Rounding::same(14.0))
+        .shadow(egui::epaint::Shadow {
+            offset: egui::vec2(0.0, 4.0),
+            blur: 18.0,
+            spread: 0.0,
+            color: Color32::from_black_alpha(140),
+        })
+        .inner_margin(egui::Margin::same(18.0));
+
     if let Some(app) = state.confirm_uninstall.clone() {
+        let modal_w = 440.0_f32.min(screen.width() - 40.0).max(320.0);
         let mut open = true;
-        egui::Window::new("Confirm Uninstall")
+        egui::Window::new(RichText::new("Confirm Uninstall").size(16.0).strong())
+            .id(egui::Id::new("apps_confirm_uninstall_modal"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .default_pos(screen.center())
+            .pivot(egui::Align2::CENTER_CENTER)
+            .min_width(modal_w)
+            .max_width(modal_w)
+            .frame(modal_frame)
             .show(ctx, |ui| {
-                ui.set_min_width(360.0);
-                ui.label(
-                    RichText::new(format!("Uninstall {}?", app.name))
-                        .size(14.0)
-                        .strong()
-                        .color(p.text_primary),
-                );
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new(format!("Source: {}  |  ID: {}", app.source.label(), app.id))
-                        .size(11.5)
-                        .color(p.text_secondary),
-                );
-                if let Some(ref desk) = app.desktop_file {
-                    ui.label(RichText::new(format!("File: {}", desk)).size(11.0).color(p.text_muted));
-                }
-                ui.add_space(10.0);
+                *ui.visuals_mut() = p.egui_visuals();
+                ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+                ui.spacing_mut().button_padding = egui::vec2(12.0, 6.0);
+
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(crate::lucide::ALERT_TRIANGLE).size(18.0).color(p.danger));
+                    ui.add_space(4.0);
+                    ui.vertical(|ui| {
+                        ui.label(
+                            RichText::new(format!("Uninstall {}?", app.name))
+                                .size(14.0)
+                                .strong()
+                                .color(p.text_primary),
+                        );
+                        ui.label(
+                            RichText::new("This will remove the application or package from your system.")
+                                .size(11.5)
+                                .color(p.text_muted),
+                        );
+                    });
+                });
+
+                Frame::none()
+                    .fill(p.bg_subtle)
+                    .rounding(Rounding::same(10.0))
+                    .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                    .show(ui, |ui| {
+                        ui.set_width((modal_w - 60.0).max(240.0));
+                        ui.horizontal(|ui| {
+                            let (sbg, sfg) = source_badge_colors(app.source, p);
+                            Frame::none()
+                                .fill(sbg)
+                                .rounding(Rounding::same(6.0))
+                                .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new(app.source.label()).size(10.5).color(sfg));
+                                });
+                            ui.label(RichText::new(&app.id).size(11.5).monospace().color(p.text_secondary));
+                        });
+                        if let Some(ref desk) = app.desktop_file {
+                            ui.add_space(4.0);
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(format!("Target: {}", desk))
+                                        .size(11.0)
+                                        .monospace()
+                                        .color(p.text_muted),
+                                )
+                                .wrap(),
+                            );
+                        }
+                    });
+
+                ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     if ui
                         .add(
@@ -1013,9 +1069,13 @@ fn render_confirmation_modals(
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .add(
-                                egui::Button::new(RichText::new("Uninstall").strong().color(Color32::WHITE))
-                                    .fill(p.danger)
-                                    .rounding(Rounding::same(8.0)),
+                                egui::Button::new(
+                                    RichText::new(format!("{} Uninstall", crate::lucide::TRASH))
+                                        .strong()
+                                        .color(Color32::WHITE),
+                                )
+                                .fill(p.danger)
+                                .rounding(Rounding::same(8.0)),
                             )
                             .clicked()
                         {
@@ -1031,27 +1091,50 @@ fn render_confirmation_modals(
     }
 
     if let Some((app, mut mode)) = state.confirm_clear_data.clone() {
+        let modal_w = 460.0_f32.min(screen.width() - 40.0).max(320.0);
         let mut open = true;
         let mut keep_open = true;
-        egui::Window::new("Clear App Data")
+        egui::Window::new(RichText::new("Clear App Data").size(16.0).strong())
+            .id(egui::Id::new("apps_confirm_clear_data_modal"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .default_pos(screen.center())
+            .pivot(egui::Align2::CENTER_CENTER)
+            .min_width(modal_w)
+            .max_width(modal_w)
+            .frame(modal_frame)
             .show(ctx, |ui| {
-                ui.set_min_width(400.0);
-                ui.label(
-                    RichText::new(format!("Clear data for {}", app.name))
-                        .size(14.0)
-                        .strong()
-                        .color(p.text_primary),
-                );
-                ui.add_space(6.0);
+                *ui.visuals_mut() = p.egui_visuals();
+                ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+                ui.spacing_mut().button_padding = egui::vec2(12.0, 6.0);
+
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(crate::lucide::LAYERS).size(18.0).color(p.warning));
+                    ui.add_space(4.0);
+                    ui.vertical(|ui| {
+                        ui.label(
+                            RichText::new(format!("Clear data for {}", app.name))
+                                .size(14.0)
+                                .strong()
+                                .color(p.text_primary),
+                        );
+                        ui.label(
+                            RichText::new("Select whether to remove only cache files or all local app data.")
+                                .size(11.5)
+                                .color(p.text_muted),
+                        );
+                    });
+                });
+
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut mode, ClearDataMode::CacheOnly, "Cache Only");
-                    ui.selectable_value(&mut mode, ClearDataMode::AllAppData, "All App Data (Cache + Config)");
+                    ui.selectable_value(
+                        &mut mode,
+                        ClearDataMode::AllAppData,
+                        "All App Data (Cache + Config)",
+                    );
                 });
-                ui.add_space(6.0);
 
                 let targets: Vec<_> = app
                     .data_paths
@@ -1063,32 +1146,48 @@ fn render_confirmation_modals(
                     .collect();
 
                 let mut total_bytes: u64 = 0;
-                if targets.is_empty() {
-                    ui.label(
-                        RichText::new("No matching folders for this mode.")
-                            .size(11.5)
-                            .color(p.warning),
-                    );
-                } else {
-                    for dp in &targets {
-                        let sz = dp.size_bytes.unwrap_or(0);
-                        total_bytes = total_bytes.saturating_add(sz);
-                        ui.label(
-                            RichText::new(format!("• {} ({}): {}", dp.label, format_bytes(sz), dp.path.display()))
-                                .size(11.0)
-                                .color(p.text_secondary),
-                        );
-                    }
-                    ui.add_space(4.0);
-                    ui.label(
-                        RichText::new(format!("Total size to delete: {}", format_bytes(total_bytes)))
-                            .size(12.0)
-                            .strong()
-                            .color(p.warning),
-                    );
-                }
+                Frame::none()
+                    .fill(p.bg_subtle)
+                    .rounding(Rounding::same(10.0))
+                    .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                    .show(ui, |ui| {
+                        ui.set_width((modal_w - 60.0).max(240.0));
+                        if targets.is_empty() {
+                            ui.label(
+                                RichText::new("No matching folders for this mode.")
+                                    .size(11.5)
+                                    .color(p.warning),
+                            );
+                        } else {
+                            for dp in &targets {
+                                let sz = dp.size_bytes.unwrap_or(0);
+                                total_bytes = total_bytes.saturating_add(sz);
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(format!(
+                                            "• {} ({}): {}",
+                                            dp.label,
+                                            format_bytes(sz),
+                                            dp.path.display()
+                                        ))
+                                        .size(11.0)
+                                        .monospace()
+                                        .color(p.text_secondary),
+                                    )
+                                    .wrap(),
+                                );
+                            }
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new(format!("Total size to delete: {}", format_bytes(total_bytes)))
+                                    .size(12.0)
+                                    .strong()
+                                    .color(p.warning),
+                            );
+                        }
+                    });
 
-                ui.add_space(10.0);
+                ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     if ui
                         .add(
@@ -1104,9 +1203,13 @@ fn render_confirmation_modals(
                         if ui
                             .add_enabled(
                                 !targets.is_empty(),
-                                egui::Button::new(RichText::new("Delete Data").strong().color(Color32::WHITE))
-                                    .fill(p.danger)
-                                    .rounding(Rounding::same(8.0)),
+                                egui::Button::new(
+                                    RichText::new(format!("{} Delete Data", crate::lucide::TRASH))
+                                        .strong()
+                                        .color(Color32::WHITE),
+                                )
+                                .fill(p.danger)
+                                .rounding(Rounding::same(8.0)),
                             )
                             .clicked()
                         {

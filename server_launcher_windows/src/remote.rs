@@ -253,6 +253,7 @@ pub fn test_ssh_connection(host: &SshRemoteHost, timeout_seconds: u32) -> Result
     let target = format!("{}@{}", host.user.trim(), host.host.trim());
     cmd.arg("--").arg(&target).arg("echo __LAUNCHER_SSH_OK__ && uname -s -r -m");
 
+    crate::commands::hide_console(&mut cmd);
     match ssh_probe_output(cmd, std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120)))) {
         Ok(out) => {
             if out.status.success() {
@@ -295,6 +296,7 @@ pub(crate) fn build_scp_command(host: &SshRemoteHost) -> Command {
     if !host.key_path.trim().is_empty() {
         command.arg("-i").arg(host.key_path.trim());
     }
+    crate::commands::hide_console(&mut command);
     command
 }
 
@@ -332,6 +334,7 @@ pub fn build_ssh_command(host: &SshRemoteHost, remote_cmd: &str) -> Command {
     };
 
     cmd.arg(full_remote_cmd);
+    crate::commands::hide_console(&mut cmd);
     cmd
 }
 

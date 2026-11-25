@@ -2250,6 +2250,14 @@ impl LauncherApp {
             ));
         }
 
+        for host in &self.ssh_hosts {
+            for protocol in crate::remote_desktop::credentials::DesktopProtocol::ALL {
+                items.push((
+                    format!("Connect {}: {}", protocol.label(), host.name),
+                    PaletteAction::OpenRemoteDesktop(host.id.clone(), protocol),
+                ));
+            }
+        }
         items
     }
 
@@ -3174,7 +3182,7 @@ impl eframe::App for LauncherApp {
 
                         if let Some(ref host) = remote_host_opt {
                             let gui = egui::Button::new(
-                                RichText::new(format!("{} GUI", crate::lucide::MONITOR))
+                                RichText::new(format!("{} GUI {}", crate::lucide::MONITOR, crate::lucide::CHEVRON_DOWN))
                                     .size(10.5)
                                     .strong()
                                     .color(p.text_secondary),
@@ -3183,8 +3191,31 @@ impl eframe::App for LauncherApp {
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
                             .min_size(egui::vec2(0.0, 22.0));
-                            ui.add_enabled(false, gui)
-                                .on_disabled_hover_text("Remote GUI is not available yet.");
+                            let gui = ui.add(gui).hover_tip("Remote desktop");
+                            let gui_popup = ui.make_persistent_id(("ssh_gui", &host.id));
+                            if gui.clicked() {
+                                ui.memory_mut(|memory| memory.toggle_popup(gui_popup));
+                            }
+                            egui::popup::popup_below_widget(
+                                ui,
+                                gui_popup,
+                                &gui,
+                                egui::popup::PopupCloseBehavior::CloseOnClick,
+                                |ui| {
+                                    use crate::remote_desktop::{credentials::DesktopProtocol, probe};
+                                    ui.set_min_width(165.0);
+                                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                                    for protocol in DesktopProtocol::ALL {
+                                        let (status, detail) = probe::menu_status(ui.ctx(), host, protocol);
+                                        let action = ui.button(format!("{}   {}", protocol.label(), status))
+                                            .hover_tip(detail.as_deref().unwrap_or("Open protocol settings"));
+                                        if action.clicked() {
+                                            self.ssh_host_modal.open_desktop(host, protocol);
+                                            ui.memory_mut(|memory| memory.close_popup());
+                                        }
+                                    }
+                                },
+                            );
 
                             let btn_ext = egui::Button::new(
                                 RichText::new(format!("{} Terminal", crate::lucide::EXTERNAL_LINK))
@@ -3443,6 +3474,11 @@ impl eframe::App for LauncherApp {
         let palette_items = self.collect_palette_actions();
         let palette_action = render_command_palette(ctx, &mut self.palette_modal, &palette_items, &p);
         match palette_action {
+            ModalAction::ExecutePaletteAction(PaletteAction::OpenRemoteDesktop(id, protocol)) => {
+                if let Some(host) = self.ssh_hosts.iter().find(|host| host.id == id) {
+                    self.ssh_host_modal.open_desktop(host, protocol);
+                }
+            }
             ModalAction::ExecutePaletteAction(PaletteAction::StartServer(k)) => {
                 if let Some(s) = self.find_service_mut(&k) {
                     s.start();

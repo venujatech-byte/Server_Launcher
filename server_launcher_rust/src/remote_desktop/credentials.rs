@@ -10,6 +10,17 @@ pub enum DesktopProtocol {
     Vnc,
 }
 
+impl DesktopProtocol {
+    pub(crate) const ALL: [Self; 2] = [Self::Rdp, Self::Vnc];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Rdp => "RDP",
+            Self::Vnc => "VNC",
+        }
+    }
+}
+
 fn binding(host: &SshRemoteHost, protocol: DesktopProtocol) -> Option<String> {
     let (name, port, user, domain, tunnel) = match protocol {
         DesktopProtocol::Rdp => {

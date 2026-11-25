@@ -1034,6 +1034,7 @@ pub enum PaletteAction {
     SetTheme(String),
     ToggleAppAutostart,
     ToggleServerAutostart(String),
+    OpenRemoteDesktop(String, crate::remote_desktop::credentials::DesktopProtocol),
 }
 
 #[derive(Default)]
@@ -1610,6 +1611,19 @@ impl SshHostModalState {
         self.rdp = None;
         self.vnc = None;
         self.vnc_port_text = "5900".into();
+    }
+
+    pub(crate) fn open_desktop(
+        &mut self,
+        host: &crate::config::SshRemoteHost,
+        protocol: crate::remote_desktop::credentials::DesktopProtocol,
+    ) {
+        use crate::remote_desktop::credentials::DesktopProtocol;
+        self.open_edit(host);
+        self.tab = match protocol {
+            DesktopProtocol::Rdp => RemotePcTab::Rdp,
+            DesktopProtocol::Vnc => RemotePcTab::Vnc,
+        };
     }
 
     pub fn open_edit(&mut self, h: &crate::config::SshRemoteHost) {

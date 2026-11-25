@@ -177,6 +177,49 @@ fn vnc(stream: &mut (impl Read + Write)) -> io::Result<String> {
     Ok(format!("VNC {version} endpoint confirmed, {kind}"))
 }
 
+pub(crate) fn menu_status(
+    ctx: &egui::Context,
+    host: &crate::config::SshRemoteHost,
+    protocol: DesktopProtocol,
+) -> (&'static str, Option<String>) {
+    let (port, rdp_security, direct) = match protocol {
+        DesktopProtocol::Rdp => match host.rdp.as_ref().filter(|profile| profile.enabled) {
+            Some(profile) => (
+                profile.port,
+                profile.security,
+                !profile.tunnel_via_ssh && profile.gateway.trim().is_empty(),
+            ),
+            None => return ("○ Not configured", None),
+        },
+        DesktopProtocol::Vnc => match host.vnc.as_ref().filter(|profile| profile.enabled) {
+            Some(profile) => (profile.port, RdpSecurity::Auto, !profile.tunnel_via_ssh),
+            None => return ("○ Not configured", None),
+        },
+    };
+    let request = ProbeRequest {
+        host: host.host.trim().trim_matches(['[', ']']).into(),
+        port,
+        protocol,
+        rdp_security,
+    };
+    if direct {
+        let last = ctx.data_mut(|data| {
+            data.get_temp::<(ProbeRequest, ProbeResult)>(probe_result_id(protocol))
+        });
+        if let Some((_, result)) = last.filter(|(tested, _)| tested == &request) {
+            return match result {
+                Ok(info) => ("● Reachable", Some(info)),
+                Err(error) => ("◐ Unreachable", Some(error)),
+            };
+        }
+    }
+    ("○ Not tested", None)
+}
+
+fn probe_result_id(protocol: DesktopProtocol) -> egui::Id {
+    egui::Id::new(("remote_desktop_probe_result", protocol as u8))
+}
+
 type ProbeResult = Result<String, String>;
 
 #[derive(Default)]
@@ -203,6 +246,12 @@ impl ProbeControl {
                 Err(TryRecvError::Empty) => None,
             };
             if let Some(result) = result {
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(
+                        probe_result_id(tested.protocol),
+                        (tested.clone(), result.clone()),
+                    );
+                });
                 self.last = Some((tested.clone(), result));
                 self.pending = None;
             }

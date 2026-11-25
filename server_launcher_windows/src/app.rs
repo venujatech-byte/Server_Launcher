@@ -3053,6 +3053,8 @@ impl eframe::App for LauncherApp {
                                 &power,
                                 egui::popup::PopupCloseBehavior::CloseOnClick,
                                 |ui| {
+                                    ui.set_min_width(96.0);
+                                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                                     if ui.button(RichText::new(format!("{} Shut Down", crate::lucide::POWER))
                                         .size(11.5).color(p.danger)).clicked() {
                                         self.remote_shutdown_modal.open_for_host(host);

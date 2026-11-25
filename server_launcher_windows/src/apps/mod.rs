@@ -10,11 +10,12 @@ pub mod windows;
 
 use eframe::egui;
 use model::{AppAction, AppEntry, AppFilter, AppSortCol, AppSource, AppsEvent, ClearDataMode, RepoEntry};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 pub struct AppsManagerState {
     pub apps: Vec<AppEntry>,
+    icons: HashMap<usize, egui::TextureHandle>,
     pub repos: Vec<RepoEntry>,
     pub filtered_indices: Vec<usize>,
     pub search_query: String,
@@ -44,6 +45,7 @@ impl Default for AppsManagerState {
         let (tx, rx) = mpsc::channel();
         Self {
             apps: Vec::new(),
+            icons: HashMap::new(),
             repos: Vec::new(),
             filtered_indices: Vec::new(),
             search_query: String::new(),
@@ -75,6 +77,7 @@ impl AppsManagerState {
         self.loading = true;
         self.status_text = "Discovering installed apps & packages…".to_string();
         self.apps.clear();
+        self.icons.clear();
         self.filtered_indices.clear();
         self.selected_index = None;
         self.repos.clear();
@@ -184,11 +187,18 @@ impl AppsManagerState {
         while let Ok(ev) = self.rx.try_recv() {
             match ev {
                 AppsEvent::DiscoveryBatch {
-                    apps,
+                    mut apps,
                     repos,
                     done,
                     status,
                 } => {
+                    for (offset, app) in apps.iter_mut().enumerate() {
+                        if let Some(icon) = app.icon.take() {
+                            self.icons.insert(self.apps.len() + offset, ctx.load_texture(
+                                &app.name, icon, egui::TextureOptions::LINEAR,
+                            ));
+                        }
+                    }
                     self.apps.extend(apps);
                     if !repos.is_empty() {
                         self.repos.extend(repos);

@@ -3005,7 +3005,19 @@ impl eframe::App for LauncherApp {
                         }
 
                         if let Some(ref host) = remote_host_opt {
-                            // REMOTE SSH PC CONTROLS (Moved up here)
+                            let gui = egui::Button::new(
+                                RichText::new(format!("{} GUI", crate::lucide::MONITOR))
+                                    .size(10.5)
+                                    .strong()
+                                    .color(p.text_secondary),
+                            )
+                            .fill(p.bg_button)
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(999.0))
+                            .min_size(egui::vec2(0.0, 22.0));
+                            ui.add_enabled(false, gui)
+                                .on_disabled_hover_text("Remote GUI is not available yet.");
+
                             let btn_ext = egui::Button::new(
                                 RichText::new(format!("{} Terminal", crate::lucide::EXTERNAL_LINK))
                                     .size(10.5)
@@ -3020,35 +3032,41 @@ impl eframe::App for LauncherApp {
                                 let _ = launch_external_ssh_terminal(host);
                             }
 
-                            // Remote Host Controls: Shut Down & Restart Device
-                            // In right-to-left layout: adding shutdown first then reboot renders: [Restart Device] [Shut Down]
-                            let btn_shutdown = egui::Button::new(
-                                RichText::new(format!("{} Shut Down", crate::lucide::POWER))
+                            let power = egui::Button::new(
+                                RichText::new(format!("{} Power {}", crate::lucide::POWER, crate::lucide::CHEVRON_DOWN))
                                     .size(10.5)
                                     .strong()
-                                    .color(p.danger),
-                            )
-                            .fill(p.bg_button)
-                            .stroke(Stroke::NONE)
-                            .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(86.0, 22.0));
-                            if ui.add(btn_shutdown).hover_tip("Shut down remote device (requires confirmation & sudo password)").clicked() {
-                                self.remote_shutdown_modal.open_for_host(host);
-                            }
-
-                            let btn_reboot = egui::Button::new(
-                                RichText::new(format!("{} Restart", crate::lucide::REFRESH_CW))
-                                    .size(10.5)
-                                    .strong()
-                                    .color(p.warning),
+                                    .color(p.text_secondary),
                             )
                             .fill(p.bg_button)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
                             .min_size(egui::vec2(0.0, 22.0));
-                            if ui.add(btn_reboot).hover_tip("Restart remote device (requires confirmation & sudo password)").clicked() {
-                                self.remote_reboot_modal.open_for_host(host);
+                            let power = ui.add(power);
+                            let popup_id = ui.make_persistent_id(("ssh_power", &host.id));
+                            if power.clicked() {
+                                ui.memory_mut(|memory| memory.toggle_popup(popup_id));
                             }
+                            egui::popup::popup_below_widget(
+                                ui,
+                                popup_id,
+                                &power,
+                                egui::popup::PopupCloseBehavior::CloseOnClick,
+                                |ui| {
+                                    ui.set_min_width(96.0);
+                                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                                    if ui.button(RichText::new(format!("{} Shut Down", crate::lucide::POWER))
+                                        .size(11.5).color(p.danger)).clicked() {
+                                        self.remote_shutdown_modal.open_for_host(host);
+                                        ui.memory_mut(|memory| memory.close_popup());
+                                    }
+                                    if ui.button(RichText::new(format!("{} Restart", crate::lucide::REFRESH_CW))
+                                        .size(11.5).color(p.warning)).clicked() {
+                                        self.remote_reboot_modal.open_for_host(host);
+                                        ui.memory_mut(|memory| memory.close_popup());
+                                    }
+                                },
+                            );
                         } else {
                             // Local actions share one height; shortcuts live in tooltips.
                             let add = egui::Button::new(RichText::new(format!("{} Add Server", crate::lucide::PLUS))

@@ -54,6 +54,15 @@ Engineered for modern developer cockpits, server orchestrators, and technical to
 - **Remote Port Discovery & Management**: Inspect listening processes on remote Linux servers via SSH queries (`ss` / `lsof` / `netstat`), filter by port/name, inspect process details (`ps`), test endpoints (`curl`), and terminate stuck processes (`kill`) with one click.
 - **Flexible Authentication**: Connect with SSH config aliases, private keys (`~/.ssh/id_rsa`, `~/.ssh/id_ed25519`), or interactive password prompts.
 - **External Remote Terminals**: Launch native terminal sessions directly into remote servers with working directory preloaded.
+- **Remote Power**: The SSH host header groups **Shut Down** and **Restart** under **Power**. Both actions require confirmation.
+- **Quiet background SSH on Windows**: Connection checks, commands run inside the app, and file transfers run without opening console windows. The **Terminal** button opens an interactive SSH window.
+- **Remote Files**: Browse folders, transfer files, and manage files on the selected SSH host.
+- **Remote Apps & Packages**: Browse and filter installed packages. **Uninstall** opens the host's package manager in an SSH terminal for supported packages. Refresh the Apps tab after the package manager finishes.
+
+### Local Apps & Packages
+
+Browse and filter the installed apps and packages on **This PC**. The list
+and details panel display installed app icons when artwork is available.
 
 ### 📊 System Resource & Port Monitoring
 - **Live Performance Metrics**: Real-time per-process **CPU %** and **RAM (MB)** utilization tracking with cached lookup for near-zero CPU scroll overhead.
@@ -80,6 +89,7 @@ Engineered for modern developer cockpits, server orchestrators, and technical to
 - **Comprehensive Hardware Metrics**: Live monitoring of CPU frequency/speed, CPU package power, GPU utilization, GPU core clock, GPU power draw, and VRAM.
 - **Battery & Power Supply Analytics**: Real-time battery percentage, charging state, instantaneous power draw/discharge wattage, voltage, and battery health.
 - **Component Temperatures & Fans**: Categorized sensor breakdown for CPU cores, GPU dies, NVMe storage drives, motherboard thermal zones, and cooling fan RPMs.
+- **Protected Linux Sensors**: Use **Unlock hardware sensors** to request read-only access, then **Refresh protected sensors** to take another snapshot. Available readings depend on the hardware.
 - **Remote Telemetry via SSH**: Fetch hardware sensor snapshots from remote servers with asynchronous, non-blocking polling.
 
 ### 📜 Custom Scripts & ⚡ Saved Commands

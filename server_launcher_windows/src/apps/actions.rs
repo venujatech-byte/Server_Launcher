@@ -242,3 +242,18 @@ pub fn clear_app_data(
     }
     ctx.request_repaint();
 }
+
+pub(super) fn decode_app_icon(bytes: &[u8]) -> Option<eframe::egui::ColorImage> {
+    use image::ImageReader;
+    let mut reader = ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(2048);
+    limits.max_image_height = Some(2048);
+    limits.max_alloc = Some(32 * 1024 * 1024);
+    reader.limits(limits);
+    let image = reader.decode().ok()?.thumbnail(32, 32).into_rgba8();
+    Some(eframe::egui::ColorImage::from_rgba_unmultiplied(
+        [image.width() as usize, image.height() as usize],
+        image.as_raw(),
+    ))
+}

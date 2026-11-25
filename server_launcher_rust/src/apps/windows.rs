@@ -2,6 +2,7 @@ use super::actions::{
     format_bytes, open_folder_in_host, path_mtime, populate_data_path_sizes, stream_command_output,
 };
 use super::model::{AppDataPath, AppEntry, AppSource, AppsEvent, ClearDataMode, RepoEntry};
+use base64::Engine as _;
 use eframe::egui;
 use std::collections::{HashMap, HashSet};
 use std::os::windows::process::CommandExt;
@@ -103,6 +104,23 @@ fn parse_win_install_date(raw: &str) -> (Option<String>, Option<i64>) {
 
 fn discover_registry_win32() -> Vec<AppEntry> {
     let ps = r#"
+Add-Type -AssemblyName System.Drawing
+function Read-AppIcon($value) {
+  try {
+    $path = [Environment]::ExpandEnvironmentVariables(($value -replace ',\s*-?\d+$','').Trim().Trim('"'))
+    if ($path -notmatch '^[A-Za-z]:[\\/].+\.exe$' -or -not [IO.File]::Exists($path)) { return }
+    $icon = [Drawing.Icon]::ExtractAssociatedIcon($path)
+    if ($null -eq $icon) { return }
+    try {
+      $bitmap = $icon.ToBitmap()
+      $stream = New-Object IO.MemoryStream
+      try {
+        $bitmap.Save($stream, [Drawing.Imaging.ImageFormat]::Png)
+        [Convert]::ToBase64String($stream.ToArray())
+      } finally { $bitmap.Dispose(); $stream.Dispose() }
+    } finally { $icon.Dispose() }
+  } catch {}
+}
 $paths = @(
   'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
   'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
@@ -110,7 +128,7 @@ $paths = @(
 )
 Get-ItemProperty $paths -ErrorAction SilentlyContinue |
   Where-Object { $_.DisplayName -and -not $_.SystemComponent } |
-  Select-Object DisplayName, DisplayVersion, Publisher, InstallLocation, UninstallString, EstimatedSize, InstallDate |
+  Select-Object DisplayName, DisplayVersion, Publisher, InstallLocation, UninstallString, EstimatedSize, InstallDate, @{Name="IconPng";Expression={ Read-AppIcon $_.DisplayIcon }} |
   ConvertTo-Json -Compress
 "#;
     let Some(val) = run_powershell_json(ps) else {
@@ -165,6 +183,8 @@ Get-ItemProperty $paths -ErrorAction SilentlyContinue |
             exec_cmd: None,
             uninstall_cmd: uninstall_str,
             desktop_file: None,
+            icon: base64::engine::general_purpose::STANDARD.decode(json_str(&item, "IconPng"))
+                .ok().and_then(|bytes| super::actions::decode_app_icon(&bytes)),
             installed_date,
             installed_timestamp,
             update_available: None,
@@ -181,7 +201,10 @@ fn discover_appx() -> Vec<AppEntry> {
     let ps = r#"
 Get-AppxPackage |
   Where-Object { -not $_.IsFramework -and -not $_.NonRemovable } |
-  Select-Object Name, PackageFullName, PackageFamilyName, Version, Publisher, InstallLocation |
+  Select-Object Name, PackageFullName, PackageFamilyName, Version, Publisher, InstallLocation,
+    @{Name="Logo";Expression={
+      try { (Get-AppxPackageManifest -Package $_.PackageFullName -ErrorAction Stop).Package.Properties.Logo } catch {}
+    }} |
   ConvertTo-Json -Compress
 "#;
     let Some(val) = run_powershell_json(ps) else {
@@ -235,6 +258,26 @@ Get-AppxPackage |
             .map(|(d, t)| (Some(d), Some(t)))
             .unwrap_or((None, None));
 
+        let icon = install_loc.as_deref().and_then(|location| {
+            let logo = json_str(&item, "Logo");
+            let relative = Path::new(&logo);
+            if logo.is_empty() || !relative.components().all(|part| matches!(part, std::path::Component::Normal(_))) {
+                return None;
+            }
+            let path = Path::new(location).join(relative);
+            std::iter::once(path.clone()).chain([100, 125, 150, 200, 400].into_iter().filter_map(|scale| {
+                let stem = path.file_stem()?.to_str()?;
+                let ext = path.extension()?.to_str()?;
+                Some(path.with_file_name(format!("{stem}.scale-{scale}.{ext}")))
+            })).find_map(|path| {
+                let metadata = std::fs::metadata(&path).ok()?;
+                if !metadata.is_file() || metadata.len() > 4 * 1024 * 1024 {
+                    return None;
+                }
+                super::actions::decode_app_icon(&std::fs::read(path).ok()?)
+            })
+        });
+
         apps.push(AppEntry {
             id: full_name.clone(),
             name,
@@ -254,6 +297,7 @@ Get-AppxPackage |
             exec_cmd: exec_cmd.clone(),
             uninstall_cmd: Some(full_name),
             desktop_file: None,
+            icon,
             installed_date,
             installed_timestamp,
             update_available: None,
@@ -325,6 +369,7 @@ fn discover_winget() -> Vec<AppEntry> {
             exec_cmd: None,
             uninstall_cmd: None,
             desktop_file: None,
+            icon: None,
             installed_date: None,
             installed_timestamp: None,
             update_available: None,
@@ -362,6 +407,7 @@ fn discover_scoop_and_choco() -> Vec<AppEntry> {
                             exec_cmd: None,
                             uninstall_cmd: None,
                             desktop_file: None,
+                            icon: None,
                             installed_date: None,
                             installed_timestamp: None,
                             update_available: None,
@@ -398,6 +444,7 @@ fn discover_scoop_and_choco() -> Vec<AppEntry> {
                             exec_cmd: None,
                             uninstall_cmd: None,
                             desktop_file: None,
+                            icon: None,
                             installed_date: None,
                             installed_timestamp: None,
                             update_available: None,
@@ -459,6 +506,7 @@ fn discover_windows_pwas() -> Vec<AppEntry> {
                 exec_cmd: Some(path_str.clone()),
                 uninstall_cmd: Some(path_str.clone()),
                 desktop_file: Some(path_str),
+                icon: None,
                 installed_date,
                 installed_timestamp,
                 update_available: None,

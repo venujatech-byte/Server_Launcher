@@ -16,6 +16,15 @@ fn source_badge_colors(source: AppSource, p: &ThemePalette) -> (Color32, Color32
     }
 }
 
+fn app_icon(ui: &mut Ui, icon: Option<&egui::TextureHandle>, size: f32) {
+    let size = egui::vec2(size, size);
+    if let Some(icon) = icon {
+        ui.add(egui::Image::new(icon).fit_to_exact_size(size));
+    } else {
+        ui.allocate_space(size);
+    }
+}
+
 pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePalette, remote: Option<&crate::config::SshRemoteHost>) {
     let ctx = ui.ctx().clone();
     if !state.initialized {
@@ -35,7 +44,7 @@ pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePale
         egui::TopBottomPanel::bottom(ui.id().with("apps_bottom")).show_separator_line(false)
             .frame(Frame::none()).show_inside(ui, |ui| {
                 if remote.is_some() {
-                    ui.label(RichText::new("SSH inventory · Read only").size(11.0).color(p.text_muted));
+                    ui.label(RichText::new("SSH inventory").size(11.0).color(p.text_muted));
                 } else {
                     render_task_drawer(state, ui, p);
                 }
@@ -102,11 +111,16 @@ pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePale
 
     });
 
-    if remote.is_none() {
-        render_confirmation_modals(state, &ctx, p, &mut pending_action);
-        if let Some(action) = pending_action {
-            state.dispatch_action(action, &ctx);
+    render_confirmation_modals(state, &ctx, p, &mut pending_action, remote);
+    match (remote, pending_action) {
+        (Some(host), Some(AppAction::Uninstall(app))) => {
+            state.status_text = match super::remote::uninstall(host, &app) {
+                Ok(()) => "Uninstall opened in SSH terminal. Refresh after it finishes.".into(),
+                Err(error) => format!("Could not open SSH uninstall: {error}"),
+            };
         }
+        (None, Some(action)) => state.dispatch_action(action, &ctx),
+        _ => {}
     }
 }
 
@@ -420,9 +434,10 @@ fn render_apps_table(
 
                         // Name + Update indicator
                         cell_ui(&mut row_ui, col_name_w, 24.0, false, |ui| {
+                            app_icon(ui, state.icons.get(&app_idx), 16.0);
                             ui.add(
                                 egui::Label::new(
-                                    RichText::new(&app.name).size(12.0).color(p.text_primary),
+                                    RichText::new(&app.name).size(11.5).color(p.text_primary),
                                 )
                                 .truncate(),
                             );
@@ -465,7 +480,7 @@ fn render_apps_table(
                         // Installed Date
                         cell_ui(&mut row_ui, col_date_w, 24.0, false, |ui| {
                             let d = app.installed_date.as_deref().unwrap_or("—");
-                            ui.label(RichText::new(d).size(11.0).color(p.text_muted));
+                            ui.label(RichText::new(d).size(11.5).color(p.text_muted));
                         });
 
                         // Minimal borderless ghost icons shown ONLY on row hover or selection
@@ -775,42 +790,46 @@ fn render_inspector_panel(
                 return;
             };
 
-            // Header bar with app name + source badge + click-to-copy ID
-            ui.horizontal(|ui| {
-                ui.set_width(inner_w);
-                ui.add(
-                    egui::Label::new(RichText::new(&app.name).size(16.0).strong().color(p.text_primary))
-                        .wrap(),
-                );
-            });
-
-            ui.add_space(4.0);
-            ui.horizontal_wrapped(|ui| {
-                let (sbg, sfg) = source_badge_colors(app.source, p);
-                Frame::none()
-                    .fill(sbg)
-                    .rounding(Rounding::same(4.0))
-                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                    .show(ui, |ui| {
-                        ui.label(RichText::new(app.source.label()).size(10.5).color(sfg));
-                    });
-
-                let id_btn = egui::Button::new(
-                    RichText::new(&app.id)
-                        .size(11.0)
-                        .monospace()
-                        .color(p.text_muted),
-                )
-                .fill(Color32::TRANSPARENT)
-                .stroke(Stroke::NONE);
-                if ui
-                    .add(id_btn)
-                    .hover_tip("Click to copy package / app ID")
-                    .clicked()
-                {
-                    ui.ctx().copy_text(app.id.clone());
-                    state.status_text = format!("Copied '{}'", app.id);
+            let icon = state.selected_index.and_then(|index| state.icons.get(&index));
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                if icon.is_some() {
+                    app_icon(ui, icon, 24.0);
                 }
+                ui.vertical(|ui| {
+                    ui.set_max_width(ui.available_width());
+                    ui.add(
+                        egui::Label::new(RichText::new(&app.name).size(16.0).strong().color(p.text_primary))
+                            .wrap(),
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        let (sbg, sfg) = source_badge_colors(app.source, p);
+                        Frame::none()
+                            .fill(sbg)
+                            .rounding(Rounding::same(4.0))
+                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                            .show(ui, |ui| {
+                                ui.label(RichText::new(app.source.label()).size(10.5).color(sfg));
+                            });
+
+                        let id_btn = egui::Button::new(
+                            RichText::new(&app.id)
+                                .size(11.0)
+                                .monospace()
+                                .color(p.text_muted),
+                        )
+                        .fill(Color32::TRANSPARENT)
+                        .stroke(Stroke::NONE);
+                        if ui
+                            .add(id_btn)
+                            .hover_tip("Click to copy package / app ID")
+                            .clicked()
+                        {
+                            ui.ctx().copy_text(app.id.clone());
+                            state.status_text = format!("Copied '{}'", app.id);
+                        }
+                    });
+                });
             });
 
             if let Some(ref new_ver) = app.update_available {
@@ -854,14 +873,14 @@ fn render_inspector_panel(
                         ui.set_width(inner_w);
 
                         // Description Section
-                        ui.label(RichText::new("Description").size(11.0).strong().color(p.text_muted));
+                        ui.label(RichText::new("Description").size(12.0).strong().color(p.text_muted));
                         ui.add_space(4.0);
                         let desc = if app.description.trim().is_empty() {
                             "No description available"
                         } else {
                             app.description.trim()
                         };
-                        ui.add(egui::Label::new(RichText::new(desc).size(12.0).color(p.text_secondary)).wrap());
+                        ui.add(egui::Label::new(RichText::new(desc).size(13.0).color(p.text_secondary)).wrap());
                         ui.add_space(10.0);
                         let (gsep, _) = ui.allocate_exact_size(egui::vec2(inner_w, 1.0), egui::Sense::hover());
                         ui.painter().rect_filled(gsep, Rounding::ZERO, p.bg_button);
@@ -1050,14 +1069,14 @@ fn meta_row(ui: &mut Ui, p: &ThemePalette, label_w: f32, val_w: f32, label: &str
         egui::vec2(label_w, 18.0),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            ui.label(RichText::new(label).size(11.0).color(p.text_muted));
+            ui.label(RichText::new(label).size(12.0).color(p.text_muted));
         },
     );
     ui.allocate_ui_with_layout(
         egui::vec2(val_w, 18.0),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            ui.add(egui::Label::new(RichText::new(value).size(11.5).color(p.text_primary)).truncate())
+            ui.add(egui::Label::new(RichText::new(value).size(12.5).color(p.text_primary)).truncate())
                 .hover_tip(value);
         },
     );
@@ -1065,11 +1084,18 @@ fn meta_row(ui: &mut Ui, p: &ThemePalette, label_w: f32, val_w: f32, label: &str
 }
 
 fn render_task_drawer(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePalette) {
-    Frame::none()
-        .fill(p.bg_card)
-        .rounding(Rounding::same(8.0))
-        .inner_margin(egui::Margin::symmetric(12.0, 6.0))
-        .show(ui, |ui| {
+    let total_w = ui.available_width();
+    let inspector_w = (total_w * 0.33).min(380.0);
+    let drawer_w = (total_w - inspector_w - 1.0).max(0.0);
+    ui.allocate_ui_with_layout(
+        egui::vec2(drawer_w, ui.available_height()),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            Frame::none()
+                .fill(p.bg_card)
+                .rounding(Rounding::same(8.0))
+                .inner_margin(egui::Margin::symmetric(12.0, 6.0))
+                .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().button_padding = egui::vec2(8.0, 2.0);
             ui.horizontal(|ui| {
@@ -1146,7 +1172,9 @@ fn render_task_drawer(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePalett
                             });
                     });
             }
-        });
+                });
+        },
+    );
 }
 
 fn render_confirmation_modals(
@@ -1154,6 +1182,7 @@ fn render_confirmation_modals(
     ctx: &egui::Context,
     p: &ThemePalette,
     pending_action: &mut Option<AppAction>,
+    remote: Option<&crate::config::SshRemoteHost>,
 ) {
     let screen = ctx.screen_rect();
     let modal_frame = Frame::none()
@@ -1197,7 +1226,10 @@ fn render_confirmation_modals(
                                 .color(p.text_primary),
                         );
                         ui.label(
-                            RichText::new("This will remove the application or package from your system.")
+                            RichText::new(match remote {
+                                Some(host) => format!("Open the package manager on {} to remove this package.", host.name),
+                                None => "This will remove the application or package from your system.".into(),
+                            })
                                 .size(11.5)
                                 .color(p.text_muted),
                         );

@@ -149,6 +149,7 @@ pub struct AppEntry {
     pub exec_cmd: Option<String>,
     pub uninstall_cmd: Option<String>,
     pub desktop_file: Option<String>,
+    pub icon: Option<eframe::egui::ColorImage>,
     pub installed_date: Option<String>,
     pub installed_timestamp: Option<i64>,
     pub update_available: Option<String>,

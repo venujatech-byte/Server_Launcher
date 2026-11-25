@@ -16,10 +16,12 @@ fn source_badge_colors(source: AppSource, p: &ThemePalette) -> (Color32, Color32
     }
 }
 
-fn app_icon(source: AppSource) -> &'static str {
-    match source {
-        AppSource::Desktop | AppSource::Flatpak | AppSource::Appx | AppSource::ChromePwa => crate::lucide::LAYOUT_GRID,
-        _ => crate::lucide::PACKAGE,
+fn app_icon(ui: &mut Ui, icon: Option<&egui::TextureHandle>, size: f32) {
+    let size = egui::vec2(size, size);
+    if let Some(icon) = icon {
+        ui.add(egui::Image::new(icon).fit_to_exact_size(size));
+    } else {
+        ui.allocate_space(size);
     }
 }
 
@@ -42,7 +44,7 @@ pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePale
         egui::TopBottomPanel::bottom(ui.id().with("apps_bottom")).show_separator_line(false)
             .frame(Frame::none()).show_inside(ui, |ui| {
                 if remote.is_some() {
-                    ui.label(RichText::new("SSH inventory · Read only").size(11.0).color(p.text_muted));
+                    ui.label(RichText::new("SSH inventory").size(11.0).color(p.text_muted));
                 } else {
                     render_task_drawer(state, ui, p);
                 }
@@ -109,11 +111,16 @@ pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePale
 
     });
 
-    if remote.is_none() {
-        render_confirmation_modals(state, &ctx, p, &mut pending_action);
-        if let Some(action) = pending_action {
-            state.dispatch_action(action, &ctx);
+    render_confirmation_modals(state, &ctx, p, &mut pending_action, remote);
+    match (remote, pending_action) {
+        (Some(host), Some(AppAction::Uninstall(app))) => {
+            state.status_text = match super::remote::uninstall(host, &app) {
+                Ok(()) => "Uninstall opened in SSH terminal. Refresh after it finishes.".into(),
+                Err(error) => format!("Could not open SSH uninstall: {error}"),
+            };
         }
+        (None, Some(action)) => state.dispatch_action(action, &ctx),
+        _ => {}
     }
 }
 
@@ -427,7 +434,7 @@ fn render_apps_table(
 
                         // Name + Update indicator
                         cell_ui(&mut row_ui, col_name_w, 24.0, false, |ui| {
-                            ui.label(RichText::new(app_icon(app.source)).size(12.0).color(p.accent));
+                            app_icon(ui, state.icons.get(&app_idx), 16.0);
                             ui.add(
                                 egui::Label::new(
                                     RichText::new(&app.name).size(13.0).color(p.text_primary),
@@ -786,7 +793,7 @@ fn render_inspector_panel(
             // Header bar with app name + source badge + click-to-copy ID
             ui.horizontal(|ui| {
                 ui.set_width(inner_w);
-                ui.label(RichText::new(app_icon(app.source)).size(15.0).color(p.accent));
+                app_icon(ui, state.selected_index.and_then(|index| state.icons.get(&index)), 22.0);
                 ui.add(
                     egui::Label::new(RichText::new(&app.name).size(16.0).strong().color(p.text_primary))
                         .wrap(),
@@ -1172,6 +1179,7 @@ fn render_confirmation_modals(
     ctx: &egui::Context,
     p: &ThemePalette,
     pending_action: &mut Option<AppAction>,
+    remote: Option<&crate::config::SshRemoteHost>,
 ) {
     let screen = ctx.screen_rect();
     let modal_frame = Frame::none()
@@ -1215,7 +1223,10 @@ fn render_confirmation_modals(
                                 .color(p.text_primary),
                         );
                         ui.label(
-                            RichText::new("This will remove the application or package from your system.")
+                            RichText::new(match remote {
+                                Some(host) => format!("Open the package manager on {} to remove this package.", host.name),
+                                None => "This will remove the application or package from your system.".into(),
+                            })
                                 .size(11.5)
                                 .color(p.text_muted),
                         );

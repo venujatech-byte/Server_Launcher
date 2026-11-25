@@ -178,6 +178,36 @@ fn find_pwa_data_paths(exec: &str, desktop_name: &str) -> Vec<AppDataPath> {
     out
 }
 
+fn desktop_icon(name: &str) -> Option<egui::ColorImage> {
+    let path = Path::new(name);
+    let mut candidates = Vec::new();
+    if path.is_absolute() {
+        candidates.push(path.to_owned());
+    } else if !name.is_empty() && path.file_name().and_then(|part| part.to_str()) == Some(name) {
+        let filename = if name.ends_with(".png") { name.to_owned() } else { format!("{name}.png") };
+        let mut roots = vec![PathBuf::from("/usr/share"), PathBuf::from("/usr/local/share"),
+            PathBuf::from("/var/lib/flatpak/exports/share")];
+        if let Some(home) = home_dir() {
+            roots.insert(0, home.join(".local/share/flatpak/exports/share"));
+            roots.insert(0, home.join(".local/share"));
+        }
+        for root in roots {
+            for size in ["48x48", "64x64", "32x32", "128x128", "256x256", "512x512"] {
+                candidates.push(root.join("icons/hicolor").join(size).join("apps").join(&filename));
+            }
+            candidates.push(root.join("pixmaps").join(&filename));
+        }
+    }
+    // shortcut: raster artwork only, add theme and SVG resolution when needed.
+    candidates.into_iter().find_map(|path| {
+        let metadata = std::fs::metadata(&path).ok()?;
+        if !metadata.is_file() || metadata.len() > 4 * 1024 * 1024 {
+            return None;
+        }
+        super::actions::decode_app_icon(&std::fs::read(path).ok()?)
+    })
+}
+
 fn discover_desktop_entries() -> Vec<AppEntry> {
     let mut dirs: Vec<(PathBuf, bool)> = vec![
         (PathBuf::from("/usr/share/applications"), false),
@@ -207,6 +237,7 @@ fn discover_desktop_entries() -> Vec<AppEntry> {
 
             let mut in_main_section = false;
             let mut name = None;
+            let mut icon_name = None;
             let mut exec = None;
             let mut comment = None;
             let mut categories = None;
@@ -230,6 +261,7 @@ fn discover_desktop_entries() -> Vec<AppEntry> {
                     let key = k.trim();
                     let val = v.trim();
                     match key {
+                        "Icon" => icon_name = Some(val),
                         "Name" if name.is_none() => name = Some(val.to_string()),
                         "Exec" if exec.is_none() => exec = Some(val.to_string()),
                         "Comment" if comment.is_none() => comment = Some(val.to_string()),
@@ -316,6 +348,7 @@ fn discover_desktop_entries() -> Vec<AppEntry> {
                     None
                 },
                 desktop_file: Some(path.display().to_string()),
+                icon: icon_name.and_then(desktop_icon),
                 installed_date,
                 installed_timestamp,
                 update_available: None,
@@ -426,6 +459,7 @@ fn discover_flatpaks() -> Vec<AppEntry> {
             exec_cmd: Some(format!("flatpak run {}", app_id)),
             uninstall_cmd: None,
             desktop_file: None,
+            icon: None,
             installed_date,
             installed_timestamp,
             update_available: None,
@@ -506,6 +540,7 @@ fn discover_rpm_dnf() -> Vec<AppEntry> {
             exec_cmd: None,
             uninstall_cmd: None,
             desktop_file: None,
+            icon: None,
             installed_date,
             installed_timestamp: install_ts,
             update_available: None,
@@ -569,6 +604,7 @@ fn discover_apt_dpkg() -> Vec<AppEntry> {
             exec_cmd: None,
             uninstall_cmd: None,
             desktop_file: None,
+            icon: None,
             installed_date,
             installed_timestamp,
             update_available: None,
@@ -626,6 +662,7 @@ fn discover_pacman() -> Vec<AppEntry> {
             exec_cmd: None,
             uninstall_cmd: None,
             desktop_file: None,
+            icon: None,
             installed_date: None,
             installed_timestamp: None,
             update_available: None,
@@ -677,6 +714,7 @@ fn discover_snaps() -> Vec<AppEntry> {
             exec_cmd: Some(format!("snap run {}", name)),
             uninstall_cmd: None,
             desktop_file: None,
+            icon: None,
             installed_date: None,
             installed_timestamp: None,
             update_available: None,
@@ -826,7 +864,22 @@ pub fn discover_all(tx: Sender<AppsEvent>, ctx: egui::Context) {
     std::thread::spawn(move || {
         // Fast batch 1: GUI .desktop apps + PWAs + Flatpaks + Repos
         let mut batch = discover_desktop_entries();
-        batch.extend(discover_flatpaks());
+        batch.extend(discover_flatpaks().into_iter().map(|mut app| {
+            app.icon = desktop_icon(&app.id);
+            app
+        }));
+        let mut desktop_icons = HashMap::new();
+        for app in batch.iter().filter(|app| app.source == AppSource::Desktop) {
+            let Some(icon) = &app.icon else { continue };
+            if let Some(stem) = app.desktop_file.as_deref().and_then(|path| Path::new(path).file_stem()) {
+                desktop_icons.insert(stem.to_string_lossy().into_owned(), icon.clone());
+            }
+            if let Some(executable) = app.exec_cmd.as_deref().and_then(|exec| exec.split_whitespace().next()) {
+                if let Some(name) = Path::new(executable).file_name().and_then(|name| name.to_str()) {
+                    desktop_icons.entry(name.to_owned()).or_insert_with(|| icon.clone());
+                }
+            }
+        }
         let repos = discover_repos();
         let _ = tx.send(AppsEvent::DiscoveryBatch {
             apps: batch,
@@ -849,6 +902,9 @@ pub fn discover_all(tx: Sender<AppsEvent>, ctx: egui::Context) {
             sys_pkgs.extend(discover_snaps());
         }
 
+        for app in &mut sys_pkgs {
+            app.icon = desktop_icons.get(&app.id).cloned();
+        }
         let _ = tx.send(AppsEvent::DiscoveryBatch {
             apps: sys_pkgs,
             repos: Vec::new(),

@@ -835,7 +835,11 @@ fn activate(files: &mut RemoteFiles, host: &SshRemoteHost, ctx: &egui::Context, 
         ),
         Refresh => Job::List(directory),
         RunPython => Job::RunPython(model::join(&directory, &single())),
-        RunShell => Job::RunShell(model::join(&directory, &single())),
+        RunShell => {
+            files.prompt = Some(Prompt::RunShell(model::join(&directory, &single())));
+            files.name.clear();
+            return;
+        }
         Open => {
             let name = single();
             let path = model::join(&directory, &name);
@@ -924,6 +928,7 @@ fn prompt(
         Prompt::Compress(_) => ("Create archive", "Compress"),
         Prompt::Extract(_) => ("Extract to new folder", "Extract"),
         Prompt::InstallMicro(_) => ("Micro is not installed", "Install and open"),
+        Prompt::RunShell(_) => ("Run shell script", "Run"),
     };
     let formats = [".zip", ".tar", ".tar.gz", ".rar"];
     let mut dismiss = false;
@@ -955,7 +960,20 @@ fn prompt(
                 );
             });
             ui.add_space(8.0);
-            if let Prompt::InstallMicro(path) = &prompt {
+            if let Prompt::RunShell(path) = &prompt {
+                ui.label(
+                    RichText::new(path.escape_debug().to_string())
+                        .size(11.5)
+                        .monospace(),
+                );
+                ui.label("Enter one argument per line. Leave blank to run without arguments.");
+                ui.add(
+                    egui::TextEdit::multiline(&mut files.name)
+                        .hint_text("Service name\nOptional Python path")
+                        .desired_rows(3)
+                        .desired_width(ui.available_width()),
+                );
+            } else if let Prompt::InstallMicro(path) = &prompt {
                 ui.label("Install Micro on the SSH host and open this file?");
                 ui.monospace(path.escape_debug().to_string());
                 ui.label("The SSH terminal will show any package manager or sudo prompts.");
@@ -1014,7 +1032,7 @@ fn prompt(
                 submit = ui
                     .add_enabled(
                         destructive
-                            || matches!(prompt, Prompt::InstallMicro(_))
+                            || matches!(prompt, Prompt::InstallMicro(_) | Prompt::RunShell(_))
                             || model::valid_name(&files.name),
                         egui::Button::new(RichText::new(button).size(11.5).strong().color(
                             if destructive {
@@ -1068,6 +1086,15 @@ fn prompt(
         }
         Prompt::Extract(source) => Job::Extract(source, target, true),
         Prompt::InstallMicro(path) => Job::Micro(path, true),
+        Prompt::RunShell(path) => Job::RunShell(
+            path,
+            files
+                .name
+                .lines()
+                .filter(|argument| !argument.is_empty())
+                .map(str::to_owned)
+                .collect(),
+        ),
     };
     files.prompt = None;
     files.start(host, ctx, job);

@@ -10,7 +10,7 @@ pub(super) enum Job {
     List(String),
     Micro(String, bool),
     RunPython(String),
-    RunShell(String),
+    RunShell(String, Vec<String>),
     Create(String, bool),
     Rename(String, String),
     Paste(Vec<String>, String, bool),
@@ -79,7 +79,7 @@ fn run(host: &SshRemoteHost, job: Job) -> Result<Outcome, String> {
     if let Job::Micro(path, install) = job {
         return open_micro(host, path, install);
     }
-    if let Job::RunPython(ref path) | Job::RunShell(ref path) = job {
+    if let Job::RunPython(ref path) | Job::RunShell(ref path, _) = job {
         let (preferred, fallback, message) = if matches!(job, Job::RunPython(_)) {
             ("python3", "python", "Started Python in an SSH terminal.")
         } else {
@@ -89,7 +89,13 @@ fn run(host: &SshRemoteHost, job: Job) -> Result<Outcome, String> {
         execute(host, &probe, 15)?;
         let (directory, _) = path.rsplit_once('/').ok_or("Invalid script path.")?;
         let directory = shell_quote(if directory.is_empty() { "/" } else { directory });
-        let file = shell_quote(path);
+        let mut file = shell_quote(path);
+        if let Job::RunShell(_, arguments) = &job {
+            for argument in arguments {
+                file.push(' ');
+                file.push_str(&shell_quote(argument));
+            }
+        }
         let command = format!("cd {directory} && if command -v {preferred} >/dev/null 2>&1; then exec {preferred} {file}; else exec {fallback} {file}; fi");
         let mut host = host.clone();
         host.remote_cwd.clear();
@@ -304,7 +310,7 @@ done"#,
         Job::List(_)
         | Job::Micro(_, _)
         | Job::RunPython(_)
-        | Job::RunShell(_)
+        | Job::RunShell(_, _)
         | Job::Transfer(_) => unreachable!(),
     })
 }

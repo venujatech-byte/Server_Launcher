@@ -18,6 +18,7 @@ enum Prompt {
     Compress(Vec<String>),
     Extract(String),
     InstallMicro(String),
+    RunShell(String),
 }
 
 #[derive(Clone, Default)]
@@ -58,7 +59,7 @@ impl RemoteFiles {
             self.transfer = matches!(job, Job::Transfer(_));
             self.changing = !matches!(
                 job,
-                Job::List(_) | Job::Micro(_, _) | Job::RunPython(_) | Job::RunShell(_)
+                Job::List(_) | Job::Micro(_, _) | Job::RunPython(_) | Job::RunShell(_, _)
             );
             self.worker = Some(backend::start(host, job, ctx.clone()));
         }

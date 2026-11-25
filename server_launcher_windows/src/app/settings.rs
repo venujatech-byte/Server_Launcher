@@ -625,27 +625,27 @@ impl LauncherApp {
                                     .show(ui, |ui| {
                                         ui.label(RichText::new(format!("{} Configuration Data & Backups", crate::lucide::PACKAGE)).size(14.0).strong().color(palette.text_primary));
                                         ui.add_space(4.0);
-                                        ui.label(RichText::new("Import external servers.json files, merge configurations, or export portable snapshots of all services.").size(11.0).color(palette.text_muted));
+                                        ui.label(RichText::new("Export or import a complete backup including servers, SSH hosts, ADB devices, scripts, saved commands, and preferences.").size(11.0).color(palette.text_muted));
                                         ui.add_space(14.0);
 
                                         ui.horizontal_wrapped(|ui| {
                                             ui.spacing_mut().item_spacing.x = 10.0;
 
-                                            let btn_import = egui::Button::new(RichText::new(format!("{} Import servers.json", crate::lucide::DOWNLOAD)).size(11.5).strong().color(palette.accent_text))
+                                            let btn_import = egui::Button::new(RichText::new(format!("{} Import Backup", crate::lucide::DOWNLOAD)).size(11.5).strong().color(palette.accent_text))
                                                 .fill(palette.accent)
                                                 .stroke(Stroke::NONE)
                                                 .rounding(Rounding::same(999.0))
                                                 .min_size(egui::vec2(160.0, 32.0));
-                                            if ui.add(btn_import).on_hover_text("Select and import servers.json file").clicked() {
+                                            if ui.add(btn_import).on_hover_text("Select and import a backup or servers.json file").clicked() {
                                                 do_import = true;
                                             }
 
-                                            let btn_export = egui::Button::new(RichText::new(format!("{} Export servers.json", crate::lucide::UPLOAD)).size(11.5).strong().color(palette.text_primary))
+                                            let btn_export = egui::Button::new(RichText::new(format!("{} Export Full Backup", crate::lucide::UPLOAD)).size(11.5).strong().color(palette.text_primary))
                                                 .fill(palette.bg_button)
                                                 .stroke(Stroke::NONE)
                                                 .rounding(Rounding::same(999.0))
                                                 .min_size(egui::vec2(160.0, 32.0));
-                                            if ui.add(btn_export).on_hover_text("Export current servers to servers.json file").clicked() {
+                                            if ui.add(btn_export).on_hover_text("Export all servers, SSH hosts, ADB devices, scripts, commands, and settings").clicked() {
                                                 do_export = true;
                                             }
                                         });
@@ -784,6 +784,9 @@ impl LauncherApp {
         }
         if do_import {
             self.import_servers_from_file_dialog();
+            let pal = self.palette();
+            ctx.set_visuals(pal.egui_visuals());
+            self.last_applied_palette = Some(pal);
         }
         if do_export {
             self.export_servers_to_file_dialog();

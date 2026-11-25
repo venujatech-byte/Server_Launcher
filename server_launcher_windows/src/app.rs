@@ -1304,6 +1304,23 @@ impl LauncherApp {
         });
     }
 
+    fn build_config_snapshot(&self, ssh_hosts: Vec<SshRemoteHost>) -> ConfigFile {
+        ConfigFile {
+            servers: self.services.iter().map(|s| s.config.clone()).collect(),
+            server_tab_order: self.server_tab_order.clone(),
+            ssh_hosts,
+            adb_devices: self.adb_devices.clone(),
+            scripts: self.scripts.clone(),
+            saved_commands: self.saved_commands.clone(),
+            theme: Some(self.theme.id_str().to_string()),
+            accent_color: self.custom_accent_color.clone(),
+            app_autostart: self.app_autostart,
+            journal_refresh_interval: Some(self.journal_refresh_interval),
+            ssh_idle: self.ssh_idle,
+            ssh_probe_timeouts: self.ssh_probe_timeouts,
+        }
+    }
+
     fn persist_config(&mut self) {
         let mut ssh_hosts = self.ssh_hosts.clone();
         let mut staged_refs = Vec::new();
@@ -1323,20 +1340,7 @@ impl LauncherApp {
             }
             host.password.clear();
         }
-        let cfg = ConfigFile {
-            servers: self.services.iter().map(|s| s.config.clone()).collect(),
-            server_tab_order: self.server_tab_order.clone(),
-            ssh_hosts,
-            adb_devices: self.adb_devices.clone(),
-            scripts: self.scripts.clone(),
-            saved_commands: self.saved_commands.clone(),
-            theme: Some(self.theme.id_str().to_string()),
-            accent_color: self.custom_accent_color.clone(),
-            app_autostart: self.app_autostart,
-            journal_refresh_interval: Some(self.journal_refresh_interval),
-            ssh_idle: self.ssh_idle,
-            ssh_probe_timeouts: self.ssh_probe_timeouts,
-        };
+        let cfg = self.build_config_snapshot(ssh_hosts);
         if let Err(error) = cfg.save_to_file(&self.config_path) {
             crate::ssh_credentials::discard(staged_refs);
             eprintln!("Configuration save failed: {error}");
@@ -1392,20 +1396,34 @@ impl LauncherApp {
 
     pub fn export_servers_to_file_dialog(&mut self) {
         let file_opt = rfd::FileDialog::new()
-            .set_title("Export servers.json Configuration")
-            .set_file_name("servers.json")
+            .set_title("Export Full Backup (servers.json)")
+            .set_file_name("server_launcher_backup.json")
             .add_filter("JSON Configuration (*.json)", &["json"])
             .save_file();
 
         if let Some(path) = file_opt {
-            let servers: Vec<_> = self.services.iter().map(|s| s.config.clone()).collect();
-            match serde_json::to_string_pretty(&servers) {
+            self.persist_config();
+            let mut ssh_hosts = self.ssh_hosts.clone();
+            for h in &mut ssh_hosts {
+                h.password.clear();
+            }
+            let cfg = self.build_config_snapshot(ssh_hosts);
+            match serde_json::to_string_pretty(&cfg) {
                 Ok(json_str) => {
                     match std::fs::write(&path, json_str) {
                         Ok(_) => {
-                            let fname = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "servers.json".to_string());
+                            let fname = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "backup.json".to_string());
                             self.import_status_msg = Some((
-                                format!("{} Exported {} server(s) to {}", crate::lucide::CHECK, servers.len(), fname),
+                                format!(
+                                    "{} Exported full backup ({} servers, {} SSH hosts, {} ADB devices, {} scripts, {} commands) to {}",
+                                    crate::lucide::CHECK,
+                                    cfg.servers.len(),
+                                    cfg.ssh_hosts.len(),
+                                    cfg.adb_devices.len(),
+                                    cfg.scripts.len(),
+                                    cfg.saved_commands.len(),
+                                    fname
+                                ),
                                 false,
                                 Instant::now(),
                             ));
@@ -1591,29 +1609,92 @@ impl LauncherApp {
             }
         }
 
-        // 1. Try parsing full ConfigFile
-        if let Ok(cfg) = serde_json::from_str::<ConfigFile>(trimmed) {
-            if !cfg.servers.is_empty() || !cfg.ssh_hosts.is_empty() || !cfg.scripts.is_empty() || !cfg.saved_commands.is_empty() {
-                for s in cfg.servers {
-                    add_server(s, &mut self.services, &mut imported, &mut updated);
-                }
-                for h in cfg.ssh_hosts {
-                    if !self.ssh_hosts.iter().any(|existing| existing.id == h.id) {
-                        self.ssh_hosts.push(h);
+        // 1. Try parsing full ConfigFile (when JSON object contains ConfigFile keys)
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            if let Some(obj) = val.as_object() {
+                let is_full_config = [
+                    "ssh_hosts",
+                    "adb_devices",
+                    "scripts",
+                    "saved_commands",
+                    "server_tab_order",
+                    "theme",
+                    "accent_color",
+                    "ssh_idle",
+                    "ssh_probe_timeouts",
+                ]
+                .iter()
+                .any(|k| obj.contains_key(*k));
+
+                if is_full_config {
+                    if let Ok(cfg) = serde_json::from_value::<ConfigFile>(val.clone()) {
+                        for s in cfg.servers {
+                            add_server(s, &mut self.services, &mut imported, &mut updated);
+                        }
+                        for key in cfg.server_tab_order {
+                            if !self.server_tab_order.contains(&key) {
+                                self.server_tab_order.push(key);
+                            }
+                        }
+                        for h in cfg.ssh_hosts {
+                            if let Some(existing) = self.ssh_hosts.iter_mut().find(|e| e.id == h.id) {
+                                let kept_ref = existing.credential_ref.clone();
+                                *existing = h;
+                                if existing.credential_ref.is_none() {
+                                    existing.credential_ref = kept_ref;
+                                }
+                                updated += 1;
+                            } else {
+                                self.ssh_hosts.push(h);
+                                imported += 1;
+                            }
+                        }
+                        for dev in cfg.adb_devices {
+                            if let Some(existing) = self.adb_devices.iter_mut().find(|e| e.id == dev.id) {
+                                *existing = dev;
+                                updated += 1;
+                            } else {
+                                self.adb_devices.push(dev);
+                                imported += 1;
+                            }
+                        }
+                        for sc in cfg.scripts {
+                            if let Some(existing) = self.scripts.iter_mut().find(|e| e.id == sc.id) {
+                                *existing = sc;
+                                updated += 1;
+                            } else {
+                                self.scripts.push(sc);
+                                imported += 1;
+                            }
+                        }
+                        for cmd in cfg.saved_commands {
+                            if let Some(existing) = self.saved_commands.iter_mut().find(|e| e.id == cmd.id) {
+                                *existing = cmd;
+                                updated += 1;
+                            } else {
+                                self.saved_commands.push(cmd);
+                                imported += 1;
+                            }
+                            self.command_catalog_view = None;
+                        }
+                        if let Some(theme_id) = cfg.theme {
+                            self.theme = ThemeMode::from_id_str(&theme_id);
+                        }
+                        if cfg.accent_color.is_some() {
+                            self.custom_accent_color = cfg.accent_color.clone();
+                            if let Some(ref hex) = self.custom_accent_color {
+                                self.settings_custom_hex_input = hex.clone();
+                            }
+                        }
+                        self.app_autostart = cfg.app_autostart;
+                        if let Some(interval) = cfg.journal_refresh_interval {
+                            self.journal_refresh_interval = interval;
+                        }
+                        self.ssh_idle = cfg.ssh_idle;
+                        self.ssh_probe_timeouts = cfg.ssh_probe_timeouts;
+                        return Ok((imported, updated));
                     }
                 }
-                for sc in cfg.scripts {
-                    if !self.scripts.iter().any(|existing| existing.id == sc.id) {
-                        self.scripts.push(sc);
-                    }
-                }
-                for cmd in cfg.saved_commands {
-                    if !self.saved_commands.iter().any(|existing| existing.id == cmd.id) {
-                        self.saved_commands.push(cmd);
-                        self.command_catalog_view = None;
-                    }
-                }
-                return Ok((imported, updated));
             }
         }
 

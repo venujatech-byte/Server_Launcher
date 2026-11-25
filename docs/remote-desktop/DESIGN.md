@@ -80,3 +80,16 @@ status means that the protocol endpoint responded. VNC checks run on the direct
 route only when explicitly configured. Tunnel and gateway checks require their
 respective transport implementations. The system DNS resolver runs on the
 probe worker and controls resolution time independently of the socket deadline.
+
+## VNC viewer milestone
+
+The first live viewer transport is a bounded Raw RFB implementation based on
+[RFC 6143](https://www.rfc-editor.org/rfc/rfc6143.html). It validates display
+dimensions and rectangle lengths before allocating and asks for incremental
+updates after the first frame. This establishes the native rendering and
+worker-to-viewer path without depending on compressed decoders yet. The
+loopback smoke test verified the RFB handshake, Raw frame rendering and
+incremental request on X11. Production VNC authentication, secure tunneling,
+input, and additional encodings still need implementation. This milestone
+accepts only an explicitly configured direct private endpoint and refuses
+connections that would ignore configured credentials.

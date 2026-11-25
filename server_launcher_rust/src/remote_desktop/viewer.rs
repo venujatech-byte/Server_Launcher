@@ -2,6 +2,7 @@ use super::{
     credentials::DesktopProtocol,
     framebuffer::{Framebuffer, Region},
     profile::Scaling,
+    vnc::Connection,
 };
 use crate::{config::ConfigFile, theme::ThemeMode};
 use std::{
@@ -9,7 +10,7 @@ use std::{
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
 
@@ -33,6 +34,9 @@ pub(crate) fn run(
         .and_then(|host| host.vnc.as_ref())
         .filter(|_| protocol == DesktopProtocol::Vnc)
         .map_or(Scaling::Fit, |profile| profile.scaling);
+    let vnc_host = profile
+        .filter(|_| !test_pattern && protocol == DesktopProtocol::Vnc)
+        .cloned();
     let palette = ThemeMode::from_id_str(theme).palette();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -74,6 +78,7 @@ pub(crate) fn run(
                 closed,
                 message,
                 framebuffer,
+                connection: vnc_host.map(|host| Connection::start(host, cc.egui_ctx.clone())),
                 texture: None,
                 scaling,
                 fullscreen: false,
@@ -88,6 +93,7 @@ struct Viewer {
     closed: Arc<AtomicBool>,
     message: &'static str,
     framebuffer: Framebuffer,
+    connection: Option<Arc<Mutex<Connection>>>,
     texture: Option<egui::TextureHandle>,
     scaling: Scaling,
     fullscreen: bool,
@@ -104,7 +110,17 @@ impl eframe::App for Viewer {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
-        if let Some(update) = self.framebuffer.take_update() {
+        let (update, status, connected) = if let Some(connection) = &self.connection {
+            let mut connection = connection.lock().unwrap();
+            (
+                connection.framebuffer.take_update(),
+                connection.status.clone(),
+                connection.connected,
+            )
+        } else {
+            (self.framebuffer.take_update(), self.message.into(), false)
+        };
+        if let Some(update) = update {
             match self.texture.as_mut() {
                 Some(texture) if !update.resized => {
                     texture.set_partial(update.origin, update.image, egui::TextureOptions::LINEAR);
@@ -127,6 +143,8 @@ impl eframe::App for Viewer {
             ui.horizontal_wrapped(|ui| {
                 ui.label(if self.test_pattern {
                     "Test pattern"
+                } else if connected {
+                    "Connected"
                 } else {
                     "Disconnected"
                 });
@@ -148,6 +166,9 @@ impl eframe::App for Viewer {
                     self.fullscreen = !fullscreen;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
                 }
+                if !connected && self.texture.is_some() && !self.test_pattern {
+                    ui.label(&status);
+                }
                 if ui.button("Disconnect").clicked() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
@@ -155,7 +176,7 @@ impl eframe::App for Viewer {
         });
         egui::CentralPanel::default().show(ctx, |ui| {
             let Some(texture) = &self.texture else {
-                ui.centered_and_justified(|ui| ui.label(self.message));
+                ui.centered_and_justified(|ui| ui.label(&status));
                 return;
             };
             let native = texture.size_vec2() / ctx.pixels_per_point();

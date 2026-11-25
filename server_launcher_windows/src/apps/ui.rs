@@ -33,10 +33,9 @@ pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePale
         let drawer_h = if state.log_drawer_open { 132.0 } else { 30.0 };
         let main_h = (ui.available_height() - drawer_h - 8.0).max(200.0);
 
-        // Permanent Split-Pane inside a unified Explorer-style card with 1px vertical divider
+        // Match the Files table canvas and keep the inspector on a separate surface.
         Frame::none()
-            .fill(p.bg_card)
-            .rounding(Rounding::same(8.0))
+            .fill(Color32::TRANSPARENT)
             .inner_margin(egui::Margin::ZERO)
             .show(ui, |ui| {
                 let total_w = ui.available_width();
@@ -135,7 +134,7 @@ fn render_top_bar(
             ui.visuals_mut().widgets.hovered.weak_bg_fill = p.bg_button_hover;
 
             // Row 1: Title + status on left, search + ghost action buttons on right
-            ui.horizontal_wrapped(|ui| {
+            ui.horizontal(|ui| {
                 ui.label(
                     RichText::new("Local Apps & Packages")
                         .size(14.5)
@@ -158,9 +157,14 @@ fn render_top_bar(
                 if state.loading || state.checking_updates {
                     ui.spinner();
                 }
-                ui.label(RichText::new(status_line).size(11.5).color(p.text_muted));
+                let status_width = if ui.available_width() > 660.0 { 150.0 } else { 60.0 };
+                ui.scope(|ui| {
+                    ui.set_max_width(status_width);
+                    ui.add(egui::Label::new(RichText::new(&status_line).size(11.5).color(p.text_muted)).truncate())
+                        .on_hover_text(&status_line);
+                });
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true), |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
 
                     let updatable: Vec<AppEntry> = state
@@ -209,6 +213,7 @@ fn render_top_bar(
                         state.trigger_discovery(ctx);
                     }
 
+                    let search_width = (ui.available_width() - 48.0).clamp(55.0, 210.0);
                     // Search box matching File Explorer's "Filter this folder"
                     Frame::none()
                         .fill(p.bg_input)
@@ -223,7 +228,7 @@ fn render_top_bar(
                                         .color(p.text_muted),
                                 );
                                 let resp = ui.add_sized(
-                                    [210.0, 21.0],
+                                    [search_width, 21.0],
                                     egui::TextEdit::singleline(&mut state.search_query)
                                         .hint_text(
                                             RichText::new("Filter by name, ID, or description…")
@@ -331,7 +336,7 @@ fn render_apps_table(
                 .max(0.0);
 
             // Header row matching File Explorer
-            Frame::none().fill(p.bg_subtle).rounding(Rounding::same(4.0))
+            Frame::none().fill(p.bg_card).rounding(Rounding::same(4.0))
                 .inner_margin(egui::Margin::symmetric(6.0, 0.0)).show(ui, |ui| ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 sort_header(state, ui, p, "Name", AppSortCol::Name, col_name_w);
@@ -711,10 +716,9 @@ fn render_inspector_panel(
     pending_action: &mut Option<AppAction>,
 ) {
     let selected_app = state.selected_key.as_ref().and_then(|key| {
-        state
-            .apps
-            .iter()
-            .find(|a| a.id == key.0 && a.source == key.1)
+        state.filtered_indices.iter()
+            .filter_map(|&index| state.apps.get(index))
+            .find(|app| app.id == key.0 && app.source == key.1)
             .cloned()
     });
     if state.selected_key.is_some() && selected_app.is_none() && !state.loading {
@@ -722,8 +726,8 @@ fn render_inspector_panel(
     }
 
     Frame::none()
-        .fill(p.bg_sidebar)
-        .rounding(Rounding::ZERO)
+        .fill(p.bg_card)
+        .rounding(Rounding::same(8.0))
         .inner_margin(egui::Margin::same(16.0))
         .show(ui, |ui| {
             let inner_w = (width - 32.0).max(0.0);

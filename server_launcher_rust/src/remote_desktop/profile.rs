@@ -57,6 +57,8 @@ pub(crate) struct RdpProfile {
     pub enabled: bool,
     pub port: u16,
     pub username: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_ref: Option<String>,
     pub domain: String,
     pub same_username_as_ssh: bool,
     pub security: RdpSecurity,
@@ -86,6 +88,7 @@ impl Default for RdpProfile {
             enabled: false,
             port: 3389,
             username: String::new(),
+            credential_ref: None,
             domain: String::new(),
             same_username_as_ssh: false,
             security: RdpSecurity::Auto,
@@ -117,6 +120,8 @@ pub(crate) struct VncProfile {
     pub enabled: bool,
     pub port: u16,
     pub username: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_ref: Option<String>,
     pub quality: Quality,
     pub encodings: Vec<Encoding>,
     pub color_depth: u8,
@@ -134,6 +139,7 @@ impl Default for VncProfile {
             enabled: false,
             port: 5900,
             username: String::new(),
+            credential_ref: None,
             quality: Quality::Auto,
             encodings: vec![
                 Encoding::Tight,

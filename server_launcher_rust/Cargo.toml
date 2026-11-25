@@ -18,6 +18,7 @@ chrono = "0.4"
 rfd = "0.15"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 tauri = "2"
+zeroize = "1.9.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

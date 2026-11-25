@@ -427,7 +427,7 @@ pub struct LauncherApp {
     selected_machine: String, // "local" or host.id
     ssh_hosts: Vec<SshRemoteHost>,
     remote_host_lifetimes: Arc<Mutex<HashMap<String, Arc<()>>>>,
-    saved_ssh_refs: BTreeSet<String>,
+    saved_host_credential_refs: BTreeSet<String>,
     ssh_host_modal: SshHostModalState,
     remote_listeners: Arc<Mutex<HashMap<String, RemoteListenerSnapshot>>>,
     remote_scanning: Arc<Mutex<HashMap<String, Option<(Instant, u32)>>>>,
@@ -904,7 +904,7 @@ impl LauncherApp {
                 }
             }
         }
-        let saved_ssh_refs = ssh_hosts.iter().filter_map(|host| host.credential_ref.clone()).collect();
+        let saved_host_credential_refs = ssh_hosts.iter().flat_map(crate::remote_desktop::credentials::references).cloned().collect();
         let migrate_credentials = ssh_hosts.iter().any(|host| !host.password.is_empty() && host.credential_ref.is_none());
         let adb_devices = config_file.adb_devices;
         let scripts = config_file.scripts;
@@ -974,7 +974,7 @@ impl LauncherApp {
             selected_machine,
             ssh_hosts,
             remote_host_lifetimes: Arc::new(Mutex::new(HashMap::new())),
-            saved_ssh_refs,
+            saved_host_credential_refs,
             ssh_host_modal,
             remote_listeners,
             remote_scanning,
@@ -1448,9 +1448,9 @@ impl LauncherApp {
             eprintln!("Configuration save failed: {error}");
             self.import_status_msg = Some((format!("Could not save settings: {error}"), true, Instant::now()));
         } else {
-            let saved_refs = cfg.ssh_hosts.iter().filter_map(|host| host.credential_ref.clone()).collect();
-            let removed = self.saved_ssh_refs.difference(&saved_refs).cloned().collect();
-            self.saved_ssh_refs = saved_refs;
+            let saved_refs = cfg.ssh_hosts.iter().flat_map(crate::remote_desktop::credentials::references).cloned().collect();
+            let removed = self.saved_host_credential_refs.difference(&saved_refs).cloned().collect();
+            self.saved_host_credential_refs = saved_refs;
             crate::ssh_credentials::discard(removed);
             for (host, stored) in self.ssh_hosts.iter_mut().zip(cfg.ssh_hosts) {
                 host.credential_ref = stored.credential_ref;
@@ -3510,6 +3510,7 @@ impl eframe::App for LauncherApp {
                 if let Some(old) = old_id {
                     if let Some(pos) = self.ssh_hosts.iter().position(|h| h.id == old) {
                         let previous = &self.ssh_hosts[pos];
+                        crate::remote_desktop::credentials::retain_matching(previous, &mut new_host);
                         let host_changed = new_host != *previous;
                         if new_host.password == previous.password
                             && crate::ssh_credentials::binding(&new_host) == crate::ssh_credentials::binding(previous)

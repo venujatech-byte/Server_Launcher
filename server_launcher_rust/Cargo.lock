@@ -4654,6 +4654,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]
@@ -7336,6 +7337,12 @@ checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
 dependencies = [
  "zune-core",
 ]
+
+[[package]]
+name = "zeroize"
+version = "1.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879"
 
 [[package]]
 name = "zvariant"

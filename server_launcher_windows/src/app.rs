@@ -2966,22 +2966,6 @@ impl eframe::App for LauncherApp {
                                 .color(p.text_muted),
                             );
 
-                            if let Some((ref msg, is_err, time)) = self.import_status_msg {
-                                if time.elapsed() < Duration::from_secs(6) {
-                                    ui.add_space(2.0);
-                                    let color = if is_err { p.danger } else { Color32::from_rgb(16, 185, 129) };
-                                    Frame::none()
-                                        .fill(p.bg_subtle)
-                                        .stroke(Stroke::NONE)
-                                        .rounding(Rounding::same(999.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 2.0))
-                                        .show(ui, |ui| {
-                                            ui.label(RichText::new(msg).size(10.5).color(color));
-                                        });
-                                } else {
-                                    self.import_status_msg = None;
-                                }
-                            }
                         });
                     }
 
@@ -3501,6 +3485,44 @@ impl eframe::App for LauncherApp {
         self.render_proc_affinity_modal(ctx, &p);
         self.render_add_device_selector_modal(ctx);
         self.render_adb_add_modal(ctx);
+
+        if let Some((message, is_error, shown_at)) = &self.import_status_msg {
+            let remaining = Duration::from_secs(6).saturating_sub(shown_at.elapsed());
+            if !*is_error && remaining.is_zero() {
+                self.import_status_msg = None;
+            } else {
+                if !*is_error {
+                    ctx.request_repaint_after(remaining);
+                }
+                let width = (ctx.screen_rect().width() - 52.0).clamp(120.0, 330.0);
+                let dismissed = egui::Area::new(egui::Id::new("launcher_notification"))
+                    .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-14.0, 82.0))
+                    .order(egui::Order::Foreground)
+                    .movable(false)
+                    .show(ctx, |ui| {
+                        *ui.visuals_mut() = p.egui_visuals();
+                        Frame::popup(ui.style())
+                            .fill(p.bg_card)
+                            .inner_margin(egui::Margin::same(12.0))
+                            .show(ui, |ui| {
+                                ui.set_width(width);
+                                let color = if *is_error { p.danger } else { p.success };
+                                let dismiss = ui.horizontal(|ui| {
+                                    let title = if *is_error { "Error" } else { "Server Launcher" };
+                                    ui.label(RichText::new(title).size(12.0).strong().color(color));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.small_button(crate::lucide::X).hover_tip("Dismiss notification").clicked()
+                                    }).inner
+                                }).inner;
+                                ui.add(egui::Label::new(RichText::new(message).size(11.5).color(p.text_primary)).wrap());
+                                dismiss
+                            }).inner
+                    }).inner;
+                if dismissed {
+                    self.import_status_msg = None;
+                }
+            }
+        }
 
         let is_scanning = self.scanner.is_scanning.lock().map(|s| *s).unwrap_or(false);
         {

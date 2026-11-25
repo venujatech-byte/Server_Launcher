@@ -31,8 +31,8 @@ pub fn render_apps_page(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePale
         render_top_bar(state, ui, p, &ctx, &mut pending_action);
         render_filter_and_sort_bar(state, ui, p);
 
-        let drawer_h = if state.log_drawer_open { 165.0 } else { 32.0 };
-        let main_h = (ui.available_height() - drawer_h - 8.0).max(180.0);
+        let drawer_h = if state.log_drawer_open { 132.0 } else { 30.0 };
+        let main_h = (ui.available_height() - drawer_h - 8.0).max(200.0);
 
         // Permanent Split-Pane inside a unified Explorer-style card with 1px vertical divider
         Frame::none()
@@ -795,133 +795,147 @@ fn render_inspector_panel(
                     });
             }
 
-            ui.add_space(10.0);
+            ui.add_space(8.0);
             let (sep_rect, _) = ui.allocate_exact_size(egui::vec2(inner_w, 1.0), egui::Sense::hover());
             ui.painter().rect_filled(sep_rect, Rounding::ZERO, p.bg_button);
-            ui.add_space(10.0);
+            ui.add_space(8.0);
 
-            let actions_reserve = 78.0;
-            let scroll_h = (ui.available_height() - actions_reserve).max(80.0);
-            let mut scroll = egui::ScrollArea::vertical()
-                .id_salt("apps_inspector_scroll")
-                .max_height(scroll_h)
-                .auto_shrink([false, false]);
-            if std::mem::take(&mut state.inspector_scroll_to_top) {
-                scroll = scroll.vertical_scroll_offset(0.0);
-            }
-            scroll.show(ui, |ui| {
-                    ui.set_width(inner_w);
+            // Fixed-height scroll region + fixed-height bottom action bar so switching apps never shifts layout
+            let actions_h = 64.0;
+            let div_h = 17.0;
+            let scroll_h = (ui.available_height() - actions_h - div_h).max(90.0);
 
-                    // Description Section
-                    ui.label(RichText::new("Description").size(11.0).strong().color(p.text_muted));
-                    ui.add_space(4.0);
-                    let desc = if app.description.trim().is_empty() {
-                        "No description available"
-                    } else {
-                        app.description.trim()
-                    };
-                    ui.add(egui::Label::new(RichText::new(desc).size(12.0).color(p.text_secondary)).wrap());
-                    ui.add_space(12.0);
-                    ui.separator();
-                    ui.add_space(8.0);
-
-                    // 2-Column Metadata Grid
-                    let label_w = 96.0;
-                    let val_w = (inner_w - label_w - 8.0).max(100.0);
-                    egui::Grid::new("apps_inspector_meta_grid")
-                        .num_columns(2)
-                        .spacing([8.0, 6.0])
-                        .show(ui, |ui| {
-                            meta_row(ui, p, label_w, val_w, "Version", &app.version);
-                            meta_row(ui, p, label_w, val_w, "Size", &app.size_display);
-                            meta_row(
-                                ui,
-                                p,
-                                label_w,
-                                val_w,
-                                "Installed",
-                                app.installed_date.as_deref().unwrap_or("Unknown"),
-                            );
-                            if !app.publisher_or_origin.is_empty() {
-                                meta_row(ui, p, label_w, val_w, "Origin", &app.publisher_or_origin);
-                            }
-
-                            // Install Location with inline Open Folder ghost button
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(label_w, 18.0),
-                                egui::Layout::left_to_right(egui::Align::Center),
-                                |ui| {
-                                    ui.label(RichText::new("Location").size(11.0).color(p.text_muted));
-                                },
-                            );
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(val_w, 18.0),
-                                egui::Layout::left_to_right(egui::Align::Center),
-                                |ui| {
-                                    let loc_text = app
-                                        .install_location
-                                        .as_deref()
-                                        .or(app.desktop_file.as_deref())
-                                        .unwrap_or("System-wide");
-                                    ui.add(
-                                        egui::Label::new(
-                                            RichText::new(loc_text).size(11.5).color(p.text_primary),
-                                        )
-                                        .truncate(),
-                                    )
-                                    .on_hover_text(loc_text);
-                                    if (app.install_location.is_some() || app.desktop_file.is_some())
-                                        && ghost_button(
-                                            ui,
-                                            crate::lucide::FOLDER_OPEN,
-                                            p.accent,
-                                            p,
-                                            true,
-                                        )
-                                        .on_hover_text("Open Folder")
-                                        .clicked()
-                                    {
-                                        *pending_action = Some(AppAction::OpenLocation(app.clone()));
-                                    }
-                                },
-                            );
-                            ui.end_row();
-                        });
-
-                    ui.add_space(10.0);
-
-                    // Data Paths
-                    ui.label(RichText::new("Data Paths").size(11.0).strong().color(p.text_muted));
-                    ui.add_space(4.0);
-                    if app.data_paths.is_empty() {
-                        ui.label(
-                            RichText::new("No local user data folders found.")
-                                .size(11.5)
-                                .color(p.text_muted),
-                        );
-                    } else {
-                        for dp in &app.data_paths {
-                            let sz = dp.size_bytes.map(format_bytes).unwrap_or_else(|| "…".to_string());
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(format!("• {} ({}): {}", dp.label, sz, dp.path.display()))
-                                        .size(11.0)
-                                        .color(p.text_secondary),
-                                )
-                                .wrap(),
-                            );
-                        }
+            ui.allocate_ui_with_layout(
+                egui::vec2(inner_w, scroll_h),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    let mut scroll = egui::ScrollArea::vertical()
+                        .id_salt("apps_inspector_scroll")
+                        .max_height(scroll_h)
+                        .auto_shrink([false, false]);
+                    if std::mem::take(&mut state.inspector_scroll_to_top) {
+                        scroll = scroll.vertical_scroll_offset(0.0);
                     }
-                });
+                    scroll.show(ui, |ui| {
+                        ui.set_width(inner_w);
+
+                        // Description Section
+                        ui.label(RichText::new("Description").size(11.0).strong().color(p.text_muted));
+                        ui.add_space(4.0);
+                        let desc = if app.description.trim().is_empty() {
+                            "No description available"
+                        } else {
+                            app.description.trim()
+                        };
+                        ui.add(egui::Label::new(RichText::new(desc).size(12.0).color(p.text_secondary)).wrap());
+                        ui.add_space(10.0);
+                        let (gsep, _) = ui.allocate_exact_size(egui::vec2(inner_w, 1.0), egui::Sense::hover());
+                        ui.painter().rect_filled(gsep, Rounding::ZERO, p.bg_button);
+                        ui.add_space(8.0);
+
+                        // 2-Column Metadata Grid
+                        let label_w = 88.0;
+                        let val_w = (inner_w - label_w - 8.0).max(100.0);
+                        egui::Grid::new("apps_inspector_meta_grid")
+                            .num_columns(2)
+                            .spacing([8.0, 6.0])
+                            .show(ui, |ui| {
+                                meta_row(ui, p, label_w, val_w, "Version", &app.version);
+                                meta_row(ui, p, label_w, val_w, "Size", &app.size_display);
+                                meta_row(
+                                    ui,
+                                    p,
+                                    label_w,
+                                    val_w,
+                                    "Installed",
+                                    app.installed_date.as_deref().unwrap_or("Unknown"),
+                                );
+                                if !app.publisher_or_origin.is_empty() {
+                                    meta_row(ui, p, label_w, val_w, "Origin", &app.publisher_or_origin);
+                                }
+
+                                // Install Location with inline Open Folder ghost button
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(label_w, 18.0),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        ui.label(RichText::new("Location").size(11.0).color(p.text_muted));
+                                    },
+                                );
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(val_w, 18.0),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        let loc_text = app
+                                            .install_location
+                                            .as_deref()
+                                            .or(app.desktop_file.as_deref())
+                                            .unwrap_or("System-wide");
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(loc_text).size(11.5).color(p.text_primary),
+                                            )
+                                            .truncate(),
+                                        )
+                                        .on_hover_text(loc_text);
+                                        if (app.install_location.is_some() || app.desktop_file.is_some())
+                                            && ghost_button(
+                                                ui,
+                                                crate::lucide::FOLDER_OPEN,
+                                                p.accent,
+                                                p,
+                                                true,
+                                            )
+                                            .on_hover_text("Open Folder")
+                                            .clicked()
+                                        {
+                                            *pending_action = Some(AppAction::OpenLocation(app.clone()));
+                                        }
+                                    },
+                                );
+                                ui.end_row();
+                            });
+
+                        ui.add_space(10.0);
+
+                        // Data Paths
+                        ui.label(RichText::new("Data Paths").size(11.0).strong().color(p.text_muted));
+                        ui.add_space(4.0);
+                        if app.data_paths.is_empty() {
+                            ui.label(
+                                RichText::new("No local user data folders found.")
+                                    .size(11.5)
+                                    .color(p.text_muted),
+                            );
+                        } else {
+                            for dp in &app.data_paths {
+                                let sz = dp.size_bytes.map(format_bytes).unwrap_or_else(|| "…".to_string());
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(format!("• {} ({}): {}", dp.label, sz, dp.path.display()))
+                                            .size(11.0)
+                                            .color(p.text_secondary),
+                                    )
+                                    .wrap(),
+                                );
+                            }
+                        }
+                    });
+                },
+            );
 
             ui.add_space(8.0);
             let (sep2_rect, _) = ui.allocate_exact_size(egui::vec2(inner_w, 1.0), egui::Sense::hover());
             ui.painter().rect_filled(sep2_rect, Rounding::ZERO, p.bg_button);
             ui.add_space(8.0);
 
-            // Action Buttons pinned at bottom of inspector
-            ui.spacing_mut().button_padding = egui::vec2(10.0, 5.0);
-            ui.horizontal_wrapped(|ui| {
+            // Fixed-height Action Buttons container pinned at bottom of inspector
+            ui.allocate_ui_with_layout(
+                egui::vec2(inner_w, actions_h),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.spacing_mut().button_padding = egui::vec2(10.0, 5.0);
+                    ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
                 if app.can_launch {
                     let btn = egui::Button::new(
@@ -992,6 +1006,8 @@ fn render_inspector_panel(
                     }
                 }
             });
+                },
+            );
         });
 }
 
@@ -1070,7 +1086,7 @@ fn render_task_drawer(state: &mut AppsManagerState, ui: &mut Ui, p: &ThemePalett
                     .show(ui, |ui| {
                         egui::ScrollArea::vertical()
                             .id_salt("apps_task_log_scroll")
-                            .max_height(115.0)
+                            .max_height(84.0)
                             .stick_to_bottom(true)
                             .auto_shrink([false, false])
                             .show(ui, |ui| {

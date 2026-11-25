@@ -52,6 +52,10 @@ pub(super) fn archive_extension(name: &str) -> Option<&'static str> {
 }
 
 impl Entry {
+    pub fn is_python(&self) -> bool {
+        self.kind == Kind::File && self.name.to_ascii_lowercase().ends_with(".py")
+    }
+
     pub fn opens_in_micro(&self) -> bool {
         if self.kind != Kind::File {
             return false;
@@ -67,59 +71,60 @@ impl Entry {
                 | ".gitignore"
                 | ".bashrc"
                 | ".zshrc"
-        ) || name.rsplit_once('.').is_some_and(|(_, ext)| {
-            matches!(
-                ext,
-                "txt"
-                    | "md"
-                    | "log"
-                    | "rs"
-                    | "py"
-                    | "js"
-                    | "jsx"
-                    | "ts"
-                    | "tsx"
-                    | "html"
-                    | "css"
-                    | "scss"
-                    | "json"
-                    | "toml"
-                    | "yaml"
-                    | "yml"
-                    | "xml"
-                    | "ini"
-                    | "conf"
-                    | "cfg"
-                    | "env"
-                    | "sh"
-                    | "bash"
-                    | "zsh"
-                    | "fish"
-                    | "c"
-                    | "h"
-                    | "cpp"
-                    | "hpp"
-                    | "java"
-                    | "kt"
-                    | "go"
-                    | "rb"
-                    | "php"
-                    | "lua"
-                    | "swift"
-                    | "cs"
-                    | "sql"
-                    | "csv"
-                    | "tsv"
-                    | "service"
-                    | "socket"
-                    | "timer"
-                    | "vue"
-                    | "svelte"
-                    | "diff"
-                    | "patch"
-                    | "rst"
-            )
-        })
+        ) || name.starts_with(".env.")
+            || name.rsplit_once('.').is_some_and(|(_, ext)| {
+                matches!(
+                    ext,
+                    "txt"
+                        | "md"
+                        | "log"
+                        | "rs"
+                        | "py"
+                        | "js"
+                        | "jsx"
+                        | "ts"
+                        | "tsx"
+                        | "html"
+                        | "css"
+                        | "scss"
+                        | "json"
+                        | "toml"
+                        | "yaml"
+                        | "yml"
+                        | "xml"
+                        | "ini"
+                        | "conf"
+                        | "cfg"
+                        | "env"
+                        | "sh"
+                        | "bash"
+                        | "zsh"
+                        | "fish"
+                        | "c"
+                        | "h"
+                        | "cpp"
+                        | "hpp"
+                        | "java"
+                        | "kt"
+                        | "go"
+                        | "rb"
+                        | "php"
+                        | "lua"
+                        | "swift"
+                        | "cs"
+                        | "sql"
+                        | "csv"
+                        | "tsv"
+                        | "service"
+                        | "socket"
+                        | "timer"
+                        | "vue"
+                        | "svelte"
+                        | "diff"
+                        | "patch"
+                        | "rst"
+                )
+            })
     }
 }
 

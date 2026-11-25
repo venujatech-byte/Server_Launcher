@@ -8,6 +8,7 @@ enum Action {
     Up,
     Refresh,
     Open,
+    RunPython,
     Copy,
     Cut,
     Paste,
@@ -31,6 +32,7 @@ impl Action {
             Self::Up => "Up",
             Self::Refresh => "Refresh",
             Self::Open => "Open",
+            Self::RunPython => "Run Python",
             Self::Copy => "Copy",
             Self::Cut => "Cut",
             Self::Paste => "Paste",
@@ -54,6 +56,7 @@ impl Action {
             Self::Up => lucide::ARROW_UP,
             Self::Refresh => lucide::REFRESH_CW,
             Self::Open => lucide::FOLDER_OPEN,
+            Self::RunPython => lucide::PLAY,
             Self::Copy => lucide::COPY,
             Self::Cut => "✂",
             Self::Paste => lucide::CLIPBOARD,
@@ -70,7 +73,7 @@ impl Action {
 
     fn menu_group(self) -> u8 {
         match self {
-            Self::Open | Self::Download => 0,
+            Self::Open | Self::RunPython | Self::Download => 0,
             Self::Cut | Self::Copy | Self::Paste | Self::Rename => 1,
             Self::Delete => 2,
             Self::Compress | Self::ExtractHere | Self::ExtractTo => 3,
@@ -96,6 +99,7 @@ impl Action {
             Self::Open => {
                 single.is_some_and(|entry| entry.kind == Kind::Folder || entry.opens_in_micro())
             }
+            Self::RunPython => single.is_some_and(Entry::is_python),
             Self::ExtractHere | Self::ExtractTo => {
                 single.is_some_and(|entry| entry.kind == Kind::Archive)
             }
@@ -298,7 +302,7 @@ pub(super) fn explorer(
     } else if let Some(action) = action.filter(|item| item.enabled(files)) {
         activate(files, host, &ctx, action);
     }
-    prompt(&ctx, id, files, host);
+    prompt(&ctx, id, files, host, p);
 }
 
 fn command_button(
@@ -663,6 +667,7 @@ fn details(
                                     files,
                                     &[
                                         Open,
+                                        RunPython,
                                         Download,
                                         Cut,
                                         Copy,
@@ -791,6 +796,7 @@ fn activate(files: &mut RemoteFiles, host: &SshRemoteHost, ctx: &egui::Context, 
                 .to_owned(),
         ),
         Refresh => Job::List(directory),
+        RunPython => Job::RunPython(model::join(&directory, &single())),
         Open => {
             let name = single();
             let path = model::join(&directory, &name);
@@ -861,7 +867,13 @@ fn activate(files: &mut RemoteFiles, host: &SshRemoteHost, ctx: &egui::Context, 
     files.start(host, ctx, job);
 }
 
-fn prompt(ctx: &egui::Context, id: egui::Id, files: &mut RemoteFiles, host: &SshRemoteHost) {
+fn prompt(
+    ctx: &egui::Context,
+    id: egui::Id,
+    files: &mut RemoteFiles,
+    host: &SshRemoteHost,
+    p: &ThemePalette,
+) {
     let Some(prompt) = files.prompt.clone() else {
         return;
     };
@@ -877,24 +889,69 @@ fn prompt(ctx: &egui::Context, id: egui::Id, files: &mut RemoteFiles, host: &Ssh
     let formats = [".zip", ".tar", ".tar.gz", ".rar"];
     let mut dismiss = false;
     let mut submit = false;
+    let destructive = matches!(prompt, Prompt::Delete(_));
     egui::Window::new(title)
+        .title_bar(false)
+        .frame(
+            Frame::window(&ctx.style())
+                .fill(p.bg_card)
+                .rounding(Rounding::same(12.0))
+                .inner_margin(egui::Margin::same(16.0)),
+        )
         .id(id.with("prompt"))
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ctx, |ui| {
+            ui.set_width(350.0);
+            ui.horizontal(|ui| {
+                if destructive {
+                    ui.label(RichText::new(lucide::TRASH).size(16.0).color(p.danger));
+                }
+                ui.label(
+                    RichText::new(title)
+                        .size(15.0)
+                        .strong()
+                        .color(p.text_primary),
+                );
+            });
+            ui.add_space(8.0);
             if let Prompt::InstallMicro(path) = &prompt {
                 ui.label("Install Micro on the SSH host and open this file?");
                 ui.monospace(path.escape_debug().to_string());
                 ui.label("The SSH terminal will show any package manager or sudo prompts.");
             } else if let Prompt::Delete(paths) = &prompt {
-                ui.label("The selected items will be removed from the remote host.");
-                egui::ScrollArea::vertical()
-                    .max_height(180.0)
+                ui.label(
+                    RichText::new(format!(
+                        "Remove {} item(s) from the remote host? This cannot be undone.",
+                        paths.len()
+                    ))
+                    .size(11.5)
+                    .color(p.text_secondary),
+                );
+                ui.add_space(6.0);
+                Frame::none()
+                    .fill(p.bg_input)
+                    .rounding(Rounding::same(6.0))
+                    .inner_margin(egui::Margin::same(8.0))
                     .show(ui, |ui| {
-                        for path in paths {
-                            ui.monospace(path.escape_debug().to_string());
-                        }
+                        ui.set_width(ui.available_width());
+                        egui::ScrollArea::vertical()
+                            .max_height(140.0)
+                            .show(ui, |ui| {
+                                for path in paths {
+                                    let name = path.rsplit('/').next().unwrap_or(path);
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(name.escape_debug().to_string())
+                                                .size(11.5)
+                                                .monospace(),
+                                        )
+                                        .truncate(),
+                                    )
+                                    .on_hover_text(path.escape_debug().to_string());
+                                }
+                            });
                     });
             } else {
                 ui.label(if matches!(prompt, Prompt::Compress(_)) {
@@ -913,17 +970,38 @@ fn prompt(ctx: &egui::Context, id: egui::Id, files: &mut RemoteFiles, host: &Ssh
                         });
                 }
             }
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                dismiss = ui.button("Cancel").clicked()
-                    || ui.input(|input| input.key_pressed(egui::Key::Escape));
+            ui.add_space(12.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 submit = ui
                     .add_enabled(
-                        matches!(prompt, Prompt::Delete(_) | Prompt::InstallMicro(_))
+                        destructive
+                            || matches!(prompt, Prompt::InstallMicro(_))
                             || model::valid_name(&files.name),
-                        egui::Button::new(button),
+                        egui::Button::new(RichText::new(button).size(11.5).strong().color(
+                            if destructive {
+                                Color32::WHITE
+                            } else {
+                                p.accent_text
+                            },
+                        ))
+                        .fill(if destructive { p.danger } else { p.accent })
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(6.0))
+                        .min_size(egui::vec2(66.0, 26.0)),
                     )
                     .clicked();
+                dismiss = ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new("Cancel").size(11.5).color(p.text_secondary),
+                        )
+                        .fill(p.bg_button)
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(6.0))
+                        .min_size(egui::vec2(66.0, 26.0)),
+                    )
+                    .clicked()
+                    || ui.input(|input| input.key_pressed(egui::Key::Escape));
             });
         });
     if dismiss {

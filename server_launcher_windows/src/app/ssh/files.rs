@@ -55,7 +55,7 @@ impl RemoteFiles {
             self.notice = None;
             self.progress = None;
             self.transfer = matches!(job, Job::Transfer(_));
-            self.changing = !matches!(job, Job::List(_) | Job::Micro(_, _));
+            self.changing = !matches!(job, Job::List(_) | Job::Micro(_, _) | Job::RunPython(_));
             self.worker = Some(backend::start(host, job, ctx.clone()));
         }
     }
@@ -82,9 +82,7 @@ impl RemoteFiles {
 
         match result {
             Ok(Outcome::MicroMissing(path)) => self.prompt = Some(Prompt::InstallMicro(path)),
-            Ok(Outcome::MicroOpened) => {
-                self.notice = Some(("Opened Micro in an SSH terminal.".into(), false))
-            }
+            Ok(Outcome::TerminalOpened(message)) => self.notice = Some((message.into(), false)),
             Ok(Outcome::Listing(listing)) => {
                 if let Some(index) = self.history_target.take() {
                     self.history_index = index;

@@ -9,6 +9,7 @@ use std::{
 pub(super) enum Job {
     List(String),
     Micro(String, bool),
+    RunPython(String),
     Create(String, bool),
     Rename(String, String),
     Paste(Vec<String>, String, bool),
@@ -22,7 +23,7 @@ pub(super) enum Job {
 pub(super) enum Outcome {
     Listing(model::Listing),
     MicroMissing(String),
-    MicroOpened,
+    TerminalOpened(&'static str),
     Changed { message: String, moved: bool },
 }
 
@@ -77,6 +78,19 @@ fn run(host: &SshRemoteHost, job: Job) -> Result<Outcome, String> {
     if let Job::Micro(path, install) = job {
         return open_micro(host, path, install);
     }
+    if let Job::RunPython(path) = job {
+        execute(host, "command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1 || { echo 'Python is not installed on this SSH host.' >&2; exit 127; }", 15)?;
+        let (directory, _) = path.rsplit_once('/').ok_or("Invalid Python file path.")?;
+        let directory = shell_quote(if directory.is_empty() { "/" } else { directory });
+        let file = shell_quote(&path);
+        let command = format!("cd {directory} && if command -v python3 >/dev/null 2>&1; then exec python3 {file}; else exec python {file}; fi");
+        let mut host = host.clone();
+        host.remote_cwd.clear();
+        crate::remote::launch_external_ssh_command(&host, &command)?;
+        return Ok(Outcome::TerminalOpened(
+            "Started Python in an SSH terminal.",
+        ));
+    }
     let moved = matches!(&job, Job::Paste(_, _, true));
     let command = mutation_command(job)?;
     execute(host, &command, 300).map(|_| Outcome::Changed {
@@ -129,7 +143,7 @@ fi
     let mut host = host.clone();
     host.remote_cwd.clear();
     crate::remote::launch_external_ssh_command(&host, &command)?;
-    Ok(Outcome::MicroOpened)
+    Ok(Outcome::TerminalOpened("Opened Micro in an SSH terminal."))
 }
 
 pub(super) fn execute(
@@ -282,6 +296,6 @@ done"#,
                 require(tool)
             )
         }
-        Job::List(_) | Job::Micro(_, _) | Job::Transfer(_) => unreachable!(),
+        Job::List(_) | Job::Micro(_, _) | Job::RunPython(_) | Job::Transfer(_) => unreachable!(),
     })
 }

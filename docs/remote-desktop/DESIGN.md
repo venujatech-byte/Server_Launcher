@@ -112,3 +112,16 @@ The viewer worker owns the child and reaps it when the stream ends. Linux
 also requests a parent-death signal for the direct child. Forced termination
 of the password wrapper's descendants has not been verified. Windows and
 editor connection tests do not yet use this transport.
+
+## VNC input
+
+Click the remote canvas to capture keyboard input. On focus loss or a click
+outside the canvas, the viewer releases tracked keys, modifiers and buttons.
+The VNC worker omits its input channel in view-only mode. A bounded queue
+disconnects on overflow so a key release cannot silently disappear. Pointer
+coordinates follow the displayed canvas and are clamped during a drag.
+Classic RFB currently forwards the primary three buttons and both scroll
+axes. Extra buttons, IME, host-key shortcuts and platform keyboard capture
+are pending. Input mapping and focus release were tested in-process.
+Synthetic desktop input did not reach the loopback peer in the X11 smoke
+test, so end-to-end input behavior remains unverified.

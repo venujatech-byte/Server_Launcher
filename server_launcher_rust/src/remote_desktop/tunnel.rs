@@ -155,8 +155,39 @@ impl Drop for Tunnel {
     }
 }
 
-pub(crate) trait DesktopStream: Read + Write {}
-impl<T: Read + Write> DesktopStream for T {}
+pub(crate) trait InputSocket: Write + Send {
+    fn disconnect(&self);
+}
+
+pub(crate) trait DesktopStream: Read + Write {
+    fn input_socket(&self) -> io::Result<Box<dyn InputSocket>>;
+}
+
+impl InputSocket for std::net::TcpStream {
+    fn disconnect(&self) {
+        let _ = self.shutdown(std::net::Shutdown::Both);
+    }
+}
+
+impl DesktopStream for std::net::TcpStream {
+    fn input_socket(&self) -> io::Result<Box<dyn InputSocket>> {
+        Ok(Box::new(self.try_clone()?))
+    }
+}
+
+#[cfg(unix)]
+impl InputSocket for UnixStream {
+    fn disconnect(&self) {
+        let _ = self.shutdown(std::net::Shutdown::Both);
+    }
+}
+
+#[cfg(unix)]
+impl DesktopStream for Tunnel {
+    fn input_socket(&self) -> io::Result<Box<dyn InputSocket>> {
+        Ok(Box::new(self.stream.try_clone()?))
+    }
+}
 
 pub(crate) fn open(
     host: &SshRemoteHost,

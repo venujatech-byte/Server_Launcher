@@ -11,7 +11,10 @@ use des::{
 use std::{
     io::{self, Read, Write},
     net::{IpAddr, TcpStream, ToSocketAddrs},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc, Mutex,
+    },
     time::Duration,
 };
 use zeroize::Zeroizing;
@@ -22,10 +25,34 @@ const DESKTOP_SIZE: i32 = -223;
 
 const TIMEOUT: Duration = Duration::from_secs(8);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Input {
+    Key { keysym: u32, pressed: bool },
+    Pointer { x: u16, y: u16, buttons: u8 },
+}
+
+impl Input {
+    fn write(self, stream: &mut impl Write) -> io::Result<()> {
+        match self {
+            Self::Key { keysym, pressed } => {
+                let [a, b, c, d] = keysym.to_be_bytes();
+                stream.write_all(&[4, u8::from(pressed), 0, 0, a, b, c, d])
+            }
+            Self::Pointer { x, y, buttons } => {
+                let [a, b] = x.to_be_bytes();
+                let [c, d] = y.to_be_bytes();
+                stream.write_all(&[5, buttons, a, b, c, d])
+            }
+        }
+    }
+}
+
 pub(crate) struct Connection {
     pub framebuffer: Framebuffer,
     pub status: String,
     pub connected: bool,
+    input: Option<mpsc::SyncSender<Input>>,
+    input_overflow: Arc<AtomicBool>,
 }
 
 impl Connection {
@@ -34,6 +61,8 @@ impl Connection {
             framebuffer: Framebuffer::default(),
             status: "Connecting to VNC…".into(),
             connected: false,
+            input: None,
+            input_overflow: Arc::new(AtomicBool::new(false)),
         }));
         let worker = state.clone();
         std::thread::spawn(move || {
@@ -41,11 +70,21 @@ impl Connection {
             if let Err(error) = result {
                 let mut state = worker.lock().unwrap();
                 state.connected = false;
+                state.input = None;
                 state.status = error.to_string();
                 ctx.request_repaint();
             }
         });
         state
+    }
+
+    pub(crate) fn send_input(&self, event: Input) {
+        if let Some(input) = &self.input {
+            if matches!(input.try_send(event), Err(mpsc::TrySendError::Full(_))) {
+                // Disconnect rather than lose key releases when the network is stalled.
+                self.input_overflow.store(true, Ordering::Release);
+            }
+        }
     }
 }
 
@@ -122,6 +161,25 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
     }
     stream.write_all(&encodings)?;
     request(&mut stream, size, false)?;
+    let writer = Arc::new(Mutex::new(stream.input_socket()?));
+    if !profile.view_only {
+        let (input, pending) = mpsc::sync_channel(256);
+        let overflow = {
+            let mut state = state.lock().unwrap();
+            state.input = Some(input);
+            state.input_overflow.clone()
+        };
+        let writer = writer.clone();
+        std::thread::spawn(move || {
+            while let Ok(event) = pending.recv() {
+                let mut writer = writer.lock().unwrap();
+                if overflow.load(Ordering::Acquire) || event.write(&mut *writer).is_err() {
+                    writer.disconnect();
+                    break;
+                }
+            }
+        });
+    }
     ctx.request_repaint();
 
     let mut pixels = Vec::new();
@@ -157,7 +215,7 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
                     }
                 }
                 ctx.request_repaint();
-                request(&mut stream, size, !resized)?;
+                request(&mut *writer.lock().unwrap(), size, !resized)?;
             }
             2 => {}
             3 => {

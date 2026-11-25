@@ -1,6 +1,7 @@
 use super::{
     credentials::DesktopProtocol,
     framebuffer::{Framebuffer, Region},
+    input::Capture,
     profile::Scaling,
     vnc::Connection,
 };
@@ -37,6 +38,10 @@ pub(crate) fn run(
     let vnc_host = profile
         .filter(|_| !test_pattern && protocol == DesktopProtocol::Vnc)
         .cloned();
+    let view_only = vnc_host
+        .as_ref()
+        .and_then(|host| host.vnc.as_ref())
+        .is_some_and(|profile| profile.view_only);
     let palette = ThemeMode::from_id_str(theme).palette();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -83,6 +88,8 @@ pub(crate) fn run(
                 scaling,
                 fullscreen: false,
                 test_pattern,
+                view_only,
+                capture: Capture::default(),
             }))
         }),
     )
@@ -97,7 +104,39 @@ struct Viewer {
     texture: Option<egui::TextureHandle>,
     scaling: Scaling,
     fullscreen: bool,
+    view_only: bool,
+    capture: Capture,
     test_pattern: bool,
+}
+
+impl Viewer {
+    fn send_input(
+        &mut self,
+        ctx: &egui::Context,
+        canvas: egui::Rect,
+        clip: egui::Rect,
+        size: [usize; 2],
+    ) {
+        let Some(connection) = &self.connection else {
+            return;
+        };
+        let connection = connection.lock().unwrap();
+        if !connection.connected || self.view_only {
+            return;
+        }
+        ctx.input(|input| {
+            self.capture.events(
+                &input.events,
+                input.modifiers,
+                input.focused,
+                canvas,
+                clip,
+                size,
+                input.pointer.hover_pos(),
+                |event| connection.send_input(event),
+            );
+        });
+    }
 }
 
 impl eframe::App for Viewer {
@@ -169,6 +208,9 @@ impl eframe::App for Viewer {
                 if !connected && self.texture.is_some() && !self.test_pattern {
                     ui.label(&status);
                 }
+                if self.view_only && connected {
+                    ui.label("View only");
+                }
                 if ui.button("Disconnect").clicked() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
@@ -180,10 +222,15 @@ impl eframe::App for Viewer {
                 return;
             };
             let native = texture.size_vec2() / ctx.pixels_per_point();
-            if self.scaling == Scaling::Native {
-                egui::ScrollArea::both().show(ui, |ui| {
-                    ui.image((texture.id(), native));
-                });
+            let pixels = texture.size();
+            let mut clip = ui.clip_rect();
+            let screen = if self.scaling == Scaling::Native {
+                egui::ScrollArea::both()
+                    .show(ui, |ui| {
+                        clip = ui.clip_rect();
+                        ui.image((texture.id(), native)).rect
+                    })
+                    .inner
             } else {
                 let canvas = ui.available_rect_before_wrap();
                 let size = if self.scaling == Scaling::Fit {
@@ -198,7 +245,9 @@ impl eframe::App for Viewer {
                     egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
                     egui::Color32::WHITE,
                 );
-            }
+                screen
+            };
+            self.send_input(ctx, screen, clip, pixels);
         });
     }
 }

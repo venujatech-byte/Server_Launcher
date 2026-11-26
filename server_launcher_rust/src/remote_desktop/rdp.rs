@@ -37,6 +37,7 @@ use std::{
 };
 use x509_cert::der::Decode;
 
+const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) fn start(
@@ -206,10 +207,9 @@ fn run(
         .get_inner()
         .0
         .sock
-        .set_read_timeout(Duration::from_millis(30))?;
+        .set_read_timeout(INPUT_POLL_INTERVAL)?;
     let mut encoder = super::rdp_input::Encoder::default();
     let mut events = Vec::with_capacity(64);
-    let mut rgba = Vec::new();
     let mut proposed_resize = None;
     loop {
         if overflow.load(Ordering::Acquire) {
@@ -288,16 +288,13 @@ fn run(
                         origin: [x, y],
                         size: [right - x + 1, bottom - y + 1],
                     };
-                    rgba.clear();
-                    for row in y..=bottom {
-                        let start = row * image.stride() + x * 4;
-                        rgba.extend_from_slice(&image.data()[start..start + region.size[0] * 4]);
-                    }
+                    let stride = image.stride();
+                    let offset = y * stride + x * 4;
                     state
                         .lock()
                         .unwrap()
                         .framebuffer
-                        .write_rgba(region, &rgba)
+                        .write_strided_rgba(region, &image.data()[offset..], stride)
                         .map_err(error)?;
                     ctx.request_repaint();
                 }
@@ -366,7 +363,7 @@ fn run(
                         .get_inner()
                         .0
                         .sock
-                        .set_read_timeout(Duration::from_millis(30))?;
+                        .set_read_timeout(INPUT_POLL_INTERVAL)?;
                     ctx.request_repaint();
                 }
                 _ => {}
@@ -408,6 +405,7 @@ fn open_direct(hostname: &str, port: u16) -> io::Result<TcpStream> {
         let remaining = deadline.saturating_duration_since(Instant::now());
         (!remaining.is_zero()).then(|| TcpStream::connect_timeout(&address, remaining.min(Duration::from_secs(3))).ok()).flatten()
     }).ok_or_else(|| error("Could not connect to the RDP port. Check that Remote Desktop is enabled on the host."))?;
+    socket.set_nodelay(true)?;
     socket.set_read_timeout(Some(CONNECT_TIMEOUT))?;
     socket.set_write_timeout(Some(CONNECT_TIMEOUT))?;
     Ok(socket)

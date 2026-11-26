@@ -393,13 +393,11 @@ impl eframe::App for Viewer {
                             ui.selectable_value(&mut self.scaling, scale, scale_label(scale));
                         }
                     });
-                if self.protocol == DesktopProtocol::Vnc {
-                    if ui.checkbox(&mut self.show_fps, "Show live FPS").changed() {
-                        ctx.request_repaint();
-                    }
-                    if self.show_fps && connected {
-                        ui.label(format!("{:.1} FPS", self.fps));
-                    }
+                if ui.checkbox(&mut self.show_fps, "Show live FPS").changed() {
+                    ctx.request_repaint();
+                }
+                if self.show_fps && connected {
+                    ui.label(format!("{:.1} FPS", self.fps));
                 }
                 if self.protocol == DesktopProtocol::Vnc {
                     if let Some(connection) = &self.connection {

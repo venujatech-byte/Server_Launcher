@@ -66,6 +66,21 @@ impl Framebuffer {
     }
 
     pub(crate) fn write_rgba(&mut self, region: Region, rgba: &[u8]) -> Result<(), &'static str> {
+        let packed_stride = region.size[0]
+            .checked_mul(4)
+            .ok_or("Invalid pixel stride.")?;
+        if packed_stride.checked_mul(region.size[1]) != Some(rgba.len()) {
+            return Err("Invalid remote framebuffer pixel length.");
+        }
+        self.write_strided_rgba(region, rgba, packed_stride)
+    }
+
+    pub(crate) fn write_strided_rgba(
+        &mut self,
+        region: Region,
+        rgba: &[u8],
+        source_stride: usize,
+    ) -> Result<(), &'static str> {
         let [x, y] = region.origin;
         let [w, h] = region.size;
         let [right, bottom] = region
@@ -75,12 +90,18 @@ impl Framebuffer {
             || h == 0
             || right > self.size[0]
             || bottom > self.size[1]
-            || rgba.len() != w * h * 4
+            || source_stride < w * 4
+            || (h - 1)
+                .checked_mul(source_stride)
+                .and_then(|offset| offset.checked_add(w * 4))
+                .is_none_or(|end| end > rgba.len())
         {
             return Err("Invalid remote framebuffer rectangle or pixel length.");
         }
         let stride = self.size[0];
-        for (row, source) in rgba.chunks_exact(w * 4).enumerate() {
+        for row in 0..h {
+            let offset = row * source_stride;
+            let source = &rgba[offset..offset + w * 4];
             let start = (y + row) * stride + x;
             for (target, pixel) in self.pixels[start..start + w]
                 .iter_mut()
@@ -157,6 +178,19 @@ impl Framebuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strided_damage_skips_source_padding() {
+        let mut fb = Framebuffer::default();
+        fb.resize([1, 2]).unwrap();
+        let region = Region {
+            origin: [0, 0],
+            size: [1, 2],
+        };
+        let source = [255, 0, 0, 0, 99, 99, 99, 99, 0, 255, 0, 0];
+        fb.write_strided_rgba(region, &source, 8).unwrap();
+        assert_eq!(fb.pixels, [Color32::RED, Color32::GREEN]);
+    }
 
     #[test]
     fn copies_overlapping_rows_and_columns_without_overwriting_the_source_early() {

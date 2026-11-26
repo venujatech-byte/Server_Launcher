@@ -84,12 +84,13 @@ impl ClipboardSync {
                         }
                     }
                     if read_local {
-                        if let Ok(text) = clipboard.get_text() {
-                            if should_forward(&text, &mut last_text) {
-                                *worker_pending_local.lock().unwrap() = Some(text);
-                                ctx.request_repaint();
-                            }
-                        } else if let Ok(image) = clipboard.get_image() {
+                        let local_text = clipboard.get_text();
+                        let local_image = if should_read_image(local_text.as_deref().ok()) {
+                            clipboard.get_image().ok()
+                        } else {
+                            None
+                        };
+                        if let Some(image) = local_image {
                             let image = ClipboardImage {
                                 width: image.width,
                                 height: image.height,
@@ -108,6 +109,11 @@ impl ClipboardSync {
                                     *worker_pending_local_image.lock().unwrap() = Some(image);
                                     ctx.request_repaint();
                                 }
+                            }
+                        } else if let Ok(text) = local_text {
+                            if should_forward(&text, &mut last_text) {
+                                *worker_pending_local.lock().unwrap() = Some(text);
+                                ctx.request_repaint();
                             }
                         }
                     }
@@ -174,6 +180,10 @@ fn should_forward(text: &str, last_text: &mut Option<String>) -> bool {
     true
 }
 
+fn should_read_image(text: Option<&str>) -> bool {
+    text.is_none_or(str::is_empty)
+}
+
 #[cfg(test)]
 mod tests {
     use super::should_forward;
@@ -187,5 +197,12 @@ mod tests {
             &"x".repeat(super::super::vnc::CLIPBOARD_LIMIT + 1),
             &mut last
         ));
+    }
+
+    #[test]
+    fn checks_image_fallback_for_empty_or_unavailable_text() {
+        assert!(super::should_read_image(None));
+        assert!(super::should_read_image(Some("")));
+        assert!(!super::should_read_image(Some("text")));
     }
 }

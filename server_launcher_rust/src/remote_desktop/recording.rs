@@ -65,7 +65,7 @@ fn record(
     paused: &AtomicBool,
 ) -> Result<PathBuf, String> {
     let deadline = Instant::now() + Duration::from_secs(8);
-    let mut frame = loop {
+    let frame = loop {
         if stop.load(Ordering::Relaxed) {
             return Err("Recording cancelled before the first frame.".into());
         }
@@ -92,7 +92,7 @@ fn record(
     let output = tempfile::Builder::new()
         .prefix(&prefix)
         .suffix(".mp4")
-        .tempfile_in(folder)
+        .tempfile_in(&folder)
         .map_err(|error| error.to_string())?
         .into_temp_path();
     let resolution = format!("{}x{}", size[0], size[1]);
@@ -102,7 +102,7 @@ fn record(
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000);
     }
-    let mut child = command
+    let child = command
         .args([
             "-nostdin",
             "-loglevel",
@@ -134,32 +134,89 @@ fn record(
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                "FFmpeg was not found. Install FFmpeg to record MP4 video.".into()
-            } else {
-                format!("Could not start FFmpeg: {error}")
+        .spawn();
+    let mut child = match child {
+        Ok(child) => child,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let sequence = tempfile::Builder::new()
+                .prefix(&prefix)
+                .tempdir_in(&folder)
+                .map_err(|error| error.to_string())?;
+            let mut index = 0_u64;
+            let result = sample_frames(
+                connection,
+                stop,
+                paused,
+                frame,
+                Duration::from_millis(200),
+                |frame| {
+                    super::screenshot::save_in(
+                        frame,
+                        sequence.path(),
+                        &format!("frame-{index:08}"),
+                    )
+                    .map_err(|error| error.to_string())?;
+                    index += 1;
+                    Ok(())
+                },
+            );
+            if index != 0 {
+                let path = sequence.keep();
+                result.map_err(|error| {
+                    format!("{error} Partial PNG sequence saved to {}", path.display())
+                })?;
+                return Ok(path);
             }
-        })?;
+            return Err(result
+                .err()
+                .unwrap_or_else(|| "No recording frames were saved.".into()));
+        }
+        Err(error) => return Err(format!("Could not start FFmpeg: {error}")),
+    };
     let mut pipe = child.stdin.take().expect("FFmpeg stdin was piped");
     let mut pixels = Vec::with_capacity(size[0] * size[1] * 4);
-    let interval = Duration::from_secs_f64(1.0 / 30.0);
+    let write_result = sample_frames(
+        connection,
+        stop,
+        paused,
+        frame,
+        Duration::from_secs_f64(1.0 / 30.0),
+        |frame| {
+            pixels.clear();
+            pixels.extend(frame.pixels.iter().flat_map(|pixel| pixel.to_array()));
+            pipe.write_all(&pixels)
+                .map_err(|error| format!("Could not write the recording: {error}"))
+        },
+    );
+    drop(pipe);
+    let status = child.wait().map_err(|error| error.to_string())?;
+    write_result?;
+    if !status.success() {
+        return Err(format!("FFmpeg could not encode the recording ({status})."));
+    }
+    output.keep().map_err(|error| error.to_string())
+}
+
+fn sample_frames(
+    connection: &Mutex<Connection>,
+    stop: &AtomicBool,
+    paused: &AtomicBool,
+    mut frame: egui::ColorImage,
+    interval: Duration,
+    mut write: impl FnMut(&egui::ColorImage) -> Result<(), String>,
+) -> Result<(), String> {
+    let size = frame.size;
     let mut next = Instant::now();
-    let write_result = loop {
+    loop {
         if paused.load(Ordering::Relaxed) {
             if stop.load(Ordering::Relaxed) || !connection.lock().unwrap().connected {
-                break Ok(());
+                return Ok(());
             }
             thread::sleep(interval);
             next = Instant::now();
             continue;
         }
-        pixels.clear();
-        pixels.extend(frame.pixels.iter().flat_map(|pixel| pixel.to_array()));
-        if let Err(error) = pipe.write_all(&pixels) {
-            break Err(format!("Could not write the recording: {error}"));
-        }
+        write(&frame)?;
         if stop.load(Ordering::Relaxed) {
             break Ok(());
         }
@@ -181,12 +238,5 @@ fn record(
                 frame = updated;
             }
         }
-    };
-    drop(pipe);
-    let status = child.wait().map_err(|error| error.to_string())?;
-    write_result?;
-    if !status.success() {
-        return Err(format!("FFmpeg could not encode the recording ({status})."));
     }
-    output.keep().map_err(|error| error.to_string())
 }

@@ -41,7 +41,7 @@ pub(crate) fn save(frame: egui::ColorImage, host: &str, protocol: &str) -> Resul
         safe_host(host),
         protocol.to_ascii_lowercase()
     );
-    save_in(frame, &folder, &stem).map_err(|error| format!("Could not save screenshot: {error}"))
+    save_in(&frame, &folder, &stem).map_err(|error| format!("Could not save screenshot: {error}"))
 }
 
 pub(super) fn pictures() -> Result<PathBuf, String> {
@@ -83,7 +83,7 @@ fn safe_host(host: &str) -> String {
     }
 }
 
-fn save_in(frame: egui::ColorImage, folder: &Path, stem: &str) -> io::Result<PathBuf> {
+pub(super) fn save_in(frame: &egui::ColorImage, folder: &Path, stem: &str) -> io::Result<PathBuf> {
     fs::create_dir_all(folder)?;
     let mut png = tempfile::NamedTempFile::new_in(folder)?;
     let rgb: Vec<u8> = frame
@@ -151,8 +151,8 @@ mod tests {
             size: [2, 1],
             pixels: vec![egui::Color32::RED, egui::Color32::BLUE],
         };
-        let first = save_in(frame.clone(), folder.path(), &sanitized).unwrap();
-        let next = save_in(frame, folder.path(), &sanitized).unwrap();
+        let first = save_in(&frame, folder.path(), &sanitized).unwrap();
+        let next = save_in(&frame, folder.path(), &sanitized).unwrap();
         assert_ne!(first, next);
         let png = image::open(first).unwrap().to_rgb8();
         assert_eq!(png.dimensions(), (2, 1));

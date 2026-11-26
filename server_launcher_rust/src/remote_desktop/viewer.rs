@@ -868,7 +868,12 @@ impl eframe::App for Viewer {
                         } else if let Some(result) = &self.recording_result {
                             match result {
                                 Ok(path) => {
-                                    ui.label(format!("Recording saved to {}", path.display()));
+                                    let label = if path.is_dir() {
+                                        "FFmpeg unavailable. PNG frames saved to"
+                                    } else {
+                                        "Recording saved to"
+                                    };
+                                    ui.label(format!("{label} {}", path.display()));
                                 }
                                 Err(error) => {
                                     ui.label(error);

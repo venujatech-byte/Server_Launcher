@@ -463,6 +463,7 @@ fn run(
     let mut events = Vec::with_capacity(64);
     let mut dirty_regions = Vec::with_capacity(8);
     let mut converted_damage = Vec::new();
+    let mut merged_damage = Vec::with_capacity(8);
     let mut proposed_resize = None;
     let received_bytes = state.lock().unwrap().received_bytes.clone();
     loop {
@@ -768,6 +769,7 @@ fn run(
                         state,
                         ctx,
                         &mut converted_damage,
+                        &mut merged_damage,
                     )?;
                     let mut activation = activation_factory.create();
                     framed
@@ -844,6 +846,7 @@ fn run(
             state,
             ctx,
             &mut converted_damage,
+            &mut merged_damage,
         )?;
     }
 }
@@ -1135,6 +1138,7 @@ fn publish_damage(
     state: &Arc<Mutex<Connection>>,
     ctx: &egui::Context,
     converted_pixels: &mut Vec<egui::Color32>,
+    merged_regions: &mut Vec<Region>,
 ) -> io::Result<()> {
     if regions.is_empty() {
         return Ok(());
@@ -1146,6 +1150,7 @@ fn publish_damage(
         width,
         height,
         converted_pixels,
+        merged_regions,
     )?;
     let mut shared = state.lock().unwrap();
     for (region, range) in prepared {
@@ -1168,8 +1173,10 @@ fn prepare_damage(
     width: u16,
     height: u16,
     pixels: &mut Vec<egui::Color32>,
+    merged_regions: &mut Vec<Region>,
 ) -> io::Result<Vec<(Region, Range<usize>)>> {
     pixels.clear();
+    merged_regions.clear();
     let minimum_stride = usize::from(width)
         .checked_mul(4)
         .ok_or_else(|| error("The RDP server reported invalid framebuffer damage."))?;
@@ -1179,7 +1186,6 @@ fn prepare_damage(
     let frame_pixels = usize::from(width)
         .checked_mul(usize::from(height))
         .ok_or_else(|| error("The RDP server reported invalid framebuffer damage."))?;
-    let mut damaged_pixels = 0usize;
     for &region in regions {
         let [x, y] = region.origin;
         let [w, h] = region.size;
@@ -1192,13 +1198,26 @@ fn prepare_damage(
         if w == 0 || h == 0 || right > usize::from(width) || bottom > usize::from(height) {
             return Err(error("The RDP server reported invalid framebuffer damage."));
         }
-        damaged_pixels = damaged_pixels
-            .checked_add(
-                w.checked_mul(h)
-                    .ok_or_else(|| error("The RDP server reported invalid framebuffer damage."))?,
-            )
-            .ok_or_else(|| error("The RDP server reported invalid framebuffer damage."))?;
+        let mut merged = region;
+        let mut index = 0;
+        while index < merged_regions.len() {
+            let other = merged_regions[index];
+            if damage_intersects(merged, other) {
+                merged = damage_union(merged, other);
+                merged_regions.swap_remove(index);
+                index = 0;
+            } else {
+                index += 1;
+            }
+        }
+        merged_regions.push(merged);
     }
+    let damaged_pixels = merged_regions
+        .iter()
+        .try_fold(0usize, |total, region| {
+            total.checked_add(region.size[0].checked_mul(region.size[1])?)
+        })
+        .ok_or_else(|| error("The RDP server reported invalid framebuffer damage."))?;
     let full_frame = [Region {
         origin: [0, 0],
         size: [usize::from(width), usize::from(height)],
@@ -1206,7 +1225,7 @@ fn prepare_damage(
     let regions = if damaged_pixels >= frame_pixels {
         &full_frame[..]
     } else {
-        regions
+        merged_regions.as_slice()
     };
     let mut prepared = Vec::with_capacity(regions.len());
     for &region in regions {
@@ -1243,6 +1262,25 @@ fn prepare_damage(
         prepared.push((region, start..pixels.len()));
     }
     Ok(prepared)
+}
+
+fn damage_intersects(a: Region, b: Region) -> bool {
+    a.origin[0] < b.origin[0] + b.size[0]
+        && b.origin[0] < a.origin[0] + a.size[0]
+        && a.origin[1] < b.origin[1] + b.size[1]
+        && b.origin[1] < a.origin[1] + a.size[1]
+}
+
+fn damage_union(a: Region, b: Region) -> Region {
+    let origin = [a.origin[0].min(b.origin[0]), a.origin[1].min(b.origin[1])];
+    let end = [
+        (a.origin[0] + a.size[0]).max(b.origin[0] + b.size[0]),
+        (a.origin[1] + a.size[1]).max(b.origin[1] + b.size[1]),
+    ];
+    Region {
+        origin,
+        size: [end[0] - origin[0], end[1] - origin[1]],
+    }
 }
 
 struct EgfxHandler {
@@ -1667,7 +1705,8 @@ mod tests {
             size: [2, 2],
         }];
         let mut pixels = Vec::new();
-        let prepared = prepare_damage(&regions, &data, 12, 2, 2, &mut pixels).unwrap();
+        let mut merged = Vec::new();
+        let prepared = prepare_damage(&regions, &data, 12, 2, 2, &mut pixels, &mut merged).unwrap();
         assert_eq!(prepared, [(regions[0], 0..4)]);
         assert_eq!(
             pixels,
@@ -1683,6 +1722,7 @@ mod tests {
     #[test]
     fn rejects_damage_outside_decoded_image_data() {
         let mut pixels = Vec::new();
+        let mut merged = Vec::new();
         let result = prepare_damage(
             &[Region {
                 origin: [0, 1],
@@ -1693,6 +1733,7 @@ mod tests {
             1,
             2,
             &mut pixels,
+            &mut merged,
         );
         assert!(result.is_err());
     }
@@ -1705,9 +1746,41 @@ mod tests {
             size: [2, 1],
         };
         let mut pixels = Vec::new();
-        let prepared = prepare_damage(&[region, region], &data, 8, 2, 1, &mut pixels).unwrap();
+        let mut merged = Vec::new();
+        let prepared =
+            prepare_damage(&[region, region], &data, 8, 2, 1, &mut pixels, &mut merged).unwrap();
         assert_eq!(prepared, [(region, 0..2)]);
         assert_eq!(pixels, [egui::Color32::RED, egui::Color32::GREEN]);
+    }
+
+    #[test]
+    fn overlapping_damage_does_not_trigger_a_full_frame_conversion() {
+        let data = [255, 0, 0, 0, 0, 255, 0, 0, 0, 0, 255, 0, 255, 255, 255, 0];
+        let regions = [
+            Region {
+                origin: [0, 0],
+                size: [2, 1],
+            },
+            Region {
+                origin: [1, 0],
+                size: [2, 1],
+            },
+        ];
+        let mut pixels = Vec::new();
+        let mut merged = Vec::new();
+        let prepared =
+            prepare_damage(&regions, &data, 16, 4, 1, &mut pixels, &mut merged).unwrap();
+        assert_eq!(
+            prepared,
+            [(
+                Region {
+                    origin: [0, 0],
+                    size: [3, 1]
+                },
+                0..3
+            )]
+        );
+        assert_eq!(pixels.len(), 3);
     }
 
     #[test]

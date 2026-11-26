@@ -264,7 +264,12 @@ fn start_connection(
                 ctx.clone(),
             )
         }
-        DesktopProtocol::Vnc => Connection::start(host, session_password, ctx.clone()),
+        DesktopProtocol::Vnc => Connection::start(
+            host,
+            config_path.to_owned(),
+            session_password,
+            ctx.clone(),
+        ),
     }
 }
 

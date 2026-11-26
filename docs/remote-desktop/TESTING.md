@@ -138,7 +138,9 @@ Platform keyboard capture remains unsupported.
 6. Test direct public-address confirmation and SSH tunneling. Use Test
    Connection through the tunnel and confirm the RFB banner/security offer is
    reported. On Windows, verify a key- or agent-authenticated SSH profile
-   opens the requested local forward. Verify closing or crashing the viewer
+   and a saved-password-only profile both open the requested local forward.
+   Confirm the askpass password is absent from process arguments and
+   environment variables. Verify closing or crashing the viewer
    cleans up the tunnel process.
 7. Enable Close on connection failure and verify an exhausted retry sequence
    closes the viewer. With the option disabled, the final error stays visible.

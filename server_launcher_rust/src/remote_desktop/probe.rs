@@ -154,6 +154,7 @@ pub(crate) struct ProbeRequest {
     pub ssh_host: Option<crate::config::SshRemoteHost>,
     pub tunnel_via_ssh: bool,
     pub gateway: Option<String>,
+    pub config_path: Option<std::path::PathBuf>,
 }
 
 pub(crate) fn run(request: &ProbeRequest, timeout: Duration) -> Result<String, String> {
@@ -171,7 +172,12 @@ pub(crate) fn run(request: &ProbeRequest, timeout: Duration) -> Result<String, S
             .ssh_host
             .as_ref()
             .ok_or_else(|| "SSH tunnel: host settings are unavailable.".to_owned())?;
-        let mut stream = super::tunnel::open(ssh_host, request.port, timeout)
+        let mut stream = super::tunnel::open(
+            ssh_host,
+            request.port,
+            timeout,
+            request.config_path.as_deref(),
+        )
             .map_err(|error| format!("SSH tunnel: {error}"))?;
         return check_handshake(request, &mut *stream)
             .map(|info| format!("{info} through the SSH tunnel. Authentication was not tested."));
@@ -393,6 +399,7 @@ pub(crate) fn menu_status(
     ctx: &egui::Context,
     host: &crate::config::SshRemoteHost,
     protocol: DesktopProtocol,
+    config_path: &std::path::Path,
 ) -> (&'static str, Option<String>) {
     let (port, rdp_security, tunnel_via_ssh, gateway) = match protocol {
         DesktopProtocol::Rdp => match host.rdp.as_ref().filter(|profile| profile.enabled) {
@@ -424,6 +431,7 @@ pub(crate) fn menu_status(
         ssh_host: Some(ssh_host),
         tunnel_via_ssh,
         gateway,
+        config_path: Some(config_path.to_owned()),
     };
     let last = ctx.data_mut(|data| {
         data.get_temp::<(ProbeRequest, ProbeResult)>(probe_result_id(&host.id, protocol))
@@ -551,6 +559,7 @@ mod tests {
             ssh_host: None,
             tunnel_via_ssh: true,
             gateway: None,
+            config_path: None,
         };
         assert!(run(&request, Duration::from_secs(1))
             .unwrap_err()
@@ -567,6 +576,7 @@ mod tests {
             ssh_host: None,
             tunnel_via_ssh: false,
             gateway: Some("gateway.example.test".into()),
+            config_path: None,
         };
         assert!(run(&request, Duration::from_secs(1))
             .unwrap_err()

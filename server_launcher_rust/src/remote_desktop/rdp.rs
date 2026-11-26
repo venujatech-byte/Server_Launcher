@@ -250,7 +250,7 @@ fn run(
             )?
         } else if profile.tunnel_via_ssh {
             (
-                tunnel::open(host, profile.port, CONNECT_TIMEOUT)?,
+                tunnel::open(host, profile.port, CONNECT_TIMEOUT, Some(config_path))?,
                 SocketAddr::from(([127, 0, 0, 1], 0)),
             )
         } else {

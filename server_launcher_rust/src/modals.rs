@@ -1678,6 +1678,7 @@ pub fn render_ssh_host_modal(
     palette: &ThemePalette,
     timeout_seconds: u32,
     desktop_defaults: &crate::config::RemoteDesktopSettings,
+    config_path: &std::path::Path,
 ) -> ModalAction {
     if !state.open {
         state.pending_test = None;
@@ -1967,6 +1968,7 @@ pub fn render_ssh_host_modal(
                                         ssh_host: Some(ssh_host),
                                         tunnel_via_ssh,
                                         gateway,
+                                        config_path: Some(config_path.to_owned()),
                                     })
                                 }
                             } else {
@@ -2008,6 +2010,7 @@ pub fn render_ssh_host_modal(
                                             ssh_host: Some(ssh_host),
                                             tunnel_via_ssh,
                                             gateway: None,
+                                            config_path: Some(config_path.to_owned()),
                                         }
                                     })
                             });

@@ -29,6 +29,38 @@ use config::ConfigFile;
 use eframe::egui;
 use theme::ThemeMode;
 
+fn write_ssh_askpass_secret() -> Result<(), String> {
+    use std::{io::Write, path::PathBuf};
+    use zeroize::Zeroizing;
+
+    let path = std::env::var_os("SERVER_LAUNCHER_ASKPASS_CONFIG")
+        .map(PathBuf::from)
+        .ok_or_else(|| "Credential helper configuration is missing.".to_owned())?;
+    let id = std::env::var("SERVER_LAUNCHER_ASKPASS_HOST")
+        .map_err(|_| "Credential helper host is missing.")?;
+    let mut config = ConfigFile::load_from_file(&path);
+    let host = config
+        .ssh_hosts
+        .iter_mut()
+        .find(|host| host.id == id)
+        .ok_or_else(|| "Saved SSH host was not found.".to_owned())?;
+    let binding = ssh_credentials::binding(host);
+    let password = if let Some(reference) = host.credential_ref.as_deref() {
+        Zeroizing::new(ssh_credentials::load(reference, &binding)?)
+    } else {
+        Zeroizing::new(std::mem::take(&mut host.password))
+    };
+    if password.is_empty() || password.contains(['\n', '\r', '\0']) {
+        return Err("Saved SSH password is unavailable or invalid for askpass.".into());
+    }
+    let mut output = std::io::stdout().lock();
+    output
+        .write_all(password.as_bytes())
+        .and_then(|()| output.write_all(b"\n"))
+        .and_then(|()| output.flush())
+        .map_err(|_| "Could not return the saved SSH password to OpenSSH.".to_owned())
+}
+
 pub fn load_app_icon() -> Option<egui::IconData> {
     let png_bytes = include_bytes!("../assets/icon.png");
     if let Ok(img) = image::load_from_memory(png_bytes) {
@@ -179,6 +211,13 @@ pub fn ensure_linux_desktop_integration() {}
 
 #[cfg_attr(windows, windows_subsystem = "windows")]
 fn main() -> eframe::Result<()> {
+    if std::env::var_os("SERVER_LAUNCHER_ASKPASS_HOST").is_some() {
+        if let Err(error) = write_ssh_askpass_secret() {
+            eprintln!("Server Launcher SSH askpass failed: {error}");
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
     let mut session_args = std::env::args_os().skip(1);
     if session_args.next().is_some_and(|arg| arg == "--remote-session") {
         use remote_desktop::credentials::DesktopProtocol;

@@ -3254,7 +3254,12 @@ impl eframe::App for LauncherApp {
                                                 });
                                                 ui.add_space(6.0);
                                                 for protocol in DesktopProtocol::ALL {
-                                                    let (status, detail) = probe::menu_status(ui.ctx(), host, protocol);
+                                                    let (status, detail) = probe::menu_status(
+                                                        ui.ctx(),
+                                                        host,
+                                                        protocol,
+                                                        &self.config_path,
+                                                    );
                                                     let label = protocol.label();
                                                     let action_hint = if status == "○ Not configured" {
                                                         format!("Configure {label} to connect")
@@ -3654,6 +3659,7 @@ impl eframe::App for LauncherApp {
             &p,
             self.ssh_probe_timeouts.connection_test_seconds,
             &self.remote_desktop_settings,
+            &self.config_path,
         );
         match ssh_modal_action {
             ModalAction::SaveSshHost(mut new_host, old_id, mut staged) => {

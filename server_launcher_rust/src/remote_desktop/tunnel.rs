@@ -1,6 +1,7 @@
 use crate::config::SshRemoteHost;
 use std::{
     io::{self, Read, Write},
+    path::Path,
     time::Duration,
 };
 
@@ -28,7 +29,12 @@ pub(crate) struct Tunnel {
 
 #[cfg(unix)]
 impl Tunnel {
-    pub(crate) fn open(host: &SshRemoteHost, port: u16, timeout: Duration) -> io::Result<Self> {
+    pub(crate) fn open(
+        host: &SshRemoteHost,
+        port: u16,
+        timeout: Duration,
+        _config_path: Option<&Path>,
+    ) -> io::Result<Self> {
         let password = host
             .credential_ref
             .as_deref()
@@ -181,27 +187,33 @@ impl Drop for KillOnCloseJob {
 
 #[cfg(windows)]
 impl Tunnel {
-    pub(crate) fn open(host: &SshRemoteHost, port: u16, timeout: Duration) -> io::Result<Self> {
-        if (host.credential_ref.is_some() || !host.password.trim().is_empty())
-            && host.key_path.trim().is_empty()
-            && !host.use_agent
-        {
+    pub(crate) fn open(
+        host: &SshRemoteHost,
+        port: u16,
+        timeout: Duration,
+        config_path: Option<&Path>,
+    ) -> io::Result<Self> {
+        let password_auth = host.credential_ref.is_some() || !host.password.trim().is_empty();
+        if password_auth && config_path.is_none() {
             return Err(io::Error::other(
-                "Windows SSH tunnels require an SSH key or agent; saved SSH passwords are not passed to background processes.",
+                "A saved configuration is required to unlock the SSH password for this tunnel.",
+            ));
+        }
+        if host.key_path.trim().is_empty() && !host.use_agent && !password_auth {
+            return Err(io::Error::other(
+                "Configure an SSH key, agent, or saved SSH password before opening this tunnel.",
             ));
         }
 
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
         let local_addr = listener.local_addr()?;
 
-        let forward = format!(
-            "127.0.0.1:{}:127.0.0.1:{port}",
-            local_addr.port()
-        );
+        let forward = format!("127.0.0.1:{}:127.0.0.1:{port}", local_addr.port());
         let target = format!("{}@{}", host.user.trim(), host.host.trim());
         let mut command = Command::new("ssh.exe");
         command
-            .args(["-o", "BatchMode=yes"])
+            .args(["-F", "none"])
+            .args(["-o", if password_auth { "BatchMode=no" } else { "BatchMode=yes" }])
             .args(crate::remote::ssh_policy_args(host))
             .args([
                 "-o",
@@ -255,7 +267,8 @@ impl Tunnel {
                     "The SSH tunnel exited before connecting. Check SSH key or agent access and the remote desktop port.",
                 ));
             }
-            if let Ok(stream) = TcpStream::connect_timeout(&local_addr, Duration::from_millis(100)) {
+            if let Ok(stream) = TcpStream::connect_timeout(&local_addr, Duration::from_millis(100))
+            {
                 if child.try_wait()?.is_some() {
                     return Err(io::Error::other("The SSH tunnel closed during connection."));
                 }
@@ -285,8 +298,8 @@ fn kill_on_close_job(child: &Child) -> io::Result<KillOnCloseJob> {
         Foundation::{CloseHandle, HANDLE},
         System::JobObjects::{
             AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-            SetInformationJobObject,
+            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         },
     };
 

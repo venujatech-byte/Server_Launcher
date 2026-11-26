@@ -13,6 +13,7 @@ use std::{
     hash::{BuildHasher, RandomState},
     io::{self, BufReader, Read, Write},
     net::{IpAddr, TcpStream, ToSocketAddrs},
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc, Mutex,
@@ -182,6 +183,7 @@ pub(crate) struct Connection {
 impl Connection {
     pub(crate) fn start(
         host: SshRemoteHost,
+        config_path: PathBuf,
         session_password: Option<Zeroizing<String>>,
         ctx: egui::Context,
     ) -> Arc<Mutex<Self>> {
@@ -192,7 +194,7 @@ impl Connection {
         let session_password = Arc::new(Mutex::new(session_password));
         Self::start_worker("Connecting to VNC…", reconnect, ctx, move |state, ctx| {
             let password = session_password.lock().unwrap().clone();
-            run(&host, password, state, ctx)
+            run(&host, &config_path, password, state, ctx)
         })
     }
 
@@ -401,6 +403,7 @@ pub(crate) fn needs_unencrypted_warning(host: &str) -> bool {
 
 fn run(
     host: &SshRemoteHost,
+    config_path: &std::path::Path,
     session_password: Option<Zeroizing<String>>,
     state: &Mutex<Connection>,
     ctx: &egui::Context,
@@ -431,7 +434,12 @@ fn run(
         ));
     }
     let mut stream: Box<dyn DesktopStream> = if profile.tunnel_via_ssh {
-        tunnel::open(host, profile.port, TUNNEL_HANDSHAKE_TIMEOUT)?
+        tunnel::open(
+            host,
+            profile.port,
+            TUNNEL_HANDSHAKE_TIMEOUT,
+            Some(config_path),
+        )?
     } else {
         Box::new(open_direct(
             host,

@@ -176,11 +176,11 @@ Unix socket pair, avoiding a local listening port. On Windows, OpenSSH forwards
 to a loopback TCP port chosen from the OS ephemeral range; the viewer owns the
 child in a kill-on-close job object. Both paths use the host's key, agent, and
 host-key preferences. Unix password authentication uses an inherited
-descriptor with sshpass. Windows background tunnels require a key or agent;
-saved SSH passwords are not passed to hidden processes. The full Windows
-x86_64 MSVC app passed the GitHub Actions compile check, but the viewer and
-tunnel still need runtime validation on a Windows machine and real VNC/RDP
-servers.
+descriptor with sshpass. Windows password authentication uses OpenSSH askpass;
+the hidden helper loads the saved credential from the OS credential store and
+writes it only to the SSH process's askpass pipe. The password is not passed in
+arguments or environment variables. Windows tunnels with password-only SSH
+profiles still need runtime validation on Windows and real VNC/RDP servers.
 
 ## VNC input
 

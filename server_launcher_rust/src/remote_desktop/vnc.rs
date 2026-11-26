@@ -704,6 +704,7 @@ fn expand_rgb565(pixels: &mut [u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::TcpListener;
 
     #[test]
     fn expands_packed_vnc_pixels_in_place() {
@@ -786,11 +787,15 @@ mod tests {
     }
 
     #[test]
-    fn direct_vnc_explains_when_ssh_tunnel_is_required() {
+    fn direct_vnc_connects_to_a_reachable_local_server() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || listener.accept().unwrap());
         let host: SshRemoteHost =
-            serde_json::from_str(r#"{"id":"test","name":"Test","host":"203.0.113.10"}"#).unwrap();
-        let error = open_direct(&host, 5900).unwrap_err();
-        assert!(error.to_string().contains("Enable Tunnel via SSH"));
+            serde_json::from_str(r#"{"id":"test","name":"Test","host":"127.0.0.1"}"#).unwrap();
+        let stream = open_direct(&host, port).unwrap();
+        assert_eq!(stream.peer_addr().unwrap().port(), port);
+        server.join().unwrap();
     }
 
     #[test]

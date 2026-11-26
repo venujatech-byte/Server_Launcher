@@ -195,6 +195,7 @@ fn run(
     let activation_factory = result.activation_factory;
     let io_channel_id = result.io_channel_id;
     let user_channel_id = result.user_channel_id;
+    let compression_type = result.compression_type;
     let (input, overflow) = {
         let mut shared = state.lock().unwrap();
         shared
@@ -219,7 +220,7 @@ fn run(
         io_channel_id: result.io_channel_id,
         message_channel_id: result.message_channel_id,
         share_id: result.share_id,
-        compression_type: result.compression_type,
+        compression_type,
         enable_server_pointer: result.enable_server_pointer,
         pointer_software_rendering: result.pointer_software_rendering,
     }
@@ -438,7 +439,7 @@ fn run(
                                     share_id,
                                     enable_server_pointer,
                                     pointer_software_rendering,
-                                    bulk_decompressor: None,
+                                    bulk_decompressor: bulk_decompressor(compression_type),
                                 }
                                 .build(),
                             );
@@ -472,6 +473,18 @@ fn run(
             }
         }
     }
+}
+
+fn bulk_decompressor(
+    compression_type: Option<CompressionType>,
+) -> Option<ironrdp_bulk::BulkCompressor> {
+    let compression_type = match compression_type? {
+        CompressionType::K8 => ironrdp_bulk::CompressionType::Rdp4,
+        CompressionType::K64 => ironrdp_bulk::CompressionType::Rdp5,
+        CompressionType::Rdp6 => ironrdp_bulk::CompressionType::Rdp6,
+        CompressionType::Rdp61 => ironrdp_bulk::CompressionType::Rdp61,
+    };
+    ironrdp_bulk::BulkCompressor::new(compression_type).ok()
 }
 
 pub(crate) fn display_dimensions(width: u32, height: u32) -> [u32; 2] {
@@ -621,5 +634,11 @@ mod tests {
         assert!(fit_server_limit(200, 200, 39_999).is_none());
         let [width, height] = fit_server_limit(4000, 3000, 510_000).unwrap();
         assert!(width % 2 == 0 && width * height <= 510_000);
+    }
+
+    #[test]
+    fn restores_the_negotiated_bulk_decompressor_after_reactivation() {
+        assert!(bulk_decompressor(Some(CompressionType::Rdp61)).is_some());
+        assert!(bulk_decompressor(None).is_none());
     }
 }

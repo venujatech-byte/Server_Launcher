@@ -6174,6 +6174,7 @@ dependencies = [
  "image",
  "ironrdp",
  "ironrdp-blocking",
+ "ironrdp-bulk",
  "libc",
  "rfd",
  "rustls",

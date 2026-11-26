@@ -8,6 +8,7 @@ description = "Cross-platform developer server launcher for Linux & Windows writ
 [dependencies]
 ironrdp = { version = "=0.17.0", default-features = false, features = ["cliprdr", "connector", "core", "displaycontrol", "dvc", "graphics", "pdu", "session"] }
 ironrdp-blocking = "=0.10.0"
+ironrdp-bulk = "=0.1.1"
 rustls = { version = "0.23", default-features = false, features = ["std", "ring", "tls12"] }
 rustls-native-certs = "0.8"
 x509-cert = { version = "0.2", default-features = false, features = ["std"] }

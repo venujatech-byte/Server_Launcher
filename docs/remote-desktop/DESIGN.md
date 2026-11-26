@@ -187,6 +187,7 @@ In Fit Window mode, RDP sends a single-monitor display request after the
 window has settled for 180 ms. Requests are bounded by local framebuffer
 limits and the server's advertised monitor area. Server reactivation updates
 the share ID and graphics decoder and allocates a validated framebuffer for
-the new size. The selected color depth is advertised as a preference.
+the new size, restoring the negotiated bulk decompressor for fast-path updates.
+The selected color depth is advertised as a preference.
 Dimension normalization has unit coverage. A live resize against Windows
 RDP or xrdp still needs verification.

@@ -108,9 +108,11 @@ on UI controls alone.
 8. Request a supported and unsupported remote resolution; confirm rejection
    leaves the prior framebuffer usable.
 
-Tight encoding, username-based VNC authentication, rich clipboard, and direct
-VNC encryption are not currently implemented. Classic VNC over a direct
-connection is unencrypted.
+Tight fill, copy, palette, gradient, JPEG and PNG decoding have unit coverage;
+verify them against a live TigerVNC or x11vnc server before relying on every
+server-specific Tight variant. Username-based VNC authentication, rich
+clipboard, and direct VNC encryption are not currently implemented. Classic
+VNC over a direct connection is unencrypted.
 
 ## Session and security checks
 

@@ -93,13 +93,14 @@ RDP and VNC can disable fractional wheel accumulation; RDP can also swap the
 primary and secondary pointer buttons for left-handed use. These are local
 input/display settings, not protocol performance modes. The VNC editor groups
 the existing profile options into Advanced, Behavior, and SSH Tunnel sections.
-New VNC profiles request only the supported ZRLE, CopyRect, and Raw encodings.
-Old saved Tight priorities remain readable but are skipped with an explicit
-unsupported label. The profile can turn remote cursor display off; by default,
+New VNC profiles request Tight, ZRLE, CopyRect, and Raw encodings. Tight
+supports fill, copy, palette, gradient, JPEG, and PNG subencodings with bounded
+rectangle sizes and four persistent zlib streams. The profile can turn remote cursor display off; by default,
 the viewer requests RichCursor or XCursor shapes plus PointerPos updates and
 draws the cursor over the scaled framebuffer.
-Remmina's server-side local-input lock is not exposed. Tight decoding is not
-implemented, and bell messages are ignored.
+Remmina's server-side local-input lock is not exposed, and bell messages are
+ignored. Tight gradient decoding currently requires the negotiated 24-bit color
+format; a 16-bit gradient rectangle is rejected with a clear error.
 
 ## Direct connection checks
 
@@ -121,14 +122,15 @@ installs packages or changes the remote machine.
 ## VNC transport and current limits
 
 The live RFB implementation validates display dimensions and rectangle lengths
-before allocating and requests incremental updates. It supports Raw, CopyRect,
-and ZRLE rectangles (raw, solid, packed-palette, and RLE tiles), classic VNC
+before allocating and requests incremental updates. It supports Tight (fill,
+copy, palette, gradient, JPEG and PNG), Raw, CopyRect, and ZRLE rectangles (raw,
+solid, packed-palette, and RLE tiles), classic VNC
 password authentication, SSH stdio forwarding on Unix and Windows, keyboard
 and pointer input, clipboard text, and server-supported resolution changes.
 Fast quality selects RGB565; Auto follows the configured color depth. Direct
 VNC to a public or unknown address requires an explicit warning confirmation. The
-configured encoding priority is applied for the supported encodings; Tight is
-shown as unsupported and skipped. Username-based authentication is unsupported.
+configured encoding priority is applied for the supported encodings.
+Username-based authentication is unsupported.
 Rich and X cursor shapes are drawn locally when the server supports either
 cursor encoding and a PointerPos extension. ZRLE uses one bounded persistent zlib stream per
 connection. Classic RFB clipboard text is Latin-1; outgoing Unicode text and

@@ -102,8 +102,8 @@ store; protocol passwords are not saved in `servers.json`.
 
 RDP audio, microphone, drive redirection, Microsoft RD Gateway, and keyboard-layout-specific
 IME are not implemented. RDP dual-display layout is best-effort: the server must support two
-monitors, and the viewer presents their combined desktop in one window. VNC Tight
-encodings and username-based authentication are not implemented. VNC cursor
+monitors, and the viewer presents their combined desktop in one window. VNC
+username-based authentication is not implemented. VNC cursor
 shapes can be toggled in the VNC profile; they are enabled by default and need
 server support for RichCursor or XCursor shapes and PointerPos. SSH desktop tunnels support Unix
 and Windows key/agent credentials; Windows password-only

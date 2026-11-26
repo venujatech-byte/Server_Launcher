@@ -25,6 +25,7 @@ pub(crate) const CLIPBOARD_LIMIT: usize = 1024 * 1024;
 
 const RAW: i32 = 0;
 const COPY_RECT: i32 = 1;
+const TIGHT: i32 = 7;
 const ZRLE: i32 = 16;
 const RICH_CURSOR: i32 = -239;
 const X_CURSOR: i32 = -240;
@@ -32,6 +33,7 @@ const POINTER_POS: [i32; 2] = [-225, -232];
 const DESKTOP_SIZE: i32 = -223;
 const EXTENDED_DESKTOP_SIZE: i32 = -308;
 const MAX_ZRLE_COMPRESSED: usize = 64 * 1024 * 1024;
+const MAX_TIGHT_COMPRESSED: usize = 64 * 1024 * 1024;
 
 const TIMEOUT: Duration = Duration::from_secs(8);
 const TUNNEL_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
@@ -409,13 +411,13 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
     format_message[4..].copy_from_slice(&pixel_format);
     stream.write_all(&format_message)?;
     let mut encodings = vec![2, 0];
-    let mut enabled_encodings = Vec::with_capacity(5);
+    let mut enabled_encodings = Vec::with_capacity(6);
     for encoding in &profile.encodings {
         let encoding = match encoding {
             Encoding::Zrle => ZRLE,
             Encoding::CopyRect => COPY_RECT,
             Encoding::Raw => RAW,
-            Encoding::Tight => continue,
+            Encoding::Tight => TIGHT,
         };
         if !enabled_encodings.contains(&encoding) {
             enabled_encodings.push(encoding);
@@ -423,7 +425,7 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
     }
     if !enabled_encodings
         .iter()
-        .any(|encoding| matches!(*encoding, ZRLE | COPY_RECT | RAW))
+        .any(|encoding| matches!(*encoding, TIGHT | ZRLE | COPY_RECT | RAW))
     {
         enabled_encodings.push(RAW);
     }
@@ -495,6 +497,7 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
 
     let mut pixels = Vec::new();
     let mut zrle = ZrleDecoder::default();
+    let mut tight = TightDecoder::default();
     loop {
         let mut kind = [0];
         match stream.read_exact(&mut kind) {
@@ -532,6 +535,7 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
                         index + 1 == count,
                         compact_pixels,
                         &mut zrle,
+                        &mut tight,
                     )? {
                         size = new_size;
                         resized = true;
@@ -788,6 +792,7 @@ fn read_rectangle(
     last: bool,
     compact_pixels: bool,
     zrle: &mut ZrleDecoder,
+    tight: &mut TightDecoder,
 ) -> io::Result<Option<[usize; 2]>> {
     let mut rect = [0; 12];
     stream.read_exact(&mut rect)?;
@@ -932,6 +937,15 @@ fn read_rectangle(
                 .write_rgba(region, &decoded)
                 .map_err(error)?;
         }
+        TIGHT => {
+            let decoded = tight.decode(stream, w, h, compact_pixels)?;
+            state
+                .lock()
+                .unwrap()
+                .framebuffer
+                .write_rgba(region, &decoded)
+                .map_err(error)?;
+        }
         _ => {
             return Err(error(
                 "The VNC server sent an unsupported framebuffer encoding.",
@@ -1015,6 +1029,244 @@ fn read_x_cursor(
         size: [width, height],
         pixels,
     })
+}
+
+#[derive(Default)]
+struct TightDecoder {
+    streams: [Option<flate2::Decompress>; 4],
+}
+
+impl TightDecoder {
+    fn decode(
+        &mut self,
+        reader: &mut impl Read,
+        width: usize,
+        height: usize,
+        compact_pixels: bool,
+    ) -> io::Result<Vec<u8>> {
+        let area = width
+            .checked_mul(height)
+            .filter(|area| *area <= 16 * 1024 * 1024)
+            .ok_or_else(|| error("The VNC Tight rectangle exceeds the pixel limit."))?;
+        let control = read_byte(reader)?;
+        for (index, stream) in self.streams.iter_mut().enumerate() {
+            if control & (1 << index) != 0 {
+                *stream = None;
+            }
+        }
+        let mode = control >> 4;
+        if mode == 8 {
+            let pixel = read_tight_pixel(reader, compact_pixels)?;
+            let mut output = Vec::with_capacity(area * 4);
+            for _ in 0..area {
+                output.extend_from_slice(&pixel);
+            }
+            return Ok(output);
+        }
+        if mode == 9 || mode == 10 {
+            let length = read_tight_length(reader)?;
+            if length == 0 || length > MAX_TIGHT_COMPRESSED {
+                return Err(error("The VNC Tight image exceeds the data limit."));
+            }
+            let mut encoded = vec![0; length];
+            reader.read_exact(&mut encoded)?;
+            let mut reader = image::ImageReader::new(io::Cursor::new(&encoded))
+                .with_guessed_format()
+                .map_err(|_| error("The VNC server sent an invalid Tight image."))?;
+            let mut limits = image::Limits::default();
+            limits.max_image_width = Some(width as u32);
+            limits.max_image_height = Some(height as u32);
+            limits.max_alloc = Some((area * 4) as u64);
+            reader.limits(limits);
+            let image = reader
+                .decode()
+                .map_err(|_| error("The VNC server sent an invalid Tight image."))?;
+            if image.width() as usize != width || image.height() as usize != height {
+                return Err(error("The VNC Tight image has an unexpected size."));
+            }
+            return Ok(image.to_rgba8().into_raw());
+        }
+        if mode > 7 {
+            return Err(error(
+                "The VNC server sent an unsupported Tight subencoding.",
+            ));
+        }
+
+        let stream_id = usize::from(mode & 3);
+        let filter = if mode & 4 != 0 { read_byte(reader)? } else { 0 };
+        let palette = if filter == 1 {
+            let count = usize::from(read_byte(reader)?) + 1;
+            let mut palette = Vec::with_capacity(count);
+            for _ in 0..count {
+                palette.push(read_tight_pixel(reader, compact_pixels)?);
+            }
+            Some(palette)
+        } else {
+            None
+        };
+        let pixel_bytes = if compact_pixels { 2 } else { 3 };
+        let data_length = match filter {
+            0 => area
+                .checked_mul(pixel_bytes)
+                .ok_or_else(|| error("The VNC Tight rectangle is too large."))?,
+            1 => {
+                let count = palette.as_ref().unwrap().len();
+                if count <= 2 {
+                    height
+                        .checked_mul(width.div_ceil(8))
+                        .ok_or_else(|| error("The VNC Tight palette is too large."))?
+                } else {
+                    area
+                }
+            }
+            2 if !compact_pixels => area
+                .checked_mul(3)
+                .ok_or_else(|| error("The VNC Tight rectangle is too large."))?,
+            2 => {
+                return Err(error(
+                    "The VNC Tight gradient filter requires 24-bit color.",
+                ))
+            }
+            _ => return Err(error("The VNC server selected an unknown Tight filter.")),
+        };
+        let decoded = if data_length < 12 {
+            let mut data = vec![0; data_length];
+            reader.read_exact(&mut data)?;
+            data
+        } else {
+            let length = read_tight_length(reader)?;
+            if length == 0 || length > MAX_TIGHT_COMPRESSED {
+                return Err(error("The VNC Tight data exceeds the compressed limit."));
+            }
+            let mut compressed = vec![0; length];
+            reader.read_exact(&mut compressed)?;
+            let stream =
+                self.streams[stream_id].get_or_insert_with(|| flate2::Decompress::new(true));
+            let mut decoded = Vec::with_capacity(data_length);
+            let input_before = stream.total_in();
+            stream
+                .decompress_vec(&compressed, &mut decoded, flate2::FlushDecompress::Sync)
+                .map_err(|_| error("The VNC server sent invalid Tight compressed data."))?;
+            if stream.total_in() - input_before != compressed.len() as u64
+                || decoded.len() != data_length
+            {
+                return Err(error("The VNC Tight data is truncated or oversized."));
+            }
+            decoded
+        };
+        match filter {
+            0 => decode_tight_pixels(&decoded, compact_pixels),
+            1 => decode_tight_palette(&decoded, width, height, palette.unwrap()),
+            2 => Ok(decode_tight_gradient(&decoded, width, height)),
+            _ => unreachable!(),
+        }
+    }
+}
+
+fn read_byte(reader: &mut impl Read) -> io::Result<u8> {
+    let mut byte = [0];
+    reader.read_exact(&mut byte)?;
+    Ok(byte[0])
+}
+
+fn read_tight_length(reader: &mut impl Read) -> io::Result<usize> {
+    let first = read_byte(reader)?;
+    let mut length = usize::from(first & 0x7f);
+    if first & 0x80 != 0 {
+        let second = read_byte(reader)?;
+        length |= usize::from(second & 0x7f) << 7;
+        if second & 0x80 != 0 {
+            length |= usize::from(read_byte(reader)?) << 14;
+        }
+    }
+    Ok(length)
+}
+
+fn read_tight_pixel(reader: &mut impl Read, compact_pixels: bool) -> io::Result<[u8; 4]> {
+    let length = if compact_pixels { 2 } else { 3 };
+    let mut bytes = [0; 3];
+    reader.read_exact(&mut bytes[..length])?;
+    let mut data = &bytes[..length];
+    take_pixel(&mut data, compact_pixels)
+}
+
+fn decode_tight_pixels(data: &[u8], compact_pixels: bool) -> io::Result<Vec<u8>> {
+    let mut data = data;
+    let mut output = Vec::with_capacity(data.len() / if compact_pixels { 2 } else { 3 } * 4);
+    while !data.is_empty() {
+        output.extend_from_slice(&take_pixel(&mut data, compact_pixels)?);
+    }
+    Ok(output)
+}
+
+fn decode_tight_palette(
+    data: &[u8],
+    width: usize,
+    height: usize,
+    palette: Vec<[u8; 4]>,
+) -> io::Result<Vec<u8>> {
+    let area = width * height;
+    let mut output = Vec::with_capacity(area * 4);
+    let mut data = data;
+    if palette.len() <= 2 {
+        for _ in 0..height {
+            let row = take_bytes(&mut data, width.div_ceil(8))?;
+            for x in 0..width {
+                let index = usize::from((row[x / 8] >> (7 - x % 8)) & 1);
+                output.extend_from_slice(
+                    palette.get(index).ok_or_else(|| {
+                        error("The VNC Tight palette references a missing color.")
+                    })?,
+                );
+            }
+        }
+    } else {
+        for index in take_bytes(&mut data, area)? {
+            output.extend_from_slice(
+                palette
+                    .get(usize::from(*index))
+                    .ok_or_else(|| error("The VNC Tight palette references a missing color."))?,
+            );
+        }
+    }
+    if !data.is_empty() {
+        return Err(error("The VNC Tight palette contains trailing data."));
+    }
+    Ok(output)
+}
+
+fn decode_tight_gradient(data: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let mut output = vec![0; width * height * 4];
+    for y in 0..height {
+        for x in 0..width {
+            let index = (y * width + x) * 4;
+            for channel in 0..3 {
+                let left = if x > 0 {
+                    output[index - 4 + channel]
+                } else {
+                    0
+                };
+                let up = if y > 0 {
+                    output[index - width * 4 + channel]
+                } else {
+                    0
+                };
+                let upper_left = if x > 0 && y > 0 {
+                    output[index - width * 4 - 4 + channel]
+                } else {
+                    0
+                };
+                let estimate = i16::from(left) + i16::from(up) - i16::from(upper_left);
+                let estimate = estimate
+                    .clamp(i16::from(left.min(up)), i16::from(left.max(up)))
+                    .clamp(0, 255) as u8;
+                output[index + channel] =
+                    estimate.wrapping_add(data[(y * width + x) * 3 + channel]);
+            }
+            output[index + 3] = 255;
+        }
+    }
+    output
 }
 
 #[derive(Default)]
@@ -1319,6 +1571,126 @@ mod tests {
     fn rejects_zrle_tile_overruns_and_truncated_pixels() {
         assert!(decode_zrle_tiles(&[128, 0, 0, 0, 255, 255], 1, 1, false).is_err());
         assert!(decode_zrle_tiles(&[0, 0], 1, 1, false).is_err());
+    }
+
+    #[test]
+    fn decodes_tight_fill_copy_palette_and_gradient() {
+        let mut decoder = TightDecoder::default();
+        let fill = decoder
+            .decode(&mut &[0x80, 10, 20, 30][..], 2, 1, false)
+            .unwrap();
+        assert_eq!(fill, [10, 20, 30, 255, 10, 20, 30, 255]);
+
+        let copy = decoder
+            .decode(&mut &[0x00, 10, 20, 30][..], 1, 1, false)
+            .unwrap();
+        assert_eq!(copy, [10, 20, 30, 255]);
+
+        let palette = decoder
+            .decode(
+                &mut &[0x40, 1, 1, 255, 0, 0, 0, 255, 0, 0b0100_0000][..],
+                2,
+                1,
+                false,
+            )
+            .unwrap();
+        assert_eq!(palette, [255, 0, 0, 255, 0, 255, 0, 255]);
+
+        let gradient = decoder
+            .decode(&mut &[0x40, 2, 10, 20, 30, 1, 2, 3][..], 2, 1, false)
+            .unwrap();
+        assert_eq!(gradient, [10, 20, 30, 255, 11, 22, 33, 255]);
+    }
+
+    #[test]
+    fn decodes_tight_compressed_blocks_and_resets_streams() {
+        use flate2::{write::ZlibEncoder, Compression};
+
+        let first = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120];
+        let second = [120, 110, 100, 90, 80, 70, 60, 50, 40, 30, 20, 10];
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
+        encoder.write_all(&first).unwrap();
+        encoder.flush().unwrap();
+        let first_block = std::mem::take(encoder.get_mut());
+        encoder.write_all(&second).unwrap();
+        encoder.flush().unwrap();
+        let second_block = std::mem::take(encoder.get_mut());
+
+        let mut decoder = TightDecoder::default();
+        let mut first_wire = vec![0x01]; // Reset Tight stream zero, then use copy filter.
+        first_wire.extend_from_slice(&encode_tight_length(first_block.len()));
+        first_wire.extend_from_slice(&first_block);
+        let decoded = decoder
+            .decode(&mut first_wire.as_slice(), 4, 1, false)
+            .unwrap();
+        assert_eq!(
+            decoded,
+            [10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255,]
+        );
+
+        let mut second_wire = vec![0x00]; // Reuse the persistent zlib stream.
+        second_wire.extend_from_slice(&encode_tight_length(second_block.len()));
+        second_wire.extend_from_slice(&second_block);
+        assert_eq!(
+            decoder
+                .decode(&mut second_wire.as_slice(), 4, 1, false)
+                .unwrap(),
+            [120, 110, 100, 255, 90, 80, 70, 255, 60, 50, 40, 255, 30, 20, 10, 255]
+        );
+    }
+
+    #[test]
+    fn decodes_tight_jpeg_and_rejects_bad_dimensions() {
+        let mut encoded = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new(&mut encoded)
+            .encode(&[255, 0, 0], 1, 1, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        let mut wire = vec![0x90];
+        wire.extend_from_slice(&encode_tight_length(encoded.len()));
+        wire.extend_from_slice(&encoded);
+
+        let mut decoder = TightDecoder::default();
+        let decoded = decoder.decode(&mut wire.as_slice(), 1, 1, false).unwrap();
+        assert_eq!(decoded.len(), 4);
+        assert_eq!(decoded[3], 255);
+
+        assert!(decoder.decode(&mut wire.as_slice(), 2, 1, false).is_err());
+    }
+
+    #[test]
+    fn decodes_tight_png() {
+        use image::ImageEncoder;
+
+        let mut encoded = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut encoded)
+            .write_image(&[12, 34, 56, 255], 1, 1, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        let mut wire = vec![0xa0];
+        wire.extend_from_slice(&encode_tight_length(encoded.len()));
+        wire.extend_from_slice(&encoded);
+
+        assert_eq!(
+            TightDecoder::default()
+                .decode(&mut wire.as_slice(), 1, 1, false)
+                .unwrap(),
+            [12, 34, 56, 255]
+        );
+    }
+
+    fn encode_tight_length(length: usize) -> Vec<u8> {
+        let mut length = length;
+        let mut result = Vec::new();
+        loop {
+            let mut byte = (length & 0x7f) as u8;
+            length >>= 7;
+            if length != 0 {
+                byte |= 0x80;
+            }
+            result.push(byte);
+            if length == 0 {
+                return result;
+            }
+        }
     }
 
     #[test]

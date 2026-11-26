@@ -265,7 +265,7 @@ pub(crate) fn vnc(ui: &mut Ui, draft: &mut Option<VncProfile>, port_text: &mut S
             for i in 0..profile.encodings.len() {
                 let encoding = profile.encodings[i];
                 let label = match encoding {
-                    Encoding::Tight => "Tight (unsupported by this client)",
+                    Encoding::Tight => "Tight",
                     Encoding::Zrle => "ZRLE",
                     Encoding::CopyRect => "CopyRect",
                     Encoding::Raw => "Raw",

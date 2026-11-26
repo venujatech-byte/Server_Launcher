@@ -178,7 +178,7 @@ impl Default for VncProfile {
             username: String::new(),
             credential_ref: None,
             quality: Quality::Auto,
-            encodings: vec![Encoding::Zrle, Encoding::CopyRect, Encoding::Raw],
+            encodings: vec![Encoding::Tight, Encoding::Zrle, Encoding::CopyRect, Encoding::Raw],
             color_depth: 32,
             view_only: false,
             show_remote_cursor: true,
@@ -197,6 +197,16 @@ impl Default for VncProfile {
 #[cfg(test)]
 mod tests {
     use crate::config::ConfigFile;
+
+    #[test]
+    fn vnc_defaults_prefer_tight_with_fallback_encodings() {
+        use super::{Encoding, VncProfile};
+
+        assert_eq!(
+            VncProfile::default().encodings,
+            [Encoding::Tight, Encoding::Zrle, Encoding::CopyRect, Encoding::Raw]
+        );
+    }
 
     #[test]
     fn legacy_rdp_security_loads_and_saves_as_auto() {

@@ -338,7 +338,7 @@ impl eframe::App for Viewer {
             });
             return;
         }
-        let (update, status, connected, reconnect_at, finished, connected_since) =
+        let (update, status, connected, reconnect_at, finished, connected_since, received_bytes) =
             if let Some(connection) = &self.connection {
                 let mut connection = connection.lock().unwrap();
                 if let Some(text) = connection.clipboard_text.take() {
@@ -355,6 +355,7 @@ impl eframe::App for Viewer {
                     connection.reconnect_at,
                     connection.finished,
                     connection.connected_since,
+                    connection.received_bytes.load(Ordering::Relaxed),
                 )
             } else {
                 (
@@ -364,6 +365,7 @@ impl eframe::App for Viewer {
                     None,
                     false,
                     None,
+                    0,
                 )
             };
         if !connected {
@@ -475,6 +477,11 @@ impl eframe::App for Viewer {
                                 seconds / 60,
                                 seconds % 60
                             ));
+                            let elapsed = since.elapsed().as_secs_f64();
+                            if elapsed >= 1.0 {
+                                let kbps = received_bytes as f64 * 8.0 / elapsed / 1000.0;
+                                ui.label(format!("Average protocol receive rate  {kbps:.1} kbps"));
+                            }
                             ctx.request_repaint_after(Duration::from_secs(1));
                         }
                         if self.show_fps {

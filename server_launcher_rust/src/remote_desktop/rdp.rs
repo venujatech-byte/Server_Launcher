@@ -216,6 +216,7 @@ fn run(
     let mut encoder = super::rdp_input::Encoder::default();
     let mut events = Vec::with_capacity(64);
     let mut proposed_resize = None;
+    let received_bytes = state.lock().unwrap().received_bytes.clone();
     loop {
         if overflow.load(Ordering::Acquire) {
             return Err(error(
@@ -273,6 +274,7 @@ fn run(
             }
             Err(_) => return Err(error("The RDP connection closed.")),
         };
+        received_bytes.fetch_add(payload.len() as u64, Ordering::Relaxed);
         let outputs = stage
             .process(&mut image, action, &payload)
             .map_err(|_| error("The RDP server sent an unsupported or invalid update."))?;

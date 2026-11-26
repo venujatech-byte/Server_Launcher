@@ -14,7 +14,7 @@ use std::{
     io::{self, BufReader, Read, Write},
     net::{IpAddr, TcpStream, ToSocketAddrs},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc, Mutex,
     },
     time::{Duration, Instant},
@@ -76,6 +76,7 @@ pub(crate) struct Connection {
     pub framebuffer: Framebuffer,
     pub status: String,
     pub connected: bool,
+    pub(crate) received_bytes: Arc<AtomicU64>,
     pub(crate) connected_since: Option<Instant>,
     pub(crate) finished: bool,
     pub(crate) reconnect_at: Option<Instant>,
@@ -109,6 +110,7 @@ impl Connection {
             framebuffer: Framebuffer::default(),
             status: initial_status.into(),
             connected: false,
+            received_bytes: Arc::new(AtomicU64::new(0)),
             connected_since: None,
             finished: false,
             reconnect_at: None,
@@ -164,6 +166,7 @@ impl Connection {
                 }
                 state.status = initial_status.into();
                 state.framebuffer = Framebuffer::default();
+                state.received_bytes.store(0, Ordering::Relaxed);
                 state.receiving_frame = false;
                 state.input_overflow = Arc::new(AtomicBool::new(false));
                 ctx.request_repaint();
@@ -287,7 +290,15 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
     ctx.request_repaint();
     request(&mut *writer.lock().unwrap(), size, false)?;
 
-    let mut stream = BufReader::with_capacity(64 * 1024, stream);
+    let received_bytes = state.lock().unwrap().received_bytes.clone();
+    let mut stream = BufReader::with_capacity(
+        64 * 1024,
+        CountReads {
+            stream,
+            received_bytes,
+        },
+    );
+
     let mut pixels = Vec::new();
     loop {
         let mut kind = [0];
@@ -351,6 +362,20 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
             }
             _ => return Err(error("The VNC server sent an unsupported message.")),
         }
+    }
+}
+
+struct CountReads<R> {
+    stream: R,
+    received_bytes: Arc<AtomicU64>,
+}
+
+impl<R: Read> Read for CountReads<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let length = self.stream.read(buffer)?;
+        self.received_bytes
+            .fetch_add(length as u64, Ordering::Relaxed);
+        Ok(length)
     }
 }
 
@@ -629,6 +654,19 @@ mod tests {
     fn reconnect_backoff_grows_and_adds_bounded_jitter() {
         assert_eq!(reconnect_delay(0, 0), Duration::from_secs(1));
         assert_eq!(reconnect_delay(4, 4_000), Duration::from_secs(20));
+    }
+
+    #[test]
+    fn counts_only_received_bytes() {
+        let received_bytes = Arc::new(AtomicU64::new(0));
+        let mut reader = CountReads {
+            stream: &b"frame"[..],
+            received_bytes: received_bytes.clone(),
+        };
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, b"frame");
+        assert_eq!(received_bytes.load(Ordering::Relaxed), 5);
     }
 
     struct Transcript {

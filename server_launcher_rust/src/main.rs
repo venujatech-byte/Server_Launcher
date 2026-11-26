@@ -177,6 +177,7 @@ X-GNOME-UsesNotifications=true\n",
 #[cfg(not(target_os = "linux"))]
 pub fn ensure_linux_desktop_integration() {}
 
+#[cfg_attr(windows, windows_subsystem = "windows")]
 fn main() -> eframe::Result<()> {
     let mut session_args = std::env::args_os().skip(1);
     if session_args.next().is_some_and(|arg| arg == "--remote-session") {

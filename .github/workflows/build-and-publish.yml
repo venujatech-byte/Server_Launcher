@@ -116,7 +116,7 @@ jobs:
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: server_launcher_windows
+          workspaces: server_launcher_rust
 
       - name: Validate remote Windows WLAN interop
         shell: pwsh
@@ -129,13 +129,13 @@ jobs:
           if ($size -ne 604) { throw "WLAN_CONNECTION_ATTRIBUTES layout size is $size, expected 604" }
 
       - name: Check Windows app and tests
-        working-directory: server_launcher_windows
-        run: cargo check --locked --tests --target x86_64-pc-windows-msvc
+        working-directory: server_launcher_rust
+        run: cargo check --locked --all-targets --target x86_64-pc-windows-msvc
 
       - name: Set package version
         id: package_version
         shell: bash
-        working-directory: server_launcher_windows
+        working-directory: server_launcher_rust
         run: |
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             PACKAGE_VERSION="${GITHUB_REF_NAME#v}"
@@ -157,7 +157,7 @@ jobs:
         env:
           PACKAGE_VERSION: ${{ steps.package_version.outputs.version }}
           SERVER_LAUNCHER_RELEASE_VERSION: ${{ steps.package_version.outputs.version }}
-        working-directory: server_launcher_windows
+        working-directory: server_launcher_rust
         run: |
           for attempt in 1 2 3; do
             if cargo tauri build --bundles nsis,msi --config "{\"version\":\"${PACKAGE_VERSION}\"}"; then
@@ -173,8 +173,8 @@ jobs:
       - name: Package Windows binary
         shell: pwsh
         run: |
-          Compress-Archive -Path server_launcher_windows/target/release/server_launcher_windows.exe -DestinationPath server_launcher-windows-x86_64.zip
-          foreach ($pattern in @('server_launcher_windows/target/release/bundle/nsis/*-setup.exe', 'server_launcher_windows/target/release/bundle/msi/*.msi')) {
+          Compress-Archive -Path server_launcher_rust/target/release/server_launcher.exe -DestinationPath server_launcher-windows-x86_64.zip
+          foreach ($pattern in @('server_launcher_rust/target/release/bundle/nsis/*-setup.exe', 'server_launcher_rust/target/release/bundle/msi/*.msi')) {
             if (-not (Test-Path $pattern)) { throw "Missing Windows package: $pattern" }
           }
 
@@ -184,8 +184,8 @@ jobs:
           name: server_launcher-windows-x86_64-packages
           path: |
             server_launcher-windows-x86_64.zip
-            server_launcher_windows/target/release/bundle/nsis/*-setup.exe
-            server_launcher_windows/target/release/bundle/msi/*.msi
+            server_launcher_rust/target/release/bundle/nsis/*-setup.exe
+            server_launcher_rust/target/release/bundle/msi/*.msi
           if-no-files-found: error
 
   build-windows-store:

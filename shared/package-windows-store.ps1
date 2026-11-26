@@ -20,6 +20,9 @@ $stage = Join-Path $env:RUNNER_TEMP 'server-launcher-msix'
 $zip = Get-ChildItem windows-packages -Filter 'server_launcher-windows-x86_64.zip' -Recurse | Select-Object -First 1
 if (!$zip) { throw 'Windows portable binary artifact is missing' }
 Expand-Archive $zip.FullName -DestinationPath $stage
+$portableExe = Get-ChildItem $stage -Filter '*.exe' -File | Select-Object -First 1
+if (!$portableExe) { throw 'Windows portable executable is missing' }
+Rename-Item $portableExe.FullName 'server_launcher_windows.exe'
 $logos = New-Item -ItemType Directory -Path (Join-Path $stage 'Assets')
 Add-Type -AssemblyName System.Drawing
 $icon = [Drawing.Image]::FromFile((Resolve-Path 'assets/icon.png').Path)

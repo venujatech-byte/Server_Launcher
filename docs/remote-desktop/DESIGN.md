@@ -3,10 +3,11 @@
 ## Repository baseline
 
 Work starts on `vnc/rdp` from `fix/ui-alignment`. The native viewer is scoped
-to `server_launcher_rust`. The separate Windows package mirrors much of the
-launcher but will need its own integration and native validation before it can
-ship the viewer. The Python launchers share the host store. Keep the current
-keys and omit unset protocol profiles when saving.
+to `server_launcher_rust`. The Windows release workflow packages this same
+Rust app so RDP/VNC are included in the distributed Windows build. The separate
+`server_launcher_windows` crate remains outside this feature. The Python
+launchers share the host store. Keep the current keys and omit unset protocol
+profiles when saving.
 
 The SSH header in `app.rs` has a GUI menu with separate RDP and VNC connection
 actions and profile-settings buttons. `modals.rs` owns the tabbed host editor

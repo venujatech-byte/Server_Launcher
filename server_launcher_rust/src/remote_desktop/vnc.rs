@@ -75,6 +75,7 @@ pub(crate) struct Connection {
     pub framebuffer: Framebuffer,
     pub status: String,
     pub connected: bool,
+    pub(crate) finished: bool,
     pub(crate) reconnect_at: Option<Instant>,
     pub(crate) receiving_frame: bool,
     pub(crate) clipboard_text: Option<String>,
@@ -106,6 +107,7 @@ impl Connection {
             framebuffer: Framebuffer::default(),
             status: initial_status.into(),
             connected: false,
+            finished: false,
             reconnect_at: None,
             receiving_frame: false,
             clipboard_text: None,
@@ -136,6 +138,7 @@ impl Connection {
                     .err()
                     .map_or_else(|| "Session ended".into(), |error| error.to_string());
                 if !should_retry {
+                    state.finished = true;
                     ctx.request_repaint();
                     break;
                 }
@@ -148,6 +151,8 @@ impl Connection {
                 std::thread::sleep(delay);
                 let mut state = worker.lock().unwrap();
                 if state.reconnect_at.take().is_none() {
+                    state.finished = true;
+                    ctx.request_repaint();
                     break;
                 }
                 state.status = initial_status.into();

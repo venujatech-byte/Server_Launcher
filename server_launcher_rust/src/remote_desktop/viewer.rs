@@ -99,12 +99,11 @@ pub(crate) fn run(
                 closed,
                 message,
                 framebuffer,
-                connection: viewer_host.map(|host| match protocol {
-                    DesktopProtocol::Rdp => {
-                        super::rdp::start(host, config_path, cc.egui_ctx.clone())
-                    }
-                    DesktopProtocol::Vnc => Connection::start(host, cc.egui_ctx.clone()),
+                connection: viewer_host.as_ref().map(|host| {
+                    start_connection(host.clone(), &config_path, protocol, &cc.egui_ctx)
                 }),
+                session_host: viewer_host,
+                config_path,
                 texture: None,
                 scaling,
                 fullscreen: false,
@@ -126,12 +125,26 @@ pub(crate) fn run(
     )
 }
 
+fn start_connection(
+    host: crate::config::SshRemoteHost,
+    config_path: &Path,
+    protocol: DesktopProtocol,
+    ctx: &egui::Context,
+) -> Arc<Mutex<Connection>> {
+    match protocol {
+        DesktopProtocol::Rdp => super::rdp::start(host, config_path.to_owned(), ctx.clone()),
+        DesktopProtocol::Vnc => Connection::start(host, ctx.clone()),
+    }
+}
+
 struct Viewer {
     focus: Arc<AtomicBool>,
     closed: Arc<AtomicBool>,
     message: &'static str,
     framebuffer: Framebuffer,
     connection: Option<Arc<Mutex<Connection>>>,
+    session_host: Option<crate::config::SshRemoteHost>,
+    config_path: PathBuf,
     texture: Option<egui::TextureHandle>,
     scaling: Scaling,
     fullscreen: bool,
@@ -325,29 +338,32 @@ impl eframe::App for Viewer {
             });
             return;
         }
-        let (update, status, connected, reconnect_at) = if let Some(connection) = &self.connection {
-            let mut connection = connection.lock().unwrap();
-            if let Some(text) = connection.clipboard_text.take() {
-                ctx.copy_text(text);
-            }
-            (
-                if connection.receiving_frame {
-                    None
-                } else {
-                    connection.framebuffer.take_update()
-                },
-                connection.status.clone(),
-                connection.connected,
-                connection.reconnect_at,
-            )
-        } else {
-            (
-                self.framebuffer.take_update(),
-                self.message.into(),
-                false,
-                None,
-            )
-        };
+        let (update, status, connected, reconnect_at, finished) =
+            if let Some(connection) = &self.connection {
+                let mut connection = connection.lock().unwrap();
+                if let Some(text) = connection.clipboard_text.take() {
+                    ctx.copy_text(text);
+                }
+                (
+                    if connection.receiving_frame {
+                        None
+                    } else {
+                        connection.framebuffer.take_update()
+                    },
+                    connection.status.clone(),
+                    connection.connected,
+                    connection.reconnect_at,
+                    connection.finished,
+                )
+            } else {
+                (
+                    self.framebuffer.take_update(),
+                    self.message.into(),
+                    false,
+                    None,
+                    false,
+                )
+            };
         if !connected {
             self.capture = Capture::default();
             self.last_window_size = None;
@@ -413,6 +429,20 @@ impl eframe::App for Viewer {
                     if ui.button("Cancel retry").clicked() {
                         if let Some(connection) = &self.connection {
                             connection.lock().unwrap().reconnect_at = None;
+                            ctx.request_repaint();
+                        }
+                    }
+                }
+                if finished {
+                    if let Some(host) = &self.session_host {
+                        if ui.button("Retry").clicked() {
+                            self.connection = Some(start_connection(
+                                host.clone(),
+                                &self.config_path,
+                                self.protocol,
+                                ctx,
+                            ));
+                            self.texture = None;
                             ctx.request_repaint();
                         }
                     }

@@ -70,7 +70,12 @@ network or the host's configured SSH tunnel.
    the configured size cap. Confirm received content is not echoed back.
 8. Test NLA-only and TLS-only explicitly against matching servers. Auto must
    accept either encrypted mode and must reject legacy unencrypted RDP.
-9. Start with the server unavailable, then make it available during the retry
+9. Connect through an RD Gateway whose certificate is trusted by the client.
+   Confirm the RDP credentials are accepted for gateway sign-in, the gateway
+   forwards to the configured RDP host and port, and an untrusted gateway
+   certificate blocks the connection. Confirm the editor rejects combining
+   RD Gateway with Tunnel via SSH.
+10. Start with the server unavailable, then make it available during the retry
    window and confirm the initial connection is retried. Confirm an
    auto-reconnecting session makes at most five attempts after a failure, then
    leaves the final error visible (or closes when Close on connection failure
@@ -83,8 +88,9 @@ available only when a supported Cisco OpenH264 library is configured. Without
 one, confirm the server negotiates a supported ClearCodec/RFX path. Audio,
 microphone, drive redirection, committed IME input, and multi-monitor behavior
 have not been verified against real servers; do not mark them complete based on
-UI controls or compile checks alone. Microsoft RD Gateway and platform keyboard
-capture remain unsupported.
+UI controls or compile checks alone. RD Gateway, including trusted-certificate
+handling and gateway authentication, still requires live-server validation.
+Platform keyboard capture remains unsupported.
 
 ## VNC checks
 

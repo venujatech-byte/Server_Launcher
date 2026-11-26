@@ -245,9 +245,21 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
         });
         ui.add_enabled(false, egui::Checkbox::new(&mut profile.admin_session, "Administrative session"));
         ui.label("Administrative sessions are not supported by this RDP client.");
-        ui.add_enabled_ui(false, |ui| text(ui, "RD Gateway host", &mut profile.gateway));
-        ui.label("RD Gateway connections are not supported by this RDP client.");
-        ui.checkbox(&mut profile.tunnel_via_ssh, "Tunnel via SSH");
+        text(ui, "RD Gateway host (optional)", &mut profile.gateway);
+        ui.label("Uses the RDP username and password for gateway sign-in. Gateway TLS certificates must be system-trusted.");
+        ui.add_enabled_ui(profile.gateway.trim().is_empty(), |ui| {
+            ui.checkbox(&mut profile.tunnel_via_ssh, "Tunnel via SSH");
+        });
+        if !profile.gateway.trim().is_empty() {
+            if profile.tunnel_via_ssh {
+                ui.label("RD Gateway and SSH tunneling cannot be combined. Disable the saved SSH tunnel to connect.");
+                if ui.button("Disable SSH tunnel").clicked() {
+                    profile.tunnel_via_ssh = false;
+                }
+            } else {
+                ui.label("RD Gateway provides the network tunnel; SSH tunneling is not needed.");
+            }
+        }
         ui.checkbox(&mut profile.auto_reconnect, "Auto-reconnect");
     });
     if draft.is_some() || profile.enabled {

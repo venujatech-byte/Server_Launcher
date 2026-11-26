@@ -42,7 +42,7 @@ use ironrdp_egfx::client::{GraphicsPipelineClient, GraphicsPipelineHandler};
 use ironrdp_egfx::decode::H264Decoder;
 use std::{
     borrow::Cow,
-    io,
+    io::{self, Read, Write},
     net::{SocketAddr, TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
     sync::{
@@ -186,11 +186,7 @@ fn run(
         .as_ref()
         .filter(|p| p.enabled)
         .ok_or_else(|| error("RDP is disabled for this host."))?;
-    if !profile.gateway.trim().is_empty() {
-        return Err(error(
-            "Microsoft RD Gateway is not supported yet. No connection was attempted.",
-        ));
-    }
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let use_egfx = bitmap_quality(profile).0 != 8;
     let h264_decoder = if use_egfx {
         crate::config::ConfigFile::load_from_file(config_path)
@@ -216,16 +212,35 @@ fn run(
     let server_name = rustls::pki_types::ServerName::try_from(hostname.to_owned())
         .map_err(|_| error("The saved RDP host is not a valid TLS name."))?;
 
-    let (socket, local_addr): (Box<dyn DesktopStream>, SocketAddr) = if profile.tunnel_via_ssh {
-        (
-            tunnel::open(host, profile.port, CONNECT_TIMEOUT)?,
-            SocketAddr::from(([127, 0, 0, 1], 0)),
-        )
-    } else {
-        let socket = open_direct(hostname, profile.port)?;
-        let local_addr = socket.local_addr()?;
-        (Box::new(socket), local_addr)
-    };
+    let (socket, local_addr): (Box<dyn DesktopStream>, SocketAddr) =
+        if !profile.gateway.trim().is_empty() {
+            if profile.tunnel_via_ssh {
+                return Err(error(
+                    "RD Gateway and Tunnel via SSH cannot be used together.",
+                ));
+            }
+            open_gateway(
+                &profile.gateway,
+                hostname,
+                profile.port,
+                if profile.same_username_as_ssh {
+                    &host.user
+                } else {
+                    &profile.username
+                },
+                &profile.domain,
+                &password,
+            )?
+        } else if profile.tunnel_via_ssh {
+            (
+                tunnel::open(host, profile.port, CONNECT_TIMEOUT)?,
+                SocketAddr::from(([127, 0, 0, 1], 0)),
+            )
+        } else {
+            let socket = open_direct(hostname, profile.port)?;
+            let local_addr = socket.local_addr()?;
+            (Box::new(socket), local_addr)
+        };
     let mut framed = Framed::new(socket);
     let mut connector =
         connector::ClientConnector::new(config(host, profile, &password, monitor_size), local_addr);
@@ -673,6 +688,174 @@ fn run(
             }
         }
         publish_damage(&mut dirty_regions, &image, width, height, state, ctx)?;
+    }
+}
+
+struct GatewayStream {
+    stream: Mutex<ironrdp_mstsgu::GwClient>,
+    runtime: tokio::runtime::Runtime,
+}
+
+impl Read for GatewayStream {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        use tokio::io::AsyncReadExt;
+        self.runtime.block_on(async {
+            tokio::time::timeout(
+                CONNECT_TIMEOUT,
+                self.stream.lock().map_err(io::Error::other)?.read(buffer),
+            )
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "RD Gateway read timed out"))?
+        })
+    }
+}
+
+impl Write for GatewayStream {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        use tokio::io::AsyncWriteExt;
+        self.runtime.block_on(async {
+            tokio::time::timeout(
+                CONNECT_TIMEOUT,
+                self.stream.lock().map_err(io::Error::other)?.write(buffer),
+            )
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "RD Gateway write timed out"))?
+        })
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        use tokio::io::AsyncWriteExt;
+        self.runtime.block_on(async {
+            tokio::time::timeout(
+                CONNECT_TIMEOUT,
+                self.stream.lock().map_err(io::Error::other)?.flush(),
+            )
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "RD Gateway flush timed out"))?
+        })
+    }
+}
+
+fn open_gateway(
+    endpoint: &str,
+    server: &str,
+    server_port: u16,
+    username: &str,
+    domain: &str,
+    password: &str,
+) -> io::Result<(Box<dyn DesktopStream>, SocketAddr)> {
+    let endpoint = gateway_endpoint(endpoint)?;
+    let username = if domain.trim().is_empty() {
+        username.to_owned()
+    } else {
+        format!("{}\\{}", domain.trim(), username)
+    };
+    let target = ironrdp_mstsgu::GwConnectTarget {
+        gw_endpoint: endpoint,
+        gw_user: username,
+        gw_pass: password.to_owned(),
+        smart_card: None,
+        server: server.to_owned(),
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| error("Could not start the RD Gateway transport."))?;
+    let result = runtime.block_on(tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        ironrdp_mstsgu::GwClient::connect_with_port_and_certificate_validation(
+            &target,
+            "ServerLauncher",
+            server_port,
+            ironrdp_tls::CertificateValidation::Strict,
+            None,
+        ),
+    ));
+    let (stream, local_addr) = result
+        .map_err(|_| error("The RD Gateway connection timed out."))?
+        .map_err(|_| error("Could not connect to the RD Gateway. Check its address, certificate, and credentials."))?;
+    Ok((
+        Box::new(GatewayStream {
+            stream: Mutex::new(stream),
+            runtime,
+        }),
+        local_addr,
+    ))
+}
+
+fn gateway_endpoint(endpoint: &str) -> io::Result<String> {
+    let endpoint = endpoint.trim();
+    if endpoint.is_empty() || endpoint.contains("://") || endpoint.contains(['/', '?', '#', '@']) {
+        return Err(error(
+            "Enter an RD Gateway host, optionally followed by a port.",
+        ));
+    }
+    if let Ok(address) = endpoint.parse::<std::net::IpAddr>() {
+        return Ok(match address {
+            std::net::IpAddr::V4(_) => format!("{address}:443"),
+            std::net::IpAddr::V6(_) => format!("[{address}]:443"),
+        });
+    }
+    if endpoint.starts_with('[') {
+        let (address, suffix) = endpoint
+            .split_once(']')
+            .ok_or_else(|| error("The RD Gateway IPv6 address is invalid."))?;
+        address[1..]
+            .parse::<std::net::Ipv6Addr>()
+            .map_err(|_| error("The RD Gateway IPv6 address is invalid."))?;
+        if suffix.is_empty() {
+            return Ok(format!("{endpoint}:443"));
+        }
+        let port = suffix
+            .strip_prefix(':')
+            .and_then(|port| port.parse::<u16>().ok())
+            .filter(|port| *port != 0)
+            .ok_or_else(|| error("The RD Gateway port must be between 1 and 65535."))?;
+        return Ok(format!("[{address}]:{port}", address = &address[1..]));
+    }
+    if let Some((host, port)) = endpoint.rsplit_once(':') {
+        if !host.contains(':') && !host.is_empty() {
+            let port = port
+                .parse::<u16>()
+                .ok()
+                .filter(|port| *port != 0)
+                .ok_or_else(|| error("The RD Gateway port must be between 1 and 65535."))?;
+            return Ok(format!("{host}:{port}"));
+        }
+        return Err(error(
+            "IPv6 RD Gateway addresses must be enclosed in brackets.",
+        ));
+    }
+    if endpoint.chars().any(char::is_whitespace) {
+        return Err(error("The RD Gateway host cannot contain spaces."));
+    }
+    Ok(format!("{endpoint}:443"))
+}
+
+#[cfg(test)]
+mod gateway_tests {
+    use super::gateway_endpoint;
+
+    #[test]
+    fn normalizes_gateway_hosts_and_checks_explicit_ports() {
+        assert_eq!(
+            gateway_endpoint("rdg.example.test").unwrap(),
+            "rdg.example.test:443"
+        );
+        assert_eq!(
+            gateway_endpoint("rdg.example.test:8443").unwrap(),
+            "rdg.example.test:8443"
+        );
+        assert_eq!(
+            gateway_endpoint("2001:db8::1").unwrap(),
+            "[2001:db8::1]:443"
+        );
+        assert_eq!(
+            gateway_endpoint("[2001:db8::1]:8443").unwrap(),
+            "[2001:db8::1]:8443"
+        );
+        assert!(gateway_endpoint("rdg.example.test:0").is_err());
+        assert!(gateway_endpoint("https://rdg.example.test").is_err());
     }
 }
 

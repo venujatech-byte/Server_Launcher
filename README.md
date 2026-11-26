@@ -110,8 +110,11 @@ share selected local folders. Each share is read-only by default, and the app
 asks before sharing a folder or allowing remote changes. Linux/macOS uses
 separate filesystem roots and blocks write requests for read-only shares;
 Windows uses IronRDP's native drive backend. This needs real-server validation.
-Microsoft RD Gateway and keyboard-layout-specific IME are not implemented;
-committed non-ASCII IME text is forwarded on platforms that provide egui commit
+RDP profiles can route through Microsoft RD Gateway over HTTPS. The gateway
+uses the saved RDP username/password, requires a system-trusted gateway
+certificate, and cannot be combined with Tunnel via SSH. This path still needs
+live gateway validation. Platform keyboard capture and keyboard-layout-specific
+IME are not implemented; committed non-ASCII IME text is forwarded on platforms that provide egui commit
 events, while Linux relies on its keyboard text events. Linux source builds
 need the ALSA development package
 (`libasound2-dev` on Ubuntu/Debian, `alsa-lib-devel` on Fedora/RHEL) for local

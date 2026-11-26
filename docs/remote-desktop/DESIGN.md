@@ -203,8 +203,7 @@ inside its own process. Auto advertises NLA and encrypted TLS; explicit NLA-only
 and TLS-only selections remain available. The worker verifies CA trust and the original host name before
 CredSSP or graphical logon, including when SSH supplies the underlying byte
 stream. The Rustls provider is chosen explicitly and TLS resumption is disabled.
-RD Gateway,
-Kerberos/KDC requests, and legacy unencrypted RDP are not accepted. IronRDP holds
+Kerberos/KDC requests and legacy unencrypted RDP are not accepted. IronRDP holds
 its own copy of the password during connection setup. The launcher zeroizes
 its own working copy and does not log connector errors or credentials.
 
@@ -231,9 +230,12 @@ Windows uses IronRDP's native backend;
 Linux and macOS route each share to an isolated root, reject write requests for
 read-only shares, and rely on IronRDP's path resolver to prevent traversal and
 symlink escape. Drive access and read-only enforcement still need real-server
-validation. Microsoft RD Gateway remains unsupported. The editor preserves
-saved gateway, admin-session, and VNC username fields, while marking unsupported
-controls read-only.
+validation. RD Gateway uses the pinned IronRDP MS-TSGU transport over HTTPS and
+the saved RDP username/password for gateway authentication. Gateway TLS uses
+strict system-root validation; SSH tunneling cannot be combined with this route.
+This path still needs a live gateway test. The editor preserves the unused
+admin-session and VNC username fields, while marking those unsupported controls
+read-only.
 IronRDP and its blocking adapter are available under MIT or Apache-2.0.
 
 The RDP viewer now registers IronRDP's EGFX dynamic channel before advertising

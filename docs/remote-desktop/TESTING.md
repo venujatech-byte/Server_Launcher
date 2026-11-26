@@ -33,7 +33,7 @@ relevant server/client logs with credentials and clipboard contents removed.
 | Linux X11 | Linux xrdp | RDP | Direct and SSH-tunneled sessions, authentication errors, resize |
 | Linux Wayland | Linux xrdp | RDP | Repeat core rendering and input checks |
 | Windows | Linux xrdp | RDP | Direct and SSH-tunneled sessions, rendering and input |
-| Linux X11 | TigerVNC or x11vnc | VNC | RFB 3.3/3.7/3.8, auth, Raw/CopyRect/ZRLE, cursor, clipboard |
+| Linux X11 | TigerVNC or x11vnc | VNC | RFB 3.3/3.7/3.8, auth, Tight/Raw/CopyRect/ZRLE, cursor, clipboard |
 | Linux Wayland | TigerVNC or x11vnc | VNC | Repeat core rendering and input checks |
 | Windows | TigerVNC or x11vnc | VNC | Direct and SSH-tunneled sessions, rendering and input |
 | Linux/Windows | macOS Screen Sharing | VNC | Authentication, clipboard limitations, cursor and resize |
@@ -91,9 +91,9 @@ on UI controls alone.
    verify longer inputs are rejected with a clear message rather than silently
    truncated. Confirm unauthenticated negotiation is not used when a password
    is configured.
-2. Verify Raw, CopyRect, and ZRLE updates, including resize and an empty
-   framebuffer. Confirm Raw/Cursor pseudo-rectangles do not get treated as
-   framebuffer pixels.
+2. Verify Tight fill, copy, palette, gradient, JPEG, and PNG updates, plus
+   Raw, CopyRect, and ZRLE. Include resize and an empty framebuffer. Confirm
+   Raw/Cursor pseudo-rectangles do not get treated as framebuffer pixels.
 3. Verify RichCursor and XCursor shapes, hotspot placement, pointer movement,
    and the Show remote cursor setting. Test a server that sends only one cursor
    shape encoding as well as a server that sends neither.

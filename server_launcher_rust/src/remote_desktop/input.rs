@@ -8,6 +8,7 @@ pub(crate) struct Capture {
     held: HashMap<Key, u32>,
     modifiers: Modifiers,
     buttons: u8,
+    extra_buttons: u8,
     position: [u16; 2],
     wheel: Vec2,
 }
@@ -63,6 +64,22 @@ impl Capture {
                 } => {
                     if pressed && !visible.contains(pos) {
                         self.release(&mut send);
+                    } else if let Some(button) = extra_mouse_button(button) {
+                        if pressed {
+                            self.active = true;
+                            self.extra_buttons |= button;
+                        } else if self.extra_buttons & button != 0 {
+                            self.extra_buttons &= !button;
+                        } else {
+                            continue;
+                        }
+                        self.position = remote_position(pos, canvas, size);
+                        send(Input::PointerExtra {
+                            x: self.position[0],
+                            y: self.position[1],
+                            button,
+                            pressed,
+                        });
                     } else if let Some(mask) = mouse_button(button) {
                         if pressed {
                             self.active = true;
@@ -76,7 +93,9 @@ impl Capture {
                         send(self.pointer(self.buttons));
                     }
                 }
-                Event::PointerMoved(pos) if visible.contains(pos) || self.buttons != 0 => {
+                Event::PointerMoved(pos)
+                    if visible.contains(pos) || self.buttons != 0 || self.extra_buttons != 0 =>
+                {
                     self.position = remote_position(pos, canvas, size);
                     send(self.pointer(self.buttons));
                 }
@@ -141,6 +160,17 @@ impl Capture {
                 pressed: false,
             });
         }
+        for (button, bit) in [(1, 1), (2, 2)] {
+            if self.extra_buttons & bit != 0 {
+                send(Input::PointerExtra {
+                    x: self.position[0],
+                    y: self.position[1],
+                    button,
+                    pressed: false,
+                });
+            }
+        }
+        self.extra_buttons = 0;
         self.sync_modifiers(Modifiers::NONE, &mut send);
         if self.buttons != 0 {
             self.buttons = 0;
@@ -178,8 +208,15 @@ fn mouse_button(button: PointerButton) -> Option<u8> {
         PointerButton::Primary => Some(1),
         PointerButton::Middle => Some(2),
         PointerButton::Secondary => Some(4),
-        PointerButton::Extra1 => Some(8),
-        PointerButton::Extra2 => Some(16),
+        PointerButton::Extra1 | PointerButton::Extra2 => None,
+    }
+}
+
+fn extra_mouse_button(button: PointerButton) -> Option<u8> {
+    match button {
+        PointerButton::Extra1 => Some(1),
+        PointerButton::Extra2 => Some(2),
+        _ => None,
     }
 }
 
@@ -246,6 +283,46 @@ mod tests {
                     x: 199,
                     y: 99,
                     buttons: 0
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn releases_extra_mouse_buttons_when_capture_ends() {
+        let rect = Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 50.0));
+        let mut capture = Capture::default();
+        let mut packets = Vec::new();
+        capture.events(
+            &[Event::PointerButton {
+                pos: rect.center(),
+                button: PointerButton::Extra1,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            }],
+            Modifiers::NONE,
+            true,
+            rect,
+            rect,
+            [200, 100],
+            None,
+            |event| packets.push(event),
+        );
+        capture.release(|event| packets.push(event));
+        assert_eq!(
+            packets,
+            [
+                Input::PointerExtra {
+                    x: 100,
+                    y: 50,
+                    button: 1,
+                    pressed: true,
+                },
+                Input::PointerExtra {
+                    x: 100,
+                    y: 50,
+                    button: 1,
+                    pressed: false,
                 },
             ]
         );

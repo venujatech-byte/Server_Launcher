@@ -126,8 +126,9 @@ outside the canvas, the viewer releases tracked keys, modifiers and buttons.
 The VNC worker omits its input channel in view-only mode. A bounded queue
 disconnects on overflow so a key release cannot silently disappear. Pointer
 coordinates follow the displayed canvas and are clamped during a drag.
-Classic RFB forwards buttons 1–5 and both scroll axes. Extra RDP pointer
-buttons are unavailable in the current IronRDP input flags. IME, host-key
+Classic RFB forwards left, middle, and right buttons plus both scroll axes;
+side buttons have no distinct classic RFB event and are ignored. RDP forwards
+the two extended side buttons with MouseEventEx. IME, host-key
 shortcuts and platform keyboard capture are pending. Input mapping and focus
 release were tested in-process. Synthetic desktop input did not reach the
 loopback peer in the X11 smoke test, so end-to-end input behavior remains
@@ -165,11 +166,10 @@ IronRDP and its blocking adapter are available under MIT or Apache-2.0.
 
 RDP keyboard and pointer events use IronRDP fast-path input on the worker that
 owns the TLS connection. The worker drains a bounded queue between reads.
-A 30 ms read timeout lets input reach an otherwise quiet connection without
+A 10 ms read timeout lets input reach an otherwise quiet connection without
 periodic UI repaint requests. The current mapping covers the common PC
-scancodes, three pointer buttons, and both scroll axes. Physical keyboard
-layout mapping, IME, extra buttons, and a full interactive RDP server test
-remain pending.
+scancodes, five RDP pointer buttons, and both scroll axes. Physical keyboard
+layout mapping, IME, and a full interactive RDP server test remain pending.
 
 Unknown-issuer RDP certificates can now be explicitly trusted from the
 viewer after comparing the SHA-256 fingerprint. Validity dates and TLS

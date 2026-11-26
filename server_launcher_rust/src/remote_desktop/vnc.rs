@@ -35,10 +35,26 @@ const TUNNEL_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Input {
-    Key { keysym: u32, pressed: bool },
-    Pointer { x: u16, y: u16, buttons: u8 },
+    Key {
+        keysym: u32,
+        pressed: bool,
+    },
+    Pointer {
+        x: u16,
+        y: u16,
+        buttons: u8,
+    },
+    PointerExtra {
+        x: u16,
+        y: u16,
+        button: u8,
+        pressed: bool,
+    },
     ClipboardText(String),
-    VncResize { size: [u16; 2], screen: [u8; 16] },
+    VncResize {
+        size: [u16; 2],
+        screen: [u8; 16],
+    },
 }
 
 impl Input {
@@ -79,6 +95,9 @@ impl Input {
                 let [c, d] = y.to_be_bytes();
                 stream.write_all(&[5, buttons, a, b, c, d]).map(|()| false)
             }
+            // Classic RFB has no separate side-button event; its high button-mask bits
+            // are commonly interpreted as wheel events by servers.
+            Self::PointerExtra { .. } => Ok(false),
         }
     }
 }
@@ -1006,6 +1025,20 @@ mod tests {
         let mut wire = Vec::new();
         assert!(Input::ClipboardText("aé".into()).write(&mut wire).unwrap());
         assert_eq!(wire, [6, 0, 0, 0, 0, 0, 0, 2, b'a', 0xe9]);
+    }
+
+    #[test]
+    fn ignores_extra_pointer_buttons_in_classic_rfb() {
+        let mut wire = Vec::new();
+        assert!(!Input::PointerExtra {
+            x: 1,
+            y: 2,
+            button: 1,
+            pressed: true,
+        }
+        .write(&mut wire)
+        .unwrap());
+        assert!(wire.is_empty());
     }
 
     #[test]

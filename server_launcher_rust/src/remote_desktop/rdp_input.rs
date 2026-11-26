@@ -2,6 +2,7 @@ use super::vnc::Input;
 use ironrdp::pdu::input::{
     fast_path::{FastPathInputEvent, KeyboardFlags},
     mouse::{MousePdu, PointerFlags},
+    mouse_x::{MouseXPdu, PointerXFlags},
 };
 
 #[derive(Default)]
@@ -14,6 +15,28 @@ impl Encoder {
     pub(crate) fn encode(&mut self, input: Input, out: &mut Vec<FastPathInputEvent>) {
         match input {
             Input::VncResize { .. } | Input::ClipboardText(_) => {}
+            Input::PointerExtra {
+                x,
+                y,
+                button,
+                pressed,
+            } => {
+                let flag = match button {
+                    1 => PointerXFlags::BUTTON1,
+                    2 => PointerXFlags::BUTTON2,
+                    _ => return,
+                };
+                out.push(FastPathInputEvent::MouseEventEx(MouseXPdu {
+                    flags: flag
+                        | if pressed {
+                            PointerXFlags::DOWN
+                        } else {
+                            PointerXFlags::empty()
+                        },
+                    x_position: x,
+                    y_position: y,
+                }));
+            }
             Input::Key { keysym, pressed } => {
                 if let Some((code, extended)) = scancode(keysym) {
                     let mut flags = KeyboardFlags::empty();
@@ -166,5 +189,37 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn encodes_extended_mouse_button_press_and_release() {
+        let mut encoder = Encoder::default();
+        let mut out = Vec::new();
+        for pressed in [true, false] {
+            encoder.encode(
+                Input::PointerExtra {
+                    x: 12,
+                    y: 34,
+                    button: 2,
+                    pressed,
+                },
+                &mut out,
+            );
+        }
+        assert_eq!(
+            out,
+            [
+                FastPathInputEvent::MouseEventEx(MouseXPdu {
+                    flags: PointerXFlags::BUTTON2 | PointerXFlags::DOWN,
+                    x_position: 12,
+                    y_position: 34,
+                }),
+                FastPathInputEvent::MouseEventEx(MouseXPdu {
+                    flags: PointerXFlags::BUTTON2,
+                    x_position: 12,
+                    y_position: 34,
+                }),
+            ]
+        );
     }
 }

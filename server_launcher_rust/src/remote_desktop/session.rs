@@ -43,7 +43,13 @@ impl Sessions {
                 return Ok(());
             }
         }
-        let mut child = Command::new(std::env::current_exe()?)
+        let mut command = Command::new(std::env::current_exe()?);
+        #[cfg(target_os = "linux")]
+        if std::env::var_os("DISPLAY").is_some_and(|display| !display.is_empty()) {
+            // The viewer uses X11 keyboard grabs to forward desktop shortcuts to the remote.
+            command.env_remove("WAYLAND_DISPLAY").env_remove("WAYLAND_SOCKET");
+        }
+        let mut child = command
             .arg("--remote-session")
             .arg(host_id)
             .arg(protocol.label())

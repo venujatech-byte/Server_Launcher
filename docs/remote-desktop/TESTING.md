@@ -66,9 +66,10 @@ The checked app revision was `8ec3a0d`.
    check that the viewer's FPS counter changes with received display updates.
    With Keyboard enabled by default, type while the viewer is focused without
    clicking the remote canvas first. On Linux/X11, confirm Super and Alt+Tab
-   reach the remote. On Wayland or Windows, check whether the OS reserves those
-   shortcuts; use Send keys when it does. Turn Keyboard off and confirm input
-   stays local.
+   reach the remote. On Wayland with `DISPLAY` set, confirm the viewer uses
+   XWayland and test those shortcuts there. On Windows or Wayland without
+   XWayland, check whether the OS reserves those shortcuts; use Send keys when
+   it does. Turn Keyboard off and confirm input stays local.
    On Linux/X11, verify Right Ctrl+F, +S, +R, +D, and +K, then disable the host
    key in Settings → Remote Desktop and confirm those chords are forwarded
    normally. Confirm Right Ctrl alone and unknown Right Ctrl combinations are

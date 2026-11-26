@@ -199,14 +199,15 @@ the two extended side buttons with MouseEventEx. The viewer forwards committed
 non-ASCII egui IME text where the platform backend provides commit events;
 preedit candidates are not sent. Linux egui-winit 0.29 drops IME events, so
 Linux composition still depends on text events delivered by its keyboard
-backend. Host-key shortcut prefixes remain pending; native keyboard grabbing
-currently supports Linux/X11 only.
+backend. Native keyboard grabbing supports Linux/X11. In a Wayland session with
+`DISPLAY` available, the separate viewer process selects XWayland so it can use
+that grab without changing the launcher's display backend.
 
 On Linux/X11, Right Ctrl is configurable as a host-key prefix. Right Ctrl+F
 toggles fullscreen, +S takes a screenshot, +R starts/stops recording, +D closes
 the viewer, and +K opens the Send keys window. Other Right Ctrl combinations
-are forwarded normally. The native prefix is unavailable on Windows and
-Wayland; those platforms keep the direct egui input path.
+are forwarded normally. Native grabs are unavailable on Windows and Wayland
+sessions without XWayland; those platforms keep the direct egui input path.
 Input mapping and focus release were tested in-process. Synthetic desktop input
 did not reach the loopback peer in the X11 smoke test, so end-to-end input
 behavior remains unverified.

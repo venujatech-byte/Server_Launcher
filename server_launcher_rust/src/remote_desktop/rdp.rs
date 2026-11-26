@@ -887,7 +887,7 @@ pub(crate) fn open_gateway(
     ))
 }
 
-fn gateway_endpoint(endpoint: &str) -> io::Result<String> {
+pub(crate) fn gateway_endpoint(endpoint: &str) -> io::Result<String> {
     let endpoint = endpoint.trim();
     if endpoint.is_empty() || endpoint.contains("://") || endpoint.contains(['/', '?', '#', '@']) {
         return Err(error(

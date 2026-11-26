@@ -193,6 +193,17 @@ pub(crate) fn run(request: &ProbeRequest, timeout: Duration) -> Result<String, S
             .rdp
             .as_ref()
             .ok_or_else(|| "RD Gateway: save the RDP profile before testing.".to_owned())?;
+        let configured_gateway = super::rdp::gateway_endpoint(&profile.gateway).map_err(|_| {
+            "RD Gateway: enter a valid gateway address in the RDP profile.".to_owned()
+        })?;
+        let requested_gateway = super::rdp::gateway_endpoint(gateway).map_err(|_| {
+            "RD Gateway: enter a valid gateway address in the RDP profile.".to_owned()
+        })?;
+        if configured_gateway != requested_gateway || profile.port != request.port {
+            return Err(
+                "RD Gateway: save the current RDP connection settings before testing.".into(),
+            );
+        }
         let password = super::credentials::load(host, DesktopProtocol::Rdp)
             .map_err(|error| format!("RD Gateway credentials: {error}"))?
             .ok_or_else(|| "RD Gateway: save the RDP password before testing.".to_owned())?;

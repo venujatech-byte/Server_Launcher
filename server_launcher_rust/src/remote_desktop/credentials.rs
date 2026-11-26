@@ -22,7 +22,7 @@ impl DesktopProtocol {
 }
 
 fn binding(host: &SshRemoteHost, protocol: DesktopProtocol) -> Option<String> {
-    let (name, port, user, domain) = match protocol {
+    let (name, port, user, domain, transport) = match protocol {
         DesktopProtocol::Rdp => {
             let p = host.rdp.as_ref()?;
             let user = if p.same_username_as_ssh {
@@ -30,29 +30,28 @@ fn binding(host: &SshRemoteHost, protocol: DesktopProtocol) -> Option<String> {
             } else {
                 &p.username
             };
-            (
-                "rdp",
-                p.port,
-                user.as_str(),
-                p.domain.as_str(),
-            )
+            let gateway = if p.gateway.trim().is_empty() {
+                String::new()
+            } else {
+                super::rdp::gateway_endpoint(&p.gateway).ok()?
+            };
+            ("rdp", p.port, user.as_str(), p.domain.as_str(), gateway)
         }
         DesktopProtocol::Vnc => {
             let p = host.vnc.as_ref()?;
-            ("vnc", p.port, p.username.as_str(), "")
+            ("vnc", p.port, p.username.as_str(), "", String::new())
         }
     };
-    Some(binding_digest(host, name, port, user, domain, ""))
+    Some(binding_digest(host, name, port, user, domain, &transport))
 }
 
-fn legacy_binding(
-    host: &SshRemoteHost,
-    protocol: DesktopProtocol,
-    tunnel: bool,
-) -> Option<String> {
+fn legacy_binding(host: &SshRemoteHost, protocol: DesktopProtocol, tunnel: bool) -> Option<String> {
     let (name, port, user, domain) = match protocol {
         DesktopProtocol::Rdp => {
             let profile = host.rdp.as_ref()?;
+            if !profile.gateway.trim().is_empty() {
+                return None;
+            }
             let user = if profile.same_username_as_ssh {
                 &host.user
             } else {
@@ -143,6 +142,14 @@ pub fn load(
     match ssh_credentials::load(reference, &binding) {
         Ok(password) => Ok(Some(Zeroizing::new(password))),
         Err(error) => {
+            if protocol == DesktopProtocol::Rdp
+                && host
+                    .rdp
+                    .as_ref()
+                    .is_some_and(|profile| !profile.gateway.trim().is_empty())
+            {
+                return Err(error);
+            }
             let tunnel = match protocol {
                 DesktopProtocol::Rdp => host
                     .rdp
@@ -245,6 +252,29 @@ mod tests {
             }
             assert_eq!(binding(&host, protocol), original);
         }
+    }
+
+    #[test]
+    fn rdp_password_binding_tracks_normalized_gateway_endpoint() {
+        let mut host: SshRemoteHost = serde_json::from_str(
+            r#"{"id":"test","name":"Test","host":"example.invalid","rdp":{"enabled":true,"port":3389,"username":"user","gateway":"rdg.example.test"}}"#,
+        )
+        .unwrap();
+        let original = binding(&host, DesktopProtocol::Rdp);
+        host.rdp.as_mut().unwrap().gateway = "rdg.example.test:443".into();
+        assert_eq!(binding(&host, DesktopProtocol::Rdp), original);
+        host.rdp.as_mut().unwrap().gateway = "other.example.test".into();
+        assert_ne!(binding(&host, DesktopProtocol::Rdp), original);
+        assert!(legacy_binding(&host, DesktopProtocol::Rdp, false).is_none());
+    }
+
+    #[test]
+    fn invalid_rdp_gateway_cannot_bind_a_credential() {
+        let host: SshRemoteHost = serde_json::from_str(
+            r#"{"id":"test","name":"Test","host":"example.invalid","rdp":{"enabled":true,"port":3389,"username":"user","gateway":"https://rdg.example.test"}}"#,
+        )
+        .unwrap();
+        assert!(binding(&host, DesktopProtocol::Rdp).is_none());
     }
 }
 

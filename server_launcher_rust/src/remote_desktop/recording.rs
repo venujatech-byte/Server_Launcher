@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
     process::{Command, Stdio},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc, Mutex,
     },
     thread,
@@ -14,6 +14,7 @@ use std::{
 pub(super) struct Recording {
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    written_us: Arc<AtomicU64>,
     worker: Option<thread::JoinHandle<()>>,
     pub(super) result: mpsc::Receiver<Result<PathBuf, String>>,
 }
@@ -24,17 +25,24 @@ impl Recording {
         let cancelled = stop.clone();
         let paused = Arc::new(AtomicBool::new(false));
         let worker_paused = paused.clone();
+        let written_us = Arc::new(AtomicU64::new(0));
+        let progress = written_us.clone();
         let (sender, result) = mpsc::channel();
         let worker = thread::spawn(move || {
-            let _ = sender.send(record(&connection, &cancelled, &worker_paused));
+            let _ = sender.send(record(&connection, &cancelled, &worker_paused, &progress));
             ctx.request_repaint();
         });
         Self {
             stop,
             paused,
+            written_us,
             worker: Some(worker),
             result,
         }
+    }
+
+    pub(super) fn duration(&self) -> Duration {
+        Duration::from_micros(self.written_us.load(Ordering::Relaxed))
     }
 
     pub(super) fn paused(&self) -> bool {
@@ -63,6 +71,7 @@ fn record(
     connection: &Mutex<Connection>,
     stop: &AtomicBool,
     paused: &AtomicBool,
+    progress: &AtomicU64,
 ) -> Result<PathBuf, String> {
     let deadline = Instant::now() + Duration::from_secs(8);
     let frame = loop {
@@ -157,6 +166,7 @@ fn record(
                     )
                     .map_err(|error| error.to_string())?;
                     index += 1;
+                    progress.store(index * 200_000, Ordering::Relaxed);
                     Ok(())
                 },
             );
@@ -175,6 +185,7 @@ fn record(
     };
     let mut pipe = child.stdin.take().expect("FFmpeg stdin was piped");
     let mut pixels = Vec::with_capacity(size[0] * size[1] * 4);
+    let mut frames = 0_u64;
     let write_result = sample_frames(
         connection,
         stop,
@@ -185,7 +196,10 @@ fn record(
             pixels.clear();
             pixels.extend(frame.pixels.iter().flat_map(|pixel| pixel.to_array()));
             pipe.write_all(&pixels)
-                .map_err(|error| format!("Could not write the recording: {error}"))
+                .map_err(|error| format!("Could not write the recording: {error}"))?;
+            frames += 1;
+            progress.store(frames * 1_000_000 / 30, Ordering::Relaxed);
+            Ok(())
         },
     );
     drop(pipe);

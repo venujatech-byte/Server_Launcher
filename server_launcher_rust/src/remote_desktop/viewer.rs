@@ -864,7 +864,14 @@ impl eframe::App for Viewer {
                             } else {
                                 "● REC"
                             };
-                            ui.colored_label(egui::Color32::LIGHT_RED, status);
+                            let seconds = recorder.duration().as_secs();
+                            ui.colored_label(
+                                egui::Color32::LIGHT_RED,
+                                format!("{status} {:02}:{:02}", seconds / 60, seconds % 60),
+                            );
+                            if !recorder.paused() {
+                                ctx.request_repaint_after(Duration::from_secs(1));
+                            }
                         } else if let Some(result) = &self.recording_result {
                             match result {
                                 Ok(path) => {

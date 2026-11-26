@@ -226,7 +226,8 @@ starts only when the remote requests the channel. Outbound audio uses a bounded
 queue to the RDP worker. The implementation has passed the SSH PC cargo check
 but still needs live server and input-device testing. RDP drive redirection now
 shares the configured local folders, defaults each new share to read-only, and
-supports explicit read/write access. Windows uses IronRDP's native backend;
+requires confirmation before adding a share or granting remote write access.
+Windows uses IronRDP's native backend;
 Linux and macOS route each share to an isolated root, reject write requests for
 read-only shares, and rely on IronRDP's path resolver to prevent traversal and
 symlink escape. Drive access and read-only enforcement still need real-server

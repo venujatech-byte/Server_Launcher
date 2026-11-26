@@ -43,6 +43,21 @@ fn color_depth(ui: &mut Ui, value: &mut u8) {
     );
 }
 
+fn confirm_drive_access(path: &std::path::Path, writable: bool) -> bool {
+    let access = if writable {
+        "The remote PC will be able to read and change files in this folder."
+    } else {
+        "The remote PC will be able to read files in this folder."
+    };
+    rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Warning)
+        .set_title("Share a local folder with the remote PC?")
+        .set_description(format!("{}\n\n{}", path.display(), access))
+        .set_buttons(rfd::MessageButtons::YesNo)
+        .show()
+        == rfd::MessageDialogResult::Yes
+}
+
 fn rdp_color_profile(ui: &mut Ui, value: &mut Option<RdpColorProfile>) {
     const SUPPORTED: &[(RdpColorProfile, &str)] = &[
         (RdpColorProfile::Automatic, "Automatic (32 bpp)"),
@@ -191,10 +206,12 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
             ui.label("Shared folders are visible to the remote PC for this session.");
             if ui.button("Add folder…").clicked() {
                 if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                    profile.drives.push(DriveShare {
-                        path,
-                        writable: false,
-                    });
+                    if confirm_drive_access(&path, false) {
+                        profile.drives.push(DriveShare {
+                            path,
+                            writable: false,
+                        });
+                    }
                 }
             }
             if profile.drives.is_empty() {
@@ -204,7 +221,14 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
             for (index, drive) in profile.drives.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
                     ui.label(drive.path.display().to_string());
-                    ui.checkbox(&mut drive.writable, "Allow remote changes");
+                    let mut writable = drive.writable;
+                    if ui.checkbox(&mut writable, "Allow remote changes").changed() {
+                        drive.writable = if writable {
+                            confirm_drive_access(&drive.path, true)
+                        } else {
+                            false
+                        };
+                    }
                     if ui.small_button("Remove").clicked() {
                         remove = Some(index);
                     }

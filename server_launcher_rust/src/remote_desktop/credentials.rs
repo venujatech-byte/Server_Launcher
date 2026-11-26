@@ -22,7 +22,7 @@ impl DesktopProtocol {
 }
 
 fn binding(host: &SshRemoteHost, protocol: DesktopProtocol) -> Option<String> {
-    let (name, port, user, domain, tunnel) = match protocol {
+    let (name, port, user, domain) = match protocol {
         DesktopProtocol::Rdp => {
             let p = host.rdp.as_ref()?;
             let user = if p.same_username_as_ssh {
@@ -35,15 +35,55 @@ fn binding(host: &SshRemoteHost, protocol: DesktopProtocol) -> Option<String> {
                 p.port,
                 user.as_str(),
                 p.domain.as_str(),
-                p.tunnel_via_ssh,
             )
         }
         DesktopProtocol::Vnc => {
             let p = host.vnc.as_ref()?;
-            ("vnc", p.port, p.username.as_str(), "", p.tunnel_via_ssh)
+            ("vnc", p.port, p.username.as_str(), "")
+        }
+    };
+    Some(binding_digest(host, name, port, user, domain, ""))
+}
+
+fn legacy_binding(
+    host: &SshRemoteHost,
+    protocol: DesktopProtocol,
+    tunnel: bool,
+) -> Option<String> {
+    let (name, port, user, domain) = match protocol {
+        DesktopProtocol::Rdp => {
+            let profile = host.rdp.as_ref()?;
+            let user = if profile.same_username_as_ssh {
+                &host.user
+            } else {
+                &profile.username
+            };
+            ("rdp", profile.port, user.as_str(), profile.domain.as_str())
+        }
+        DesktopProtocol::Vnc => {
+            let profile = host.vnc.as_ref()?;
+            ("vnc", profile.port, profile.username.as_str(), "")
         }
     };
     let ssh_target = tunnel.then(|| ssh_credentials::binding(host));
+    Some(binding_digest(
+        host,
+        name,
+        port,
+        user,
+        domain,
+        ssh_target.as_deref().unwrap_or_default(),
+    ))
+}
+
+fn binding_digest(
+    host: &SshRemoteHost,
+    name: &str,
+    port: u16,
+    user: &str,
+    domain: &str,
+    transport: &str,
+) -> String {
     let mut digest = Sha256::new();
     for part in [
         "server-launcher/desktop/v1",
@@ -52,13 +92,13 @@ fn binding(host: &SshRemoteHost, protocol: DesktopProtocol) -> Option<String> {
         &host.host,
         user,
         domain,
-        ssh_target.as_deref().unwrap_or_default(),
+        transport,
     ] {
         digest.update((part.len() as u64).to_le_bytes());
         digest.update(part.as_bytes());
     }
     digest.update(port.to_le_bytes());
-    Some(format!("{:x}", digest.finalize()))
+    format!("{:x}", digest.finalize())
 }
 
 fn reference(host: &SshRemoteHost, protocol: DesktopProtocol) -> Option<&String> {
@@ -100,7 +140,33 @@ pub fn load(
         return Ok(None);
     };
     let binding = binding(host, protocol).ok_or("Desktop protocol is not configured.")?;
-    ssh_credentials::load(reference, &binding).map(|password| Some(Zeroizing::new(password)))
+    match ssh_credentials::load(reference, &binding) {
+        Ok(password) => Ok(Some(Zeroizing::new(password))),
+        Err(error) => {
+            let tunnel = match protocol {
+                DesktopProtocol::Rdp => host
+                    .rdp
+                    .as_ref()
+                    .is_some_and(|profile| profile.tunnel_via_ssh),
+                DesktopProtocol::Vnc => host
+                    .vnc
+                    .as_ref()
+                    .is_some_and(|profile| profile.tunnel_via_ssh),
+            };
+            for legacy_tunnel in [tunnel, !tunnel] {
+                let Some(legacy) = legacy_binding(host, protocol, legacy_tunnel) else {
+                    continue;
+                };
+                if legacy == binding {
+                    continue;
+                }
+                if let Ok(password) = ssh_credentials::load(reference, &legacy) {
+                    return Ok(Some(Zeroizing::new(password)));
+                }
+            }
+            Err(error)
+        }
+    }
 }
 
 pub(crate) fn references(host: &SshRemoteHost) -> impl Iterator<Item = &String> {
@@ -163,6 +229,22 @@ mod tests {
         assert!(reference(&edited, rdp).is_none());
         assert_eq!(reference(&edited, vnc), reference(&original, vnc));
         assert_eq!(references(&original).count(), 2);
+    }
+
+    #[test]
+    fn desktop_password_binding_is_independent_of_ssh_tunnel_mode() {
+        let mut host: SshRemoteHost = serde_json::from_str(
+            r#"{"id":"test","name":"Test","host":"example.invalid","rdp":{"enabled":true,"port":3389,"username":"user"},"vnc":{"enabled":true,"port":5900}}"#,
+        )
+        .unwrap();
+        for protocol in DesktopProtocol::ALL {
+            let original = binding(&host, protocol);
+            match protocol {
+                DesktopProtocol::Rdp => host.rdp.as_mut().unwrap().tunnel_via_ssh = true,
+                DesktopProtocol::Vnc => host.vnc.as_mut().unwrap().tunnel_via_ssh = true,
+            }
+            assert_eq!(binding(&host, protocol), original);
+        }
     }
 }
 

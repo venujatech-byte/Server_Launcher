@@ -226,17 +226,59 @@ fn sample_frames(
             next = now;
         }
         thread::sleep(next.saturating_duration_since(now));
-        let connection = connection.lock().unwrap();
-        if !connection.connected {
-            break Ok(());
-        }
-        if !connection.receiving_frame {
-            if let Some(updated) = connection.framebuffer.snapshot() {
-                if updated.size != size {
-                    break Ok(());
-                }
-                frame = updated;
+        let updated = {
+            let connection = connection.lock().unwrap();
+            if !connection.connected {
+                break Ok(());
             }
+            if connection.receiving_frame {
+                None
+            } else {
+                connection.framebuffer.snapshot()
+            }
+        };
+        if let Some(updated) = updated {
+            frame = if updated.size == size {
+                updated
+            } else {
+                fit_capture_frame(&updated, size)
+            };
+        }
+    }
+}
+
+fn fit_capture_frame(source: &egui::ColorImage, [width, height]: [usize; 2]) -> egui::ColorImage {
+    let [source_width, source_height] = source.size;
+    let fit_width = width.min((source_width * height / source_height).max(1));
+    let fit_height = height.min((source_height * width / source_width).max(1));
+    let left = (width - fit_width) / 2;
+    let top = (height - fit_height) / 2;
+    let mut output = egui::ColorImage::new([width, height], egui::Color32::BLACK);
+    for y in 0..fit_height {
+        let source_row = y * source_height / fit_height * source_width;
+        let target = (top + y) * width + left;
+        for x in 0..fit_width {
+            output.pixels[target + x] = source.pixels[source_row + x * source_width / fit_width];
+        }
+    }
+    output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::{Color32, ColorImage};
+
+    #[test]
+    fn resized_capture_preserves_canvas_and_aspect_ratio() {
+        let source = ColorImage::new([1, 2], Color32::RED);
+        let result = fit_capture_frame(&source, [4, 4]);
+        assert_eq!(result.size, [4, 4]);
+        for row in result.pixels.chunks_exact(4) {
+            assert_eq!(
+                row,
+                [Color32::BLACK, Color32::RED, Color32::RED, Color32::BLACK]
+            );
         }
     }
 }

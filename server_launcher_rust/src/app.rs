@@ -3202,8 +3202,10 @@ impl eframe::App for LauncherApp {
                         }
 
                         if let Some(ref host) = remote_host_opt {
+                            let open_count = self.desktop_sessions.open_count(&host.id);
+                            let gui_label = if open_count == 0 { "GUI".to_owned() } else { format!("GUI ({open_count})") };
                             let gui = egui::Button::new(
-                                RichText::new(format!("{} GUI {}", crate::lucide::MONITOR, crate::lucide::CHEVRON_DOWN))
+                                RichText::new(format!("{} {gui_label} {}", crate::lucide::MONITOR, crate::lucide::CHEVRON_DOWN))
                                     .size(10.5)
                                     .strong()
                                     .color(p.text_secondary),
@@ -3212,7 +3214,11 @@ impl eframe::App for LauncherApp {
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
                             .min_size(egui::vec2(0.0, 22.0));
-                            let gui = ui.add(gui).hover_tip("Remote desktop");
+                            let gui = ui.add(gui).hover_tip(match open_count {
+                                0 => "Remote desktop".to_owned(),
+                                1 => "1 remote desktop session open".to_owned(),
+                                count => format!("{count} remote desktop sessions open"),
+                            });
                             let gui_popup = ui.make_persistent_id(("ssh_gui", &host.id));
                             if gui.clicked() {
                                 ui.memory_mut(|memory| memory.toggle_popup(gui_popup));

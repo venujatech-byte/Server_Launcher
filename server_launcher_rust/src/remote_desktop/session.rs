@@ -20,6 +20,7 @@ pub(crate) struct Sessions {
 struct Session {
     focus: SyncSender<()>,
     edit: Arc<AtomicBool>,
+    closed: Arc<AtomicBool>,
 }
 
 pub(super) const EDIT_SETTINGS: &str = "server-launcher:edit-remote-desktop";
@@ -66,6 +67,8 @@ impl Sessions {
                 }
             }
         });
+        let closed = Arc::new(AtomicBool::new(false));
+        let child_closed = Arc::clone(&closed);
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             while matches!(child.try_wait(), Ok(None)) {
@@ -86,10 +89,27 @@ impl Sessions {
                 let _ = child.kill();
                 let _ = child.wait();
             }
+            child_closed.store(true, Ordering::Release);
             ctx.request_repaint();
         });
-        self.open.insert(key, Session { focus, edit });
+        self.open.insert(
+            key,
+            Session {
+                focus,
+                edit,
+                closed,
+            },
+        );
         Ok(())
+    }
+
+    pub(crate) fn open_count(&mut self, id: &str) -> usize {
+        self.open
+            .retain(|_, session| !session.closed.load(Ordering::Acquire));
+        self.open
+            .keys()
+            .filter(|(host_id, _)| host_id == id)
+            .count()
     }
 
     pub(crate) fn take_edit_request(&self) -> Option<(String, DesktopProtocol)> {

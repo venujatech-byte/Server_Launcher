@@ -262,6 +262,9 @@ the server does not first create a fallback-size desktop and then resize it
 immediately after connection. If the initial image is still incomplete, check
 the negotiated size and first-frame damage coverage against the remote server
 before changing the partial renderer.
+RDP pixel conversion happens before locking the framebuffer shared with the UI;
+the reusable conversion buffer is capped at one validated frame, and damage
+covering a full frame is coalesced into one upload.
 The client requests the server pointer and composites its shape into the
 software framebuffer so the remote cursor follows pointer movement in the
 viewer. This adds cursor pixels to framebuffer damage; it does not change the

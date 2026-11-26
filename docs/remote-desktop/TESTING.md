@@ -64,6 +64,8 @@ The checked app revision was `8ec3a0d`.
    test left/right/middle plus side mouse buttons and both wheel axes.
    Confirm that a continuously changing desktop stays live over EGFX, and
    check that the viewer's FPS counter changes with received display updates.
+   While the screen updates continuously, type and move the pointer to check
+   that framebuffer updates do not stall local viewer input.
    With Keyboard enabled by default, type while the viewer is focused without
    clicking the remote canvas first. On Linux/X11, confirm Super and Alt+Tab
    reach the remote. On Wayland with a reachable `DISPLAY`, confirm the viewer
@@ -209,3 +211,6 @@ Run each active test for at least 30 minutes and check memory growth. Repeat
 with the window focused, unfocused, and minimized. Keep raw measurements with
 the test environment details; do not claim a performance improvement from a
 single screenshot or FPS sample.
+For RDP, include a high-resolution session to verify that the reusable damage
+conversion buffer stays bounded and that active frame updates do not delay
+local input.

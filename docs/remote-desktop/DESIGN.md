@@ -142,9 +142,12 @@ copy, palette, gradient, JPEG and PNG), Raw, CopyRect, and ZRLE rectangles (raw,
 solid, packed-palette, and RLE tiles), classic VNC
 password authentication, SSH stdio forwarding on Unix and Windows, keyboard
 and pointer input, clipboard text, and server-supported resolution changes.
-Fast quality selects RGB565; Auto follows the configured color depth. Direct
-VNC to a public or unknown address requires an explicit warning confirmation. The
-configured encoding priority is applied for the supported encodings.
+Fast quality selects RGB565; Auto follows the configured color depth. When Tight
+is enabled, Best/Good/Fast also send the Tight compression and JPEG quality
+pseudo-encodings; Auto leaves those choices to the server. Servers may ignore
+these optional hints. Direct VNC to a public or unknown address requires an
+explicit warning confirmation. The configured encoding priority is applied for
+the supported encodings.
 Username-based authentication is unsupported.
 Rich and X cursor shapes are drawn locally when the server supports either
 cursor encoding and a PointerPos extension. ZRLE uses one bounded persistent zlib stream per

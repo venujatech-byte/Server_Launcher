@@ -122,6 +122,8 @@ Platform keyboard capture remains unsupported.
 2. Verify Tight fill, copy, palette, gradient, JPEG, and PNG updates, plus
    Raw, CopyRect, and ZRLE. Include resize and an empty framebuffer. Confirm
    Raw/Cursor pseudo-rectangles do not get treated as framebuffer pixels.
+   With Tight enabled, verify Best/Good/Fast send their compression and JPEG
+   quality hints, while Auto leaves the server defaults unchanged.
 3. Verify RichCursor and XCursor shapes, hotspot placement, pointer movement,
    and the Show remote cursor setting. Test a server that sends only one cursor
    shape encoding as well as a server that sends neither.

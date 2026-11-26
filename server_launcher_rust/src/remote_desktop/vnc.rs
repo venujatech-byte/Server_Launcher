@@ -32,6 +32,8 @@ const X_CURSOR: i32 = -240;
 const POINTER_POS: [i32; 2] = [-225, -232];
 const DESKTOP_SIZE: i32 = -223;
 const EXTENDED_DESKTOP_SIZE: i32 = -308;
+const COMPRESS_LEVEL_0: i32 = -256;
+const QUALITY_LEVEL_0: i32 = -32;
 const MAX_ZRLE_COMPRESSED: usize = 64 * 1024 * 1024;
 const MAX_TIGHT_COMPRESSED: usize = 64 * 1024 * 1024;
 
@@ -335,6 +337,22 @@ fn use_rgb565(quality: Quality, color_depth: u8) -> bool {
     }
 }
 
+fn tight_quality_encodings(quality: Quality, tight_enabled: bool) -> Vec<i32> {
+    if !tight_enabled {
+        return Vec::new();
+    }
+    let (compression, jpeg_quality) = match quality {
+        Quality::Auto => return Vec::new(),
+        Quality::Fast => (1, 3),
+        Quality::Good => (5, 6),
+        Quality::Best => (9, 9),
+    };
+    vec![
+        COMPRESS_LEVEL_0 + compression,
+        QUALITY_LEVEL_0 + jpeg_quality,
+    ]
+}
+
 #[cfg(test)]
 mod warning_tests {
     use super::needs_unencrypted_warning;
@@ -475,6 +493,8 @@ fn run(
     {
         enabled_encodings.push(RAW);
     }
+    let tight_enabled = enabled_encodings.contains(&TIGHT);
+    enabled_encodings.extend(tight_quality_encodings(profile.quality, tight_enabled));
     let cursor_encodings: &[i32] = if profile.show_remote_cursor {
         &[RICH_CURSOR, X_CURSOR, POINTER_POS[0], POINTER_POS[1]]
     } else {
@@ -1603,6 +1623,24 @@ mod tests {
         assert!(use_rgb565(Quality::Fast, 32));
         assert!(!use_rgb565(Quality::Good, 16));
         assert!(!use_rgb565(Quality::Best, 16));
+    }
+
+    #[test]
+    fn tight_quality_maps_presets_to_server_hints_only_when_enabled() {
+        assert!(tight_quality_encodings(Quality::Auto, true).is_empty());
+        assert!(tight_quality_encodings(Quality::Best, false).is_empty());
+        assert_eq!(
+            tight_quality_encodings(Quality::Fast, true),
+            vec![COMPRESS_LEVEL_0 + 1, QUALITY_LEVEL_0 + 3]
+        );
+        assert_eq!(
+            tight_quality_encodings(Quality::Good, true),
+            vec![COMPRESS_LEVEL_0 + 5, QUALITY_LEVEL_0 + 6]
+        );
+        assert_eq!(
+            tight_quality_encodings(Quality::Best, true),
+            vec![COMPRESS_LEVEL_0 + 9, QUALITY_LEVEL_0 + 9]
+        );
     }
 
     #[test]

@@ -211,6 +211,10 @@ separate viewer process tests whether `DISPLAY` is reachable and selects
 XWayland only if it responds, leaving the main launcher on Wayland and avoiding
 an X11-only viewer when XWayland is unavailable. The viewer initializes Xlib's
 thread support before starting its event loop and keyboard-capture workers.
+Before grabbing the keyboard under XWayland, it sends Mutter's
+`_XWAYLAND_MAY_GRAB_KEYBOARD` request so GNOME can route reserved shortcuts to
+the viewer. This compositor-specific request does not guarantee that every
+Wayland compositor will grant the grab.
 
 On Linux/X11 and Windows, Right Ctrl is configurable as a host-key prefix.
 Right Ctrl+F toggles fullscreen, +S takes a screenshot, +R starts/stops

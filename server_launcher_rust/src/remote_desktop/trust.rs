@@ -32,6 +32,55 @@ pub(crate) struct Prompt {
     pub answer: mpsc::Sender<Choice>,
 }
 
+pub(crate) struct SavedPin {
+    pub name: String,
+    pub fingerprint: String,
+    pub path: PathBuf,
+}
+
+pub(crate) fn saved_pins(config_path: &Path, hosts: &[SshRemoteHost]) -> io::Result<Vec<SavedPin>> {
+    let directory = config_path.with_file_name("rdp-trust");
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let mut pins = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        if !entry.file_type()?.is_file()
+            || entry
+                .path()
+                .extension()
+                .is_none_or(|extension| extension != "sha256")
+        {
+            continue;
+        }
+        let path = entry.path();
+        let name = hosts
+            .iter()
+            .find(|host| pin_path(config_path, host) == path)
+            .map_or_else(
+                || "Unmatched or changed host".to_owned(),
+                |host| host.name.clone(),
+            );
+        let fingerprint = read_pin(&path)
+            .map(|value| value.unwrap_or_else(|| "Fingerprint missing".to_owned()))
+            .unwrap_or_else(|_| "Invalid fingerprint file".to_owned());
+        pins.push(SavedPin {
+            name,
+            fingerprint,
+            path,
+        });
+    }
+    pins.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(pins)
+}
+
+pub(crate) fn remove_saved_pin(path: &Path) -> io::Result<()> {
+    fs::remove_file(path)
+}
+
 pub(crate) struct Verifier {
     system: Option<Arc<WebPkiServerVerifier>>,
     provider: Arc<CryptoProvider>,
@@ -241,6 +290,26 @@ impl ServerCertVerifier for Verifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lists_and_removes_saved_certificate_pins() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("servers.json");
+        let host: SshRemoteHost = serde_json::from_str(
+            r#"{"id":"test","name":"Test host","host":"example.test","rdp":{"enabled":true}}"#,
+        )
+        .unwrap();
+        let path = pin_path(&config_path, &host);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, format!("{}\n", "a".repeat(64))).unwrap();
+
+        let pins = saved_pins(&config_path, std::slice::from_ref(&host)).unwrap();
+        assert_eq!(pins.len(), 1);
+        assert_eq!(pins[0].name, "Test host");
+        assert_eq!(pins[0].fingerprint, "a".repeat(64));
+        remove_saved_pin(&pins[0].path).unwrap();
+        assert!(saved_pins(&config_path, &[host]).unwrap().is_empty());
+    }
 
     #[test]
     fn treats_a_corrupt_pin_as_an_error_and_normalizes_the_hash() {

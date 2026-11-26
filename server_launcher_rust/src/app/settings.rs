@@ -706,6 +706,11 @@ impl LauncherApp {
                             }
                             SettingsTab::RemoteDesktop => {
                                 let previous = self.remote_desktop_settings;
+                                let saved_pins = crate::remote_desktop::trust::saved_pins(
+                                    &self.config_path,
+                                    &self.ssh_hosts,
+                                );
+                                let mut remove_pin = None;
                                 Frame::none()
                                     .fill(palette.bg_subtle)
                                     .stroke(Stroke::NONE)
@@ -719,7 +724,43 @@ impl LauncherApp {
                                         ui.add_space(8.0);
                                         ui.checkbox(&mut self.remote_desktop_settings.warn_unencrypted_vnc, "Warn before direct VNC connections to public or unknown hosts");
                                         ui.label(RichText::new("Direct classic VNC does not encrypt screen updates or input. The warning offers an SSH tunnel before connecting.").size(10.5).color(palette.text_muted));
+                                        ui.add_space(12.0);
+                                        ui.label(RichText::new("Trusted RDP certificates").size(13.0).strong().color(palette.text_primary));
+                                        match &saved_pins {
+                                            Ok(pins) if pins.is_empty() => {
+                                                ui.label(RichText::new("No saved certificate fingerprints.").size(10.5).color(palette.text_muted));
+                                            }
+                                            Ok(pins) => {
+                                                for (index, pin) in pins.iter().enumerate() {
+                                                    Frame::none()
+                                                        .fill(palette.bg_card)
+                                                        .rounding(Rounding::same(8.0))
+                                                        .inner_margin(egui::Margin::symmetric(10.0, 7.0))
+                                                        .show(ui, |ui| {
+                                                            ui.horizontal(|ui| {
+                                                                ui.vertical(|ui| {
+                                                                    ui.label(RichText::new(&pin.name).size(11.5).color(palette.text_primary));
+                                                                    ui.add(egui::Label::new(RichText::new(&pin.fingerprint).size(9.5).monospace().color(palette.text_muted)).wrap());
+                                                                });
+                                                                if ui.button("Remove trust").clicked() {
+                                                                    remove_pin = Some(index);
+                                                                }
+                                                            });
+                                                        });
+                                                }
+                                            }
+                                            Err(_) => {
+                                                ui.label(RichText::new("Could not read saved certificate fingerprints.").size(10.5).color(palette.danger));
+                                            }
+                                        }
                                     });
+                                if let (Some(index), Ok(pins)) = (remove_pin, saved_pins) {
+                                    if let Some(pin) = pins.get(index) {
+                                        if crate::remote_desktop::trust::remove_saved_pin(&pin.path).is_err() {
+                                            self.import_status_msg = Some(("Could not remove the saved RDP certificate fingerprint.".into(), true, std::time::Instant::now()));
+                                        }
+                                    }
+                                }
                                 if previous != self.remote_desktop_settings {
                                     self.persist_config();
                                 }

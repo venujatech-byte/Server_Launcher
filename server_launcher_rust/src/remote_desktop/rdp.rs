@@ -3,7 +3,7 @@
 use super::{
     credentials::{self, DesktopProtocol},
     framebuffer::Region,
-    profile::{Clipboard, Quality, RdpProfile, RdpSecurity, Resolution},
+    profile::{Clipboard, Quality, RdpColorProfile, RdpProfile, RdpSecurity, Resolution},
     trust::Verifier,
     tunnel::{self, DesktopStream},
     vnc::{Connection, Input},
@@ -714,6 +714,16 @@ fn config(
 }
 
 fn bitmap_quality(profile: &RdpProfile) -> (u32, bool) {
+    if let Some(color_profile) = profile.color_profile {
+        return match color_profile {
+            RdpColorProfile::Automatic
+            | RdpColorProfile::RemoteFx
+            | RdpColorProfile::TrueColor32 => (32, false),
+            RdpColorProfile::TrueColor24 => (24, false),
+            RdpColorProfile::HighColor16 => (16, false),
+            RdpColorProfile::HighColor15 => (15, false),
+        };
+    }
     match profile.quality {
         Quality::Auto => (
             match profile.color_depth {
@@ -741,6 +751,10 @@ fn rdp_quality_presets_set_bitmap_depth_and_adaptive_color() {
     assert_eq!(bitmap_quality(&profile), (24, true));
     profile.quality = Quality::Fast;
     assert_eq!(bitmap_quality(&profile), (16, true));
+    profile.color_profile = Some(RdpColorProfile::HighColor15);
+    assert_eq!(bitmap_quality(&profile), (15, false));
+    profile.color_profile = Some(RdpColorProfile::TrueColor24);
+    assert_eq!(bitmap_quality(&profile), (24, false));
 }
 
 #[cfg(test)]

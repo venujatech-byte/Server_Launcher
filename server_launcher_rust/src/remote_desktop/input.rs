@@ -11,9 +11,19 @@ pub(crate) struct Capture {
     extra_buttons: u8,
     position: [u16; 2],
     wheel: Vec2,
+    left_handed_mouse: bool,
+    disable_smooth_scrolling: bool,
 }
 
 impl Capture {
+    pub(crate) fn new(left_handed_mouse: bool, disable_smooth_scrolling: bool) -> Self {
+        Self {
+            left_handed_mouse,
+            disable_smooth_scrolling,
+            ..Default::default()
+        }
+    }
+
     pub(crate) fn events(
         &mut self,
         events: &[Event],
@@ -81,7 +91,7 @@ impl Capture {
                             button,
                             pressed,
                         });
-                    } else if let Some(mask) = mouse_button(button) {
+                    } else if let Some(mask) = mouse_button(button, self.left_handed_mouse) {
                         if pressed {
                             self.active = true;
                             self.buttons |= mask;
@@ -142,9 +152,15 @@ impl Capture {
                         MouseWheelUnit::Point => 1.0 / 40.0,
                         MouseWheelUnit::Line | MouseWheelUnit::Page => 1.0,
                     };
-                    self.wheel += delta * multiplier;
-                    let steps = [self.wheel.x.trunc(), self.wheel.y.trunc()];
-                    self.wheel -= egui::vec2(steps[0], steps[1]);
+                    let steps = if self.disable_smooth_scrolling {
+                        self.wheel = Vec2::ZERO;
+                        [delta.x.signum(), delta.y.signum()]
+                    } else {
+                        self.wheel += delta * multiplier;
+                        let steps = [self.wheel.x.trunc(), self.wheel.y.trunc()];
+                        self.wheel -= egui::vec2(steps[0], steps[1]);
+                        steps
+                    };
                     for (step, positive, negative) in
                         [(steps[0], 1 << 5, 1 << 6), (steps[1], 1 << 3, 1 << 4)]
                     {
@@ -219,11 +235,11 @@ impl Capture {
     }
 }
 
-fn mouse_button(button: PointerButton) -> Option<u8> {
+fn mouse_button(button: PointerButton, left_handed: bool) -> Option<u8> {
     match button {
-        PointerButton::Primary => Some(1),
+        PointerButton::Primary => Some(if left_handed { 4 } else { 1 }),
         PointerButton::Middle => Some(2),
-        PointerButton::Secondary => Some(4),
+        PointerButton::Secondary => Some(if left_handed { 1 } else { 4 }),
         PointerButton::Extra1 | PointerButton::Extra2 => None,
     }
 }
@@ -249,6 +265,15 @@ fn remote_position(pos: Pos2, canvas: Rect, [width, height]: [usize; 2]) -> [u16
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn left_handed_mode_swaps_primary_and_secondary_buttons() {
+        assert_eq!(mouse_button(PointerButton::Primary, false), Some(1));
+        assert_eq!(mouse_button(PointerButton::Secondary, false), Some(4));
+        assert_eq!(mouse_button(PointerButton::Primary, true), Some(4));
+        assert_eq!(mouse_button(PointerButton::Secondary, true), Some(1));
+        assert_eq!(mouse_button(PointerButton::Middle, true), Some(2));
+    }
 
     #[test]
     fn clamps_drag_coordinates_and_releases_buttons_and_modifiers() {

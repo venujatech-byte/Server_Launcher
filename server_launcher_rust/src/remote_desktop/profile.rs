@@ -28,6 +28,14 @@ choices!(Resolution {
 });
 choices!(RdpPainting { Smooth, Fast });
 choices!(RdpFramePainting { Incremental, FullFrame });
+choices!(RdpColorProfile {
+    Automatic,
+    RemoteFx,
+    TrueColor32,
+    TrueColor24,
+    HighColor16,
+    HighColor15
+});
 choices!(Audio { Local, Off });
 choices!(Clipboard {
     Both,
@@ -70,11 +78,14 @@ pub(crate) struct RdpProfile {
     pub painting: RdpPainting,
     pub frame_painting: RdpFramePainting,
     pub quality: Quality,
+    pub color_profile: Option<RdpColorProfile>,
     pub color_depth: u8,
     pub resolution: Resolution,
     pub width: u16,
     pub height: u16,
     pub multi_monitor: bool,
+    pub left_handed_mouse: bool,
+    pub disable_smooth_scrolling: bool,
     pub keyboard_layout: Option<u32>,
     pub audio: Audio,
     pub mic: bool,
@@ -103,11 +114,14 @@ impl Default for RdpProfile {
             painting: RdpPainting::Smooth,
             frame_painting: RdpFramePainting::Incremental,
             quality: Quality::Auto,
+            color_profile: None,
             color_depth: 32,
             resolution: Resolution::FitWindow,
             width: 1920,
             height: 1080,
             multi_monitor: false,
+            left_handed_mouse: false,
+            disable_smooth_scrolling: false,
             keyboard_layout: None,
             audio: Audio::Local,
             mic: false,
@@ -137,6 +151,7 @@ pub(crate) struct VncProfile {
     pub encodings: Vec<Encoding>,
     pub color_depth: u8,
     pub view_only: bool,
+    pub disable_smooth_scrolling: bool,
     pub shared: bool,
     pub clipboard: Clipboard,
     pub scaling: Scaling,
@@ -160,6 +175,7 @@ impl Default for VncProfile {
             ],
             color_depth: 32,
             view_only: false,
+            disable_smooth_scrolling: false,
             shared: true,
             clipboard: Clipboard::Both,
             scaling: Scaling::Fit,

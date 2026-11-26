@@ -71,6 +71,22 @@ the final versions.
 No connection, platform interoperability, or performance measurements have
 been completed. Record results here only after a runnable viewer is measured.
 
+## Display profiles and input controls
+
+RDP profiles expose Automatic, RemoteFX, 32/24-bit true color, and 16/15-bit
+high color. The current IronRDP bitmap path does not provide the GFX AVC/RFX
+progressive pipeline, and its GCC setup rejects 8 bpp, so those Remmina entries
+are disabled. RemoteFX is advertised to the server but cannot be forced: the
+server selects the codec during negotiation. Older `quality` and `color_depth`
+fields remain intact and are used when no explicit `color_profile` is saved.
+RDP and VNC can disable fractional wheel accumulation; RDP can also swap the
+primary and secondary pointer buttons for left-handed use. These are local
+input/display settings, not protocol performance modes. Remmina's
+TCP_USER_TIMEOUT, server-side local-input lock, and remote cursor-shape options
+are not exposed because this client does not currently implement them. VNC
+continues to skip Tight encoding, and its default bell handling ignores bell
+messages.
+
 ## Direct connection checks
 
 The host editor checks TCP reachability and the initial

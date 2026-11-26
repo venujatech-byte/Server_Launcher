@@ -43,6 +43,39 @@ fn color_depth(ui: &mut Ui, value: &mut u8) {
     );
 }
 
+fn rdp_color_profile(ui: &mut Ui, value: &mut Option<RdpColorProfile>) {
+    const SUPPORTED: &[(RdpColorProfile, &str)] = &[
+        (RdpColorProfile::Automatic, "Automatic (32 bpp)"),
+        (RdpColorProfile::RemoteFx, "RemoteFX (32 bpp)"),
+        (RdpColorProfile::TrueColor32, "True color (32 bpp)"),
+        (RdpColorProfile::TrueColor24, "True color (24 bpp)"),
+        (RdpColorProfile::HighColor16, "High color (16 bpp)"),
+        (RdpColorProfile::HighColor15, "High color (15 bpp)"),
+    ];
+    let selected = value.unwrap_or(RdpColorProfile::Automatic);
+    ui.horizontal(|ui| {
+        ui.label("Color profile");
+        ComboBox::from_id_salt("RDP color profile")
+            .selected_text(
+                SUPPORTED
+                    .iter()
+                    .find(|(profile, _)| *profile == selected)
+                    .map_or("Automatic (32 bpp)", |(_, label)| *label),
+            )
+            .show_ui(ui, |ui| {
+                for &(profile, label) in SUPPORTED {
+                    ui.selectable_value(value, Some(profile), label);
+                }
+                ui.separator();
+                ui.add_enabled(false, egui::Button::new("GFX AVC444 (32 bpp)"));
+                ui.add_enabled(false, egui::Button::new("GFX AVC420 (32 bpp)"));
+                ui.add_enabled(false, egui::Button::new("GFX RFX (32 bpp)"));
+                ui.add_enabled(false, egui::Button::new("GFX RFX Progressive (32 bpp)"));
+                ui.add_enabled(false, egui::Button::new("256 colors (8 bpp)"));
+            });
+    });
+}
+
 pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
     let mut profile = draft.clone().unwrap_or_default();
     ui.checkbox(&mut profile.enabled, "Enable RDP");
@@ -90,22 +123,9 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
         ui.label(
             "Full-frame repaint redraws the complete received image after each update. It changes client-side painting only and may use more CPU; it does not change network or server rendering behavior.",
         );
-        choice(
-            ui,
-            "Quality",
-            &mut profile.quality,
-            &[
-                (Quality::Auto, "Auto / manual settings"),
-                (Quality::Best, "Best · 32-bit color"),
-                (Quality::Good, "Good · 24-bit adaptive"),
-                (Quality::Fast, "Fast · 16-bit adaptive"),
-            ],
-        );
-        if profile.quality == Quality::Auto {
-            color_depth(ui, &mut profile.color_depth);
-        } else {
-            ui.label("Quality presets set color depth; adaptive presets allow server color subsampling.");
-        }
+        rdp_color_profile(ui, &mut profile.color_profile);
+        ui.label("GFX profiles and 8 bpp are unavailable in this RDP renderer.");
+        ui.label("RemoteFX is advertised to the server; the server still chooses the negotiated codec.");
         choice(
             ui,
             "Resolution",
@@ -132,6 +152,10 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
         }
         ui.checkbox(&mut profile.multi_monitor, "Two side-by-side remote monitors");
         ui.label("Uses the selected resolution as a combined display; server support is required.");
+        ui.collapsing("Input", |ui| {
+            ui.checkbox(&mut profile.left_handed_mouse, "Left-handed mouse support");
+            ui.checkbox(&mut profile.disable_smooth_scrolling, "Disable smooth scrolling");
+        });
         let mut layout = profile.keyboard_layout;
         choice(
             ui,
@@ -232,7 +256,8 @@ pub(crate) fn vnc(ui: &mut Ui, draft: &mut Option<VncProfile>, port_text: &mut S
                 (Quality::Fast, "Fast"),
             ],
         );
-        ui.collapsing("Encoding priority", |ui| {
+        ui.collapsing("VNC encoding order", |ui| {
+            ui.label("Order is sent to the server; unsupported encodings are skipped.");
             for i in 0..profile.encodings.len() {
                 let encoding = profile.encodings[i];
                 let label = match encoding {
@@ -259,6 +284,7 @@ pub(crate) fn vnc(ui: &mut Ui, draft: &mut Option<VncProfile>, port_text: &mut S
         });
         color_depth(ui, &mut profile.color_depth);
         ui.checkbox(&mut profile.view_only, "View only");
+        ui.checkbox(&mut profile.disable_smooth_scrolling, "Disable smooth scrolling");
         ui.checkbox(&mut profile.shared, "Shared session");
         clipboard(ui, &mut profile.clipboard);
         ui.label("Classic VNC shares Latin-1 text. Click the remote desktop before pasting.");

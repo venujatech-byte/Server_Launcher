@@ -54,6 +54,18 @@ pub(crate) fn run(
         .map_or(RdpFramePainting::Incremental, |profile| {
             profile.frame_painting
         });
+    let (left_handed_mouse, disable_smooth_scrolling) = match protocol {
+        DesktopProtocol::Rdp => profile
+            .and_then(|host| host.rdp.as_ref())
+            .map_or((false, false), |profile| {
+                (profile.left_handed_mouse, profile.disable_smooth_scrolling)
+            }),
+        DesktopProtocol::Vnc => profile
+            .and_then(|host| host.vnc.as_ref())
+            .map_or((false, false), |profile| {
+                (false, profile.disable_smooth_scrolling)
+            }),
+    };
     let viewer_host = profile.filter(|_| !test_pattern).cloned();
     let confirm_unencrypted_vnc = viewer_host
         .as_ref()
@@ -157,7 +169,9 @@ pub(crate) fn run(
                 test_pattern,
                 view_only,
                 send_clipboard,
-                capture: Capture::default(),
+                capture: Capture::new(left_handed_mouse, disable_smooth_scrolling),
+                left_handed_mouse,
+                disable_smooth_scrolling,
                 host_name,
                 protocol,
                 confirm_unencrypted_vnc,
@@ -229,6 +243,8 @@ struct Viewer {
     view_only: bool,
     send_clipboard: bool,
     capture: Capture,
+    left_handed_mouse: bool,
+    disable_smooth_scrolling: bool,
     host_name: String,
     protocol: DesktopProtocol,
     confirm_unencrypted_vnc: bool,
@@ -617,7 +633,7 @@ impl eframe::App for Viewer {
             }
         }
         if !connected {
-            self.capture = Capture::default();
+            self.capture = Capture::new(self.left_handed_mouse, self.disable_smooth_scrolling);
             self.last_window_size = None;
         }
         if connected && self.show_fps {

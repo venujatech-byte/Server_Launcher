@@ -1,6 +1,6 @@
 use super::vnc::{Connection, Input};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ffi::CStr,
     ptr,
     sync::{mpsc, Arc, Mutex},
@@ -8,6 +8,15 @@ use std::{
     time::Duration,
 };
 use x11_dl::xlib;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HostShortcut {
+    Fullscreen,
+    Screenshot,
+    Recording,
+    Disconnect,
+    SendKeys,
+}
 
 pub(crate) struct NativeKeyboardCapture {
     stop: mpsc::Sender<()>,
@@ -20,10 +29,22 @@ impl NativeKeyboardCapture {
         connection: Arc<Mutex<Connection>>,
         ctx: egui::Context,
         expected_title: String,
+        shortcuts: mpsc::Sender<HostShortcut>,
+        host_key_enabled: bool,
     ) -> Self {
         let (stop, stopped) = mpsc::channel();
         let (ready, started) = mpsc::sync_channel(1);
-        let worker = thread::spawn(move || run(connection, ctx, expected_title, stopped, ready));
+        let worker = thread::spawn(move || {
+            run(
+                connection,
+                ctx,
+                expected_title,
+                shortcuts,
+                host_key_enabled,
+                stopped,
+                ready,
+            )
+        });
         Self {
             stop,
             ready: Some(started),
@@ -60,6 +81,8 @@ fn run(
     connection: Arc<Mutex<Connection>>,
     ctx: egui::Context,
     expected_title: String,
+    shortcuts: mpsc::Sender<HostShortcut>,
+    host_key_enabled: bool,
     stopped: mpsc::Receiver<()>,
     ready: mpsc::SyncSender<Result<(), String>>,
 ) {
@@ -130,6 +153,8 @@ fn run(
     }
 
     let mut held = HashMap::new();
+    let mut host_key: Option<(u32, HostKeyState)> = None;
+    let mut suppressed = HashSet::new();
     let mut grabbed = true;
     loop {
         if stopped.try_recv().is_ok() {
@@ -140,6 +165,8 @@ fn run(
         unsafe { (xlib.XGetInputFocus)(display, &mut focused_window, &mut revert) };
         if grabbed && focused_window != window {
             release_held(&connection, &mut held);
+            host_key = None;
+            suppressed.clear();
             unsafe { (xlib.XUngrabKeyboard)(display, xlib::CurrentTime) };
             grabbed = false;
             ctx.request_repaint();
@@ -182,6 +209,26 @@ fn run(
                 if keysym == 0 {
                     continue;
                 }
+                if host_key_enabled && keysym == 0xffe4 && host_key.is_none() {
+                    host_key = Some((key.keycode, HostKeyState::Pending));
+                    continue;
+                }
+                if let Some((host_keycode, HostKeyState::Pending)) = host_key {
+                    if let Some(shortcut) = host_shortcut(keysym) {
+                        let _ = shortcuts.send(shortcut);
+                        host_key = Some((host_keycode, HostKeyState::Shortcut));
+                        suppressed.insert(key.keycode);
+                        ctx.request_repaint();
+                        continue;
+                    }
+                    connection.lock().unwrap().send_input(Input::Key {
+                        keysym: 0xffe4,
+                        physical_key: None,
+                        pressed: true,
+                    });
+                    held.insert(host_keycode, 0xffe4);
+                    host_key = Some((host_keycode, HostKeyState::Forwarded));
+                }
                 connection.lock().unwrap().send_input(Input::Key {
                     keysym,
                     physical_key: None,
@@ -189,6 +236,40 @@ fn run(
                 });
                 held.insert(key.keycode, keysym);
             } else {
+                if suppressed.remove(&key.keycode) {
+                    continue;
+                }
+                if let Some((host_keycode, state)) = host_key {
+                    if host_keycode == key.keycode {
+                        match state {
+                            HostKeyState::Pending => {
+                                let connection = connection.lock().unwrap();
+                                connection.send_input(Input::Key {
+                                    keysym: 0xffe4,
+                                    physical_key: None,
+                                    pressed: true,
+                                });
+                                connection.send_input(Input::Key {
+                                    keysym: 0xffe4,
+                                    physical_key: None,
+                                    pressed: false,
+                                });
+                            }
+                            HostKeyState::Forwarded => {
+                                if let Some(keysym) = held.remove(&key.keycode) {
+                                    connection.lock().unwrap().send_input(Input::Key {
+                                        keysym,
+                                        physical_key: None,
+                                        pressed: false,
+                                    });
+                                }
+                            }
+                            HostKeyState::Shortcut => {}
+                        }
+                        host_key = None;
+                        continue;
+                    }
+                }
                 if let Some(keysym) = held.remove(&key.keycode) {
                     connection.lock().unwrap().send_input(Input::Key {
                         keysym,
@@ -210,6 +291,39 @@ fn run(
         (xlib.XCloseDisplay)(display);
     }
     ctx.request_repaint();
+}
+
+#[derive(Clone, Copy)]
+enum HostKeyState {
+    Pending,
+    Forwarded,
+    Shortcut,
+}
+
+fn host_shortcut(keysym: u32) -> Option<HostShortcut> {
+    match keysym {
+        0x46 | 0x66 => Some(HostShortcut::Fullscreen),
+        0x53 | 0x73 => Some(HostShortcut::Screenshot),
+        0x52 | 0x72 => Some(HostShortcut::Recording),
+        0x44 | 0x64 => Some(HostShortcut::Disconnect),
+        0x4b | 0x6b => Some(HostShortcut::SendKeys),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn right_control_host_shortcuts_ignore_letter_case() {
+        assert_eq!(host_shortcut(b'F' as u32), Some(HostShortcut::Fullscreen));
+        assert_eq!(host_shortcut(b's' as u32), Some(HostShortcut::Screenshot));
+        assert_eq!(host_shortcut(b'R' as u32), Some(HostShortcut::Recording));
+        assert_eq!(host_shortcut(b'd' as u32), Some(HostShortcut::Disconnect));
+        assert_eq!(host_shortcut(b'K' as u32), Some(HostShortcut::SendKeys));
+        assert_eq!(host_shortcut(b'x' as u32), None);
+    }
 }
 
 fn release_held(connection: &Arc<Mutex<Connection>>, held: &mut HashMap<u32, u32>) {

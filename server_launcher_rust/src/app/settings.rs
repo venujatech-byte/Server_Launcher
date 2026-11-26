@@ -721,6 +721,8 @@ impl LauncherApp {
                                         ui.add_space(4.0);
                                         ui.checkbox(&mut self.remote_desktop_settings.show_live_fps, "Show live FPS by default");
                                         ui.label(RichText::new("Displays the recent rate of framebuffer updates in each new viewer window.").size(10.5).color(palette.text_muted));
+                                        ui.checkbox(&mut self.remote_desktop_settings.host_key_enabled, "Use Right Ctrl host key (Linux/X11)");
+                                        ui.label(RichText::new("Right Ctrl + F fullscreen, + S screenshot, + R recording, + D disconnect, + K send keys.").size(10.5).color(palette.text_muted));
                                         ui.add_space(8.0);
                                         ui.horizontal(|ui| {
                                             ui.label("New RDP/VNC profile quality");

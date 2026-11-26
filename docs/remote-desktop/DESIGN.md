@@ -201,6 +201,12 @@ preedit candidates are not sent. Linux egui-winit 0.29 drops IME events, so
 Linux composition still depends on text events delivered by its keyboard
 backend. Host-key shortcut prefixes remain pending; native keyboard grabbing
 currently supports Linux/X11 only.
+
+On Linux/X11, Right Ctrl is configurable as a host-key prefix. Right Ctrl+F
+toggles fullscreen, +S takes a screenshot, +R starts/stops recording, +D closes
+the viewer, and +K opens the Send keys window. Other Right Ctrl combinations
+are forwarded normally. The native prefix is unavailable on Windows and
+Wayland; those platforms keep the direct egui input path.
 Input mapping and focus release were tested in-process. Synthetic desktop input
 did not reach the loopback peer in the X11 smoke test, so end-to-end input
 behavior remains unverified.
@@ -324,8 +330,8 @@ The writer publishes a completed PNG without overwriting an existing file.
 The viewer reports the result with open-file and show-folder actions.
 The user can choose a screenshot folder in Remote Desktop settings; leaving it
 unset uses Pictures/ServerLauncher. Screenshot clipboard copying can be enabled
-as a viewer default or toggled per session. Host-key shortcut prefixes are not
-implemented; the Send keys menu remains the fallback for other platforms.
+as a viewer default or toggled per session. The Send keys menu remains the
+fallback on platforms without native host-key capture.
 
 Recordings use FFmpeg H.264 (MP4) or VP9 (WebM) at 30 fps when available and
 fall back to a PNG sequence when FFmpeg is missing. The recording destination

@@ -216,6 +216,7 @@ pub struct RemoteDesktopSettings {
     pub default_scaling: crate::remote_desktop::profile::Scaling,
     pub default_auto_reconnect: bool,
     pub show_live_fps: bool,
+    pub host_key_enabled: bool,
     pub clipboard_image_limit_mb: u8,
     pub warn_unencrypted_vnc: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -239,6 +240,7 @@ impl Default for RemoteDesktopSettings {
             default_scaling: crate::remote_desktop::profile::Scaling::Fit,
             default_auto_reconnect: true,
             show_live_fps: false,
+            host_key_enabled: true,
             clipboard_image_limit_mb: 16,
             warn_unencrypted_vnc: true,
             h264_library_path: None,

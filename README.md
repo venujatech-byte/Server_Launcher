@@ -118,8 +118,10 @@ Windows uses IronRDP's native drive backend. This needs real-server validation.
 RDP profiles can route through Microsoft RD Gateway over HTTPS. The gateway
 uses the saved RDP username/password, requires a system-trusted gateway
 certificate, and cannot be combined with Tunnel via SSH. This path still needs
-live gateway validation. Host-key shortcuts, native keyboard grabs outside
-Linux/X11, and keyboard-layout-specific IME are not implemented; committed
+live gateway validation. Right Ctrl host-key shortcuts (fullscreen, screenshot,
+recording, disconnect, and Send keys) are available on Linux/X11. Native
+keyboard grabs outside Linux/X11 and keyboard-layout-specific IME are not
+implemented; committed
 non-ASCII IME text is forwarded on platforms that provide egui commit events,
 while Linux relies on its keyboard text events. Linux source builds
 need the ALSA development package

@@ -27,6 +27,8 @@ pub(crate) fn run(
 ) -> eframe::Result<()> {
     let config = ConfigFile::load_from_file(path);
     let show_fps = config.remote_desktop.show_live_fps;
+    #[cfg(target_os = "linux")]
+    let host_key_enabled = config.remote_desktop.host_key_enabled;
     let screenshot_folder = config.remote_desktop.screenshot_folder.clone();
     let recording_folder = config.remote_desktop.recording_folder.clone();
     let ffmpeg_path = config.remote_desktop.ffmpeg_path.clone();
@@ -120,6 +122,8 @@ pub(crate) fn run(
         .is_some_and(|direction| direction != Clipboard::Off);
     let config_path = path.to_owned();
     let palette = ThemeMode::from_id_str(theme).palette();
+    #[cfg(target_os = "linux")]
+    let (native_shortcut_tx, native_shortcut_rx) = mpsc::channel();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(&title)
@@ -202,6 +206,13 @@ pub(crate) fn run(
                 native_keyboard: None,
                 #[cfg(target_os = "linux")]
                 native_keyboard_attempted: false,
+                #[cfg(target_os = "linux")]
+                native_shortcut_tx,
+                #[cfg(target_os = "linux")]
+                native_shortcut_rx,
+                #[cfg(target_os = "linux")]
+                host_key_enabled,
+                show_send_keys: false,
                 keyboard_capture_feedback: None,
                 left_handed_mouse,
                 disable_smooth_scrolling,
@@ -315,6 +326,13 @@ struct Viewer {
     native_keyboard: Option<super::x11_keyboard::NativeKeyboardCapture>,
     #[cfg(target_os = "linux")]
     native_keyboard_attempted: bool,
+    #[cfg(target_os = "linux")]
+    native_shortcut_tx: mpsc::Sender<super::x11_keyboard::HostShortcut>,
+    #[cfg(target_os = "linux")]
+    native_shortcut_rx: mpsc::Receiver<super::x11_keyboard::HostShortcut>,
+    #[cfg(target_os = "linux")]
+    host_key_enabled: bool,
+    show_send_keys: bool,
     keyboard_capture_feedback: Option<String>,
     left_handed_mouse: bool,
     disable_smooth_scrolling: bool,
@@ -448,6 +466,7 @@ impl Viewer {
         let Some(connection) = &self.connection else {
             return;
         };
+        let keyboard_capture = self.capture.keyboard_capture();
         #[cfg(target_os = "linux")]
         self.native_keyboard.take();
         let connection = connection.lock().unwrap();
@@ -461,6 +480,95 @@ impl Viewer {
                 physical_key: None,
                 pressed,
             });
+        }
+        self.capture.set_keyboard_capture(keyboard_capture, |_| {});
+        #[cfg(target_os = "linux")]
+        {
+            self.native_keyboard_attempted = false;
+            self.keyboard_capture_feedback = None;
+        }
+    }
+
+    fn toggle_recording(&mut self, ctx: &egui::Context) {
+        if let Some(recording) = &self.recording {
+            recording.stop();
+            return;
+        }
+        if let Some(connection) = &self.connection {
+            if connection.lock().unwrap().connected && self.texture.is_some() {
+                self.recording_result = None;
+                self.recording = Some(super::recording::Recording::start(
+                    connection.clone(),
+                    ctx.clone(),
+                    self.recording_folder.clone(),
+                    self.ffmpeg_path.clone(),
+                    self.recording_fps,
+                    self.recording_format,
+                ));
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn handle_native_shortcuts(&mut self, ctx: &egui::Context) {
+        while let Ok(shortcut) = self.native_shortcut_rx.try_recv() {
+            match shortcut {
+                super::x11_keyboard::HostShortcut::Fullscreen => {
+                    self.fullscreen = !self.fullscreen;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
+                }
+                super::x11_keyboard::HostShortcut::Screenshot => self.take_screenshot(ctx),
+                super::x11_keyboard::HostShortcut::Recording => self.toggle_recording(ctx),
+                super::x11_keyboard::HostShortcut::Disconnect => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                super::x11_keyboard::HostShortcut::SendKeys => self.show_send_keys = true,
+            }
+        }
+    }
+
+    fn send_keys_window(&mut self, ctx: &egui::Context) {
+        if !self.show_send_keys {
+            return;
+        }
+        let mut open = self.show_send_keys;
+        let mut selected: Option<Vec<u32>> = None;
+        egui::Window::new("Send keys")
+            .id(egui::Id::new("remote_send_keys_window"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                for (label, keys) in [
+                    ("Ctrl+Alt+Del", &[0xffe3, 0xffe9, 0xffff][..]),
+                    ("Alt+Tab", &[0xffe9, 0xff09][..]),
+                    ("Alt+F4", &[0xffe9, 0xffc1][..]),
+                    ("Super / Windows key", &[0xffeb][..]),
+                    ("Super+Tab", &[0xffeb, 0xff09][..]),
+                    ("Win+L", &[0xffeb, b'l' as u32][..]),
+                    ("Win+D", &[0xffeb, b'd' as u32][..]),
+                    ("Ctrl+Shift+Esc", &[0xffe3, 0xffe1, 0xff1b][..]),
+                    ("Print Screen", &[0xff61][..]),
+                    ("Escape", &[0xff1b][..]),
+                    ("Ctrl+C", &[0xffe3, b'c' as u32][..]),
+                    ("Ctrl+V", &[0xffe3, b'v' as u32][..]),
+                ] {
+                    if ui.button(label).clicked() {
+                        selected = Some(keys.to_vec());
+                    }
+                }
+                ui.menu_button("Function keys", |ui| {
+                    for number in 1..=12 {
+                        if ui.button(format!("F{number}")).clicked() {
+                            selected = Some(vec![0xffbd + number]);
+                            ui.close_menu();
+                        }
+                    }
+                });
+            });
+        self.show_send_keys = open;
+        if let Some(keys) = selected {
+            self.send_keys(&keys);
         }
     }
 
@@ -516,6 +624,8 @@ impl Viewer {
                     connection.clone(),
                     ctx.clone(),
                     format!("{} - {}", self.host_name, self.protocol.label()),
+                    self.native_shortcut_tx.clone(),
+                    self.host_key_enabled,
                 ));
             }
         }
@@ -1071,17 +1181,7 @@ impl eframe::App for Viewer {
                     )
                     .clicked()
                 {
-                    if let Some(connection) = &self.connection {
-                        self.recording_result = None;
-                        self.recording = Some(super::recording::Recording::start(
-                            connection.clone(),
-                            ctx.clone(),
-                            self.recording_folder.clone(),
-                            self.ffmpeg_path.clone(),
-                            self.recording_fps,
-                            self.recording_format,
-                        ));
-                    }
+                    self.toggle_recording(ctx);
                 }
                 ui.checkbox(&mut self.copy_screenshot, "Copy screenshot");
                 ui.add_enabled_ui(connected && !self.view_only, |ui| {
@@ -1462,6 +1562,9 @@ impl eframe::App for Viewer {
             }
             self.send_input(ctx, screen, clip, pixels);
         });
+        #[cfg(target_os = "linux")]
+        self.handle_native_shortcuts(ctx);
+        self.send_keys_window(ctx);
     }
 }
 

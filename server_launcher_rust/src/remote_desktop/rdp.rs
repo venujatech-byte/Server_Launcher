@@ -20,7 +20,7 @@ use ironrdp::{
         client::DisplayControlClient,
         pdu::{DisplayControlMonitorLayout, DisplayControlPdu, MonitorLayoutEntry},
     },
-    dvc::{DrdynvcClient, DvcChannelListener, DvcClientProcessor, DvcMessage, DynamicChannelId},
+    dvc::{DrdynvcClient, DvcChannelListener, DvcClientProcessor, DynamicChannelId},
     graphics::image_processing::PixelFormat,
     pdu::{
         gcc::KeyboardType,
@@ -52,7 +52,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const AUDIO_INPUT_QUEUE: usize = 64;
 
 struct AudioInputListener {
-    sender: SyncSender<(DynamicChannelId, Vec<DvcMessage>)>,
+    sender: SyncSender<(DynamicChannelId, Vec<ironrdp::svc::SvcMessage>)>,
 }
 
 impl DvcChannelListener for AudioInputListener {

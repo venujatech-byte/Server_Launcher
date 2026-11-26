@@ -80,7 +80,10 @@ The checked app revision was `8ec3a0d`.
    Enable View only and confirm the display remains live while keyboard,
    pointer, and outgoing clipboard input are suppressed.
 4. Resize the viewer with dynamic resolution enabled. Check for correct aspect
-   ratio and no stale pixels after the server changes resolution.
+   ratio and no stale pixels after the server changes resolution. Also open a
+   fresh Fit Window session and verify the initial negotiated size matches the
+   viewer canvas; confirm the server does not log a fallback-size session
+   followed by an immediate resize, and that the full desktop is painted.
 5. Compare Incremental and Full-frame repaint. They should show the same remote
    frame; Full-frame repaint may use more client CPU and does not change server
    capture FPS, codec negotiation, or network latency.

@@ -257,6 +257,11 @@ its own working copy and does not log connector errors or credentials.
 
 Initial dimensions are validated before allocating the decoded framebuffer.
 Damage from the graphics stage feeds the common partial texture renderer.
+For Fit Window, the connector starts with the measured viewer canvas size so
+the server does not first create a fallback-size desktop and then resize it
+immediately after connection. If the initial image is still incomplete, check
+the negotiated size and first-frame damage coverage against the remote server
+before changing the partial renderer.
 The client requests the server pointer and composites its shape into the
 software framebuffer so the remote cursor follows pointer movement in the
 viewer. This adds cursor pixels to framebuffer damage; it does not change the

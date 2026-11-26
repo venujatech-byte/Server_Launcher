@@ -855,6 +855,7 @@ impl LauncherApp {
                                             egui::ComboBox::from_id_salt("remote_recording_format")
                                                 .selected_text(match self.remote_desktop_settings.recording_format {
                                                     crate::config::RemoteRecordingFormat::Mp4 => "MP4 (H.264)",
+                                                    crate::config::RemoteRecordingFormat::Webm => "WebM (VP9)",
                                                     crate::config::RemoteRecordingFormat::PngSequence => "PNG sequence",
                                                 })
                                                 .show_ui(ui, |ui| {
@@ -862,6 +863,11 @@ impl LauncherApp {
                                                         &mut self.remote_desktop_settings.recording_format,
                                                         crate::config::RemoteRecordingFormat::Mp4,
                                                         "MP4 (H.264)",
+                                                    );
+                                                    ui.selectable_value(
+                                                        &mut self.remote_desktop_settings.recording_format,
+                                                        crate::config::RemoteRecordingFormat::Webm,
+                                                        "WebM (VP9)",
                                                     );
                                                     ui.selectable_value(
                                                         &mut self.remote_desktop_settings.recording_format,

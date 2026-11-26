@@ -204,6 +204,7 @@ impl Default for SshIdleSettings {
 pub enum RemoteRecordingFormat {
     #[default]
     Mp4,
+    Webm,
     PngSequence,
 }
 

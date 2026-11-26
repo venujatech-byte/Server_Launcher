@@ -144,10 +144,13 @@ fn record(
             output_bytes,
         );
     }
+    let Some((suffix, codec_args, container_args)) = ffmpeg_video_options(format) else {
+        return Err("The selected recording format is not a video format.".into());
+    };
     let fps_arg = fps.to_string();
     let output = tempfile::Builder::new()
         .prefix(&prefix)
-        .suffix(".mp4")
+        .suffix(suffix)
         .tempfile_in(&folder)
         .map_err(|error| error.to_string())?
         .into_temp_path();
@@ -181,14 +184,11 @@ fn record(
             "-an",
             "-vf",
             "pad=ceil(iw/2)*2:ceil(ih/2)*2",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "ultrafast",
-            "-pix_fmt",
-            "yuv420p",
-            "-movflags",
-            "+empty_moov+frag_keyframe+default_base_moof",
+        ])
+        .args(codec_args)
+        .args(["-pix_fmt", "yuv420p"])
+        .args(container_args)
+        .args([
             "-g",
             &fps_arg,
             "-flush_packets",
@@ -307,6 +307,30 @@ fn recording_folder(folder: Option<PathBuf>) -> Result<PathBuf, String> {
     }
 }
 
+fn ffmpeg_video_options(
+    format: crate::config::RemoteRecordingFormat,
+) -> Option<(&'static str, &'static [&'static str], &'static [&'static str])> {
+    match format {
+        crate::config::RemoteRecordingFormat::Mp4 => Some((
+            ".mp4",
+            &["-c:v", "libx264", "-preset", "ultrafast"],
+            &[
+                "-movflags",
+                "+empty_moov+frag_keyframe+default_base_moof",
+            ],
+        )),
+        crate::config::RemoteRecordingFormat::Webm => Some((
+            ".webm",
+            &[
+                "-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "8", "-crf",
+                "34", "-b:v", "0",
+            ],
+            &[],
+        )),
+        crate::config::RemoteRecordingFormat::PngSequence => None,
+    }
+}
+
 fn normalize_fps(fps: u32) -> u32 {
     match fps {
         15 | 24 | 30 | 60 => fps,
@@ -419,5 +443,19 @@ mod tests {
         assert_eq!(normalize_fps(30), 30);
         assert_eq!(normalize_fps(60), 60);
         assert_eq!(normalize_fps(240), 30);
+    }
+
+    #[test]
+    fn recording_formats_select_the_matching_encoder_and_container() {
+        let mp4 = ffmpeg_video_options(crate::config::RemoteRecordingFormat::Mp4).unwrap();
+        assert_eq!(mp4.0, ".mp4");
+        assert!(mp4.1.contains(&"libx264"));
+        assert!(mp4.2.contains(&"-movflags"));
+
+        let webm = ffmpeg_video_options(crate::config::RemoteRecordingFormat::Webm).unwrap();
+        assert_eq!(webm.0, ".webm");
+        assert!(webm.1.contains(&"libvpx-vp9"));
+        assert!(webm.2.is_empty());
+        assert!(ffmpeg_video_options(crate::config::RemoteRecordingFormat::PngSequence).is_none());
     }
 }

@@ -98,8 +98,8 @@ store; protocol passwords are not saved in `servers.json`.
   Latin-1; VNC clipboard images and file contents are not supported. Smooth-scroll
   accumulation can be disabled in either protocol's profile.
 - Screenshot and recording folders can be set separately under Settings →
-  Remote Desktop. Recording supports MP4 (H.264) or PNG sequence, at 15, 24,
-  30, or 60 FPS, and can use an explicitly selected FFmpeg executable or
+  Remote Desktop. Recording supports MP4 (H.264), WebM (VP9), or PNG sequence,
+  at 15, 24, 30, or 60 FPS, and can use an explicitly selected FFmpeg executable or
   `ffmpeg` from `PATH`. Quality and clipboard defaults also apply to newly
   created RDP/VNC profiles; existing profiles keep their saved choices.
   Screenshot clipboard copying can be set as the viewer default.

@@ -78,6 +78,18 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
         ui.label(
             "Smooth filtering blends scaled pixels; Fast uses sharper nearest-neighbor sampling.",
         );
+        choice(
+            ui,
+            "Frame painting",
+            &mut profile.frame_painting,
+            &[
+                (RdpFramePainting::Incremental, "Incremental regions"),
+                (RdpFramePainting::FullFrame, "Full-frame compatibility"),
+            ],
+        );
+        ui.label(
+            "Full-frame painting redraws the whole image after each RDP update and may use more resources.",
+        );
         color_depth(ui, &mut profile.color_depth);
         choice(
             ui,

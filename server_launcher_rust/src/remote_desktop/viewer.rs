@@ -1,8 +1,8 @@
 use super::{
     credentials::DesktopProtocol,
-    framebuffer::{Framebuffer, Region},
+    framebuffer::{Framebuffer, Region, Update},
     input::Capture,
-    profile::{Clipboard, RdpPainting, Resolution, Scaling},
+    profile::{Clipboard, RdpFramePainting, RdpPainting, Resolution, Scaling},
     vnc::{Connection, Input},
 };
 use crate::{config::ConfigFile, theme::ThemeMode};
@@ -48,6 +48,12 @@ pub(crate) fn run(
         .and_then(|host| host.rdp.as_ref())
         .filter(|_| protocol == DesktopProtocol::Rdp)
         .map_or(RdpPainting::Smooth, |profile| profile.painting);
+    let rdp_frame_painting = profile
+        .and_then(|host| host.rdp.as_ref())
+        .filter(|_| protocol == DesktopProtocol::Rdp)
+        .map_or(RdpFramePainting::Incremental, |profile| {
+            profile.frame_painting
+        });
     let viewer_host = profile.filter(|_| !test_pattern).cloned();
     let confirm_unencrypted_vnc = viewer_host
         .as_ref()
@@ -139,6 +145,7 @@ pub(crate) fn run(
                 texture: None,
                 scaling,
                 rdp_painting,
+                rdp_frame_painting,
                 fullscreen: false,
                 toolbar_pinned: true,
                 toolbar_until: None,
@@ -208,6 +215,7 @@ struct Viewer {
     texture: Option<egui::TextureHandle>,
     scaling: Scaling,
     rdp_painting: RdpPainting,
+    rdp_frame_painting: RdpFramePainting,
     fullscreen: bool,
     toolbar_pinned: bool,
     toolbar_until: Option<Instant>,
@@ -503,7 +511,7 @@ impl eframe::App for Viewer {
             return;
         }
         let (
-            updates,
+            mut updates,
             status,
             connected,
             reconnect_at,
@@ -561,6 +569,13 @@ impl eframe::App for Viewer {
                     0,
                 )
             };
+        if self.protocol == DesktopProtocol::Rdp
+            && self.rdp_frame_painting == RdpFramePainting::FullFrame
+        {
+            if let Some(connection) = &self.connection {
+                paint_full_frame(&connection.lock().unwrap().framebuffer, &mut updates);
+            }
+        }
         if let Some(clipboard) = &self.clipboard_sync {
             clipboard.set_focused(connected && ctx.input(|input| input.focused));
             if connected && self.send_clipboard {
@@ -1131,6 +1146,46 @@ fn updates_per_second(previous: u64, current: u64, elapsed: Duration) -> f64 {
     } else {
         current.saturating_sub(previous) as f64 / elapsed.as_secs_f64()
     }
+}
+
+fn paint_full_frame(framebuffer: &Framebuffer, updates: &mut Vec<Update>) {
+    if updates.is_empty() {
+        return;
+    }
+    if let Some(image) = framebuffer.snapshot() {
+        let resized = updates.iter().any(|update| update.resized);
+        *updates = vec![Update {
+            origin: [0, 0],
+            image,
+            resized,
+        }];
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn full_frame_painting_combines_damage_into_one_complete_image() {
+    let mut framebuffer = Framebuffer::default();
+    framebuffer.resize([2, 1]).unwrap();
+    let _ = framebuffer.take_updates();
+    framebuffer
+        .write_rgba(
+            Region {
+                origin: [1, 0],
+                size: [1, 1],
+            },
+            &[12, 34, 56, 255],
+        )
+        .unwrap();
+    let mut updates = framebuffer.take_updates();
+    paint_full_frame(&framebuffer, &mut updates);
+    assert_eq!(updates.len(), 1);
+    assert_eq!(updates[0].origin, [0, 0]);
+    assert_eq!(updates[0].image.size, [2, 1]);
+    assert_eq!(
+        updates[0].image.pixels[1],
+        egui::Color32::from_rgb(12, 34, 56)
+    );
 }
 
 #[cfg(test)]

@@ -27,6 +27,7 @@ choices!(Resolution {
     MatchLocalScreen
 });
 choices!(RdpPainting { Smooth, Fast });
+choices!(RdpFramePainting { Incremental, FullFrame });
 choices!(Audio { Local, Off });
 choices!(Clipboard {
     Both,
@@ -67,6 +68,7 @@ pub(crate) struct RdpProfile {
     pub same_username_as_ssh: bool,
     pub security: RdpSecurity,
     pub painting: RdpPainting,
+    pub frame_painting: RdpFramePainting,
     pub color_depth: u8,
     pub resolution: Resolution,
     pub width: u16,
@@ -98,6 +100,7 @@ impl Default for RdpProfile {
             same_username_as_ssh: false,
             security: RdpSecurity::Auto,
             painting: RdpPainting::Smooth,
+            frame_painting: RdpFramePainting::Incremental,
             color_depth: 32,
             resolution: Resolution::FitWindow,
             width: 1920,
@@ -175,6 +178,14 @@ mod tests {
         let security: RdpSecurity = serde_json::from_str(r#""rdp""#).unwrap();
         assert_eq!(security, RdpSecurity::Auto);
         assert_eq!(serde_json::to_string(&security).unwrap(), r#""auto""#);
+    }
+
+    #[test]
+    fn missing_frame_painting_uses_incremental_updates() {
+        use super::{RdpFramePainting, RdpProfile};
+
+        let profile: RdpProfile = serde_json::from_str("{}").unwrap();
+        assert_eq!(profile.frame_painting, RdpFramePainting::Incremental);
     }
 
     #[test]

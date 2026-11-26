@@ -236,6 +236,16 @@ impl Tunnel {
             .arg(forward)
             .arg("-p")
             .arg(host.port.to_string());
+        if password_auth {
+            let executable = std::env::current_exe()?;
+            command
+                .args(["-o", "NumberOfPasswordPrompts=1"])
+                .env("SSH_ASKPASS", executable)
+                .env("SSH_ASKPASS_REQUIRE", "force")
+                .env("DISPLAY", "server-launcher-askpass")
+                .env("SERVER_LAUNCHER_ASKPASS_CONFIG", config_path.unwrap())
+                .env("SERVER_LAUNCHER_ASKPASS_HOST", &host.id);
+        }
         if !host.key_path.trim().is_empty() {
             command.arg("-i").arg(host.key_path.trim());
         }
@@ -420,18 +430,21 @@ pub(crate) fn open(
     host: &SshRemoteHost,
     port: u16,
     timeout: Duration,
+    config_path: Option<&Path>,
 ) -> io::Result<Box<dyn DesktopStream>> {
     #[cfg(unix)]
     {
-        Tunnel::open(host, port, timeout).map(|stream| Box::new(stream) as Box<dyn DesktopStream>)
+        Tunnel::open(host, port, timeout, config_path)
+            .map(|stream| Box::new(stream) as Box<dyn DesktopStream>)
     }
     #[cfg(windows)]
     {
-        Tunnel::open(host, port, timeout).map(|stream| Box::new(stream) as Box<dyn DesktopStream>)
+        Tunnel::open(host, port, timeout, config_path)
+            .map(|stream| Box::new(stream) as Box<dyn DesktopStream>)
     }
     #[cfg(all(not(unix), not(windows)))]
     {
-        let _ = (host, port, timeout);
+        let _ = (host, port, timeout, config_path);
         Err(io::Error::other(
             "SSH desktop tunnels are not available on this platform yet.",
         ))

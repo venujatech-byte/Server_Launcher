@@ -107,6 +107,9 @@ pub(crate) fn run(
                 texture: None,
                 scaling,
                 fullscreen: false,
+                toolbar_pinned: true,
+                toolbar_until: None,
+                toolbar_rect: egui::Rect::NOTHING,
                 dynamic_resize,
                 last_window_size: None,
                 test_pattern,
@@ -148,6 +151,9 @@ struct Viewer {
     texture: Option<egui::TextureHandle>,
     scaling: Scaling,
     fullscreen: bool,
+    toolbar_pinned: bool,
+    toolbar_until: Option<Instant>,
+    toolbar_rect: egui::Rect,
     dynamic_resize: bool,
     last_window_size: Option<[u32; 2]>,
     view_only: bool,
@@ -407,7 +413,18 @@ impl eframe::App for Viewer {
             .input(|input| input.viewport().fullscreen)
             .unwrap_or(self.fullscreen);
         self.fullscreen = fullscreen;
-        egui::TopBottomPanel::top("viewer_tools").show(ctx, |ui| {
+        let pinned = self.toolbar_pinned || !connected;
+        let now = Instant::now();
+        let screen = ctx.screen_rect();
+        let visible = self.toolbar_until.is_some_and(|until| until > now);
+        let hovered = ctx.pointer_hover_pos().is_some_and(|pos| {
+            pos.y <= screen.top() + 5.0 || (visible && self.toolbar_rect.contains(pos))
+        });
+        if hovered || (visible && ctx.memory(|memory| memory.any_popup_open())) {
+            self.toolbar_until = Some(now + Duration::from_secs(2));
+        }
+        let overlay_until = self.toolbar_until.filter(|until| *until > now);
+        let toolbar = |ui: &mut egui::Ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(if self.test_pattern {
                     "Test pattern"
@@ -591,11 +608,37 @@ impl eframe::App for Viewer {
                 if self.view_only && connected {
                     ui.label("View only");
                 }
+                if connected {
+                    let label = if self.toolbar_pinned {
+                        "Unpin toolbar"
+                    } else {
+                        "Pin toolbar"
+                    };
+                    if ui.button(label).clicked() {
+                        self.toolbar_pinned = !self.toolbar_pinned;
+                        self.toolbar_until = Some(now + Duration::from_secs(2));
+                        ctx.request_repaint();
+                    }
+                }
                 if ui.button("Disconnect").clicked() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
-        });
+        };
+        if pinned {
+            egui::TopBottomPanel::top("viewer_tools").show(ctx, toolbar);
+        } else if let Some(until) = overlay_until {
+            ctx.request_repaint_after(until - now);
+            self.toolbar_rect = egui::Area::new(egui::Id::new("floating_viewer_tools"))
+                .fixed_pos(screen.left_top())
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    ui.set_max_width(screen.width());
+                    egui::Frame::popup(ui.style()).show(ui, toolbar);
+                })
+                .response
+                .rect;
+        }
         self.screenshot_notification(ctx);
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.dynamic_resize && connected {

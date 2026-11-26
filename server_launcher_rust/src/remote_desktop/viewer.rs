@@ -128,6 +128,7 @@ pub(crate) fn run(
         viewport: egui::ViewportBuilder::default()
             .with_title(&title)
             .with_inner_size([1024.0, 700.0])
+            .with_active(true)
             .with_min_inner_size([420.0, 260.0]),
         persist_window: true,
         persistence_path: Some(session_persistence_path(path, host_id, protocol)),

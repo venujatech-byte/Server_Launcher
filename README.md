@@ -105,8 +105,15 @@ store; protocol passwords are not saved in `servers.json`.
 RDP microphone capture is available as an opt-in profile setting. When enabled,
 the remote PC can request audio from the local default input device while the
 session is connected; it is off by default and has only been compile-checked,
-not tested against a live RDP server or microphone. Drive redirection, Microsoft
-RD Gateway, and keyboard-layout-specific IME are not implemented. Linux source builds need the ALSA development package
+not tested against a live RDP server or microphone. RDP drive redirection can
+share selected local folders. Each share is read-only by default, and the app
+asks before sharing a folder or allowing remote changes. Linux/macOS uses
+separate filesystem roots and blocks write requests for read-only shares;
+Windows uses IronRDP's native drive backend. This needs real-server validation.
+Microsoft RD Gateway and keyboard-layout-specific IME are not implemented;
+committed non-ASCII IME text is forwarded on platforms that provide egui commit
+events, while Linux relies on its keyboard text events. Linux source builds
+need the ALSA development package
 (`libasound2-dev` on Ubuntu/Debian, `alsa-lib-devel` on Fedora/RHEL) for local
 RDP audio playback. RDP dual-display layout is best-effort: the server must
 support two monitors, and the viewer presents their combined desktop in one

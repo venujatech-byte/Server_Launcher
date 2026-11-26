@@ -81,9 +81,10 @@ network or the host's configured SSH tunnel.
 The renderer accepts legacy bitmap updates and EGFX updates. AVC decoding is
 available only when a supported Cisco OpenH264 library is configured. Without
 one, confirm the server negotiates a supported ClearCodec/RFX path. Audio,
-microphone, drive redirection, RD Gateway, IME, and multi-monitor behavior are
-not fully implemented; mark these unsupported rather than passing them based
-on UI controls alone.
+microphone, drive redirection, committed IME input, and multi-monitor behavior
+have not been verified against real servers; do not mark them complete based on
+UI controls or compile checks alone. Microsoft RD Gateway and platform keyboard
+capture remain unsupported.
 
 ## VNC checks
 

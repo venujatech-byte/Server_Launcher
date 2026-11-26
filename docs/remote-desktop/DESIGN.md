@@ -194,8 +194,8 @@ needs testing against real RDP and VNC servers and on Wayland, X11, and Windows.
 ## Native RDP transport
 
 The viewer uses the blocking adapter matching [IronRDP 0.17](https://docs.rs/crate/ironrdp/0.17.0)
-inside its own process. The worker negotiates NLA by default and supports an
-explicit TLS selection. It verifies CA trust and the original host name before
+inside its own process. Auto advertises NLA and encrypted TLS; explicit NLA-only
+and TLS-only selections remain available. The worker verifies CA trust and the original host name before
 CredSSP or graphical logon, including when SSH supplies the underlying byte
 stream. The Rustls provider is chosen explicitly and TLS resumption is disabled.
 RD Gateway,

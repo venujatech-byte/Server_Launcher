@@ -47,9 +47,10 @@ network or the host's configured SSH tunnel.
    listeners on TCP 3389 and 5900–5910, reports common server processes, and
    gives read-only setup guidance when none are found. Confirm it does not
    install packages or alter remote services.
-2. Connect with security set to Auto/NLA and verify the certificate and host
-   name before credentials are sent. Verify that invalid credentials produce a
-   readable failure and no credential data in logs.
+2. Connect with security set to Auto and verify the server selects NLA when
+   available, or encrypted TLS when NLA is unavailable. Verify the certificate
+   and host name before credentials are sent. Check that invalid credentials
+   produce a readable failure and no credential data in logs.
 3. Verify full desktop rendering and local pointer shape, then type text and
    test left/right/middle plus side mouse buttons and both wheel axes.
    Confirm that a continuously changing desktop stays live over EGFX, and
@@ -67,8 +68,8 @@ network or the host's configured SSH tunnel.
    to negotiate EGFX.
 7. Test clipboard directions separately with Unicode text and an image under
    the configured size cap. Confirm received content is not echoed back.
-8. Test TLS-only explicitly against a server configured for TLS. Auto must not
-   silently downgrade from NLA to legacy unencrypted RDP.
+8. Test NLA-only and TLS-only explicitly against matching servers. Auto must
+   accept either encrypted mode and must reject legacy unencrypted RDP.
 9. Start with the server unavailable, then make it available during the retry
    window and confirm the initial connection is retried. Confirm an
    auto-reconnecting session makes at most five attempts after a failure, then

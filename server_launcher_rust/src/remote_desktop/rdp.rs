@@ -740,7 +740,11 @@ fn config(
     } else {
         &profile.username
     };
-    let tls_only = profile.security == RdpSecurity::Tls;
+    let (enable_tls, enable_credssp) = match profile.security {
+        RdpSecurity::Auto => (true, true),
+        RdpSecurity::Nla => (false, true),
+        RdpSecurity::Tls => (true, false),
+    };
     let [width, height] = initial_dimensions(profile, monitor_size);
     let (color_depth, lossy_compression) = bitmap_quality(profile);
     let mut performance = PerformanceFlags::default();
@@ -760,8 +764,8 @@ fn config(
             password: password.to_owned(),
         },
         domain: (!profile.domain.trim().is_empty()).then(|| profile.domain.clone()),
-        enable_tls: tls_only,
-        enable_credssp: !tls_only,
+        enable_tls,
+        enable_credssp,
         enable_standard_rdp_security: false,
         keyboard_type: KeyboardType::IBM_ENHANCED,
         keyboard_subtype: 0,
@@ -788,7 +792,7 @@ fn config(
         },
         enable_server_pointer: true,
         request_data: None,
-        autologon: tls_only,
+        autologon: true,
         enable_audio_playback: false,
         enable_audio_capture: false,
         audio_playback_mode: None,

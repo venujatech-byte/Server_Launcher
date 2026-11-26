@@ -414,8 +414,9 @@ pub(crate) fn menu_status(
         tunnel_via_ssh,
         gateway,
     };
-    let last = ctx
-        .data_mut(|data| data.get_temp::<(ProbeRequest, ProbeResult)>(probe_result_id(protocol)));
+    let last = ctx.data_mut(|data| {
+        data.get_temp::<(ProbeRequest, ProbeResult)>(probe_result_id(&host.id, protocol))
+    });
     if let Some((_, result)) = last.filter(|(tested, _)| tested == &request) {
         return match result {
             Ok(info) => ("● Reachable", Some(info)),
@@ -425,8 +426,8 @@ pub(crate) fn menu_status(
     ("○ Not tested", None)
 }
 
-fn probe_result_id(protocol: DesktopProtocol) -> egui::Id {
-    egui::Id::new(("remote_desktop_probe_result", protocol as u8))
+fn probe_result_id(host_id: &str, protocol: DesktopProtocol) -> egui::Id {
+    egui::Id::new(("remote_desktop_probe_result", host_id, protocol as u8))
 }
 
 type ProbeResult = Result<String, String>;
@@ -457,7 +458,13 @@ impl ProbeControl {
             if let Some(result) = result {
                 ui.ctx().data_mut(|data| {
                     data.insert_temp(
-                        probe_result_id(tested.protocol),
+                        probe_result_id(
+                            tested
+                                .ssh_host
+                                .as_ref()
+                                .map_or(tested.host.as_str(), |host| host.id.as_str()),
+                            tested.protocol,
+                        ),
                         (tested.clone(), result.clone()),
                     );
                 });
@@ -510,6 +517,18 @@ impl ProbeControl {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn protocol_probe_state_is_scoped_to_host() {
+        assert_ne!(
+            probe_result_id("host-a", DesktopProtocol::Rdp),
+            probe_result_id("host-b", DesktopProtocol::Rdp)
+        );
+        assert_ne!(
+            probe_result_id("host-a", DesktopProtocol::Rdp),
+            probe_result_id("host-a", DesktopProtocol::Vnc)
+        );
+    }
 
     #[test]
     fn requires_transport_settings_for_tunneled_probes() {

@@ -41,6 +41,14 @@ impl Capture {
         }
         let visible = canvas.intersect(clip);
         for event in events {
+            if self.active {
+                if let Event::Text(text) = event {
+                    for ch in text.chars().filter(|ch| !ch.is_ascii()) {
+                        send(Input::UnicodeText(ch));
+                    }
+                    continue;
+                }
+            }
             match *event {
                 Event::Copy | Event::Cut | Event::Paste(_) if self.active => {
                     let key = match event {
@@ -273,6 +281,27 @@ mod tests {
         assert_eq!(mouse_button(PointerButton::Primary, true), Some(4));
         assert_eq!(mouse_button(PointerButton::Secondary, true), Some(1));
         assert_eq!(mouse_button(PointerButton::Middle, true), Some(2));
+    }
+
+    #[test]
+    fn forwards_non_ascii_text_once_without_replacing_physical_ascii_keys() {
+        let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(100.0, 50.0));
+        let mut capture = Capture {
+            active: true,
+            ..Default::default()
+        };
+        let mut packets = Vec::new();
+        capture.events(
+            &[Event::Text("aé界".into())],
+            Modifiers::NONE,
+            true,
+            rect,
+            rect,
+            [100, 50],
+            None,
+            |event| packets.push(event),
+        );
+        assert_eq!(packets, [Input::UnicodeText('é'), Input::UnicodeText('界')]);
     }
 
     #[test]

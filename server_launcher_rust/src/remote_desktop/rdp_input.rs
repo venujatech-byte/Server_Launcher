@@ -53,6 +53,22 @@ impl Encoder {
                     out.push(FastPathInputEvent::KeyboardEvent(flags, code));
                 }
             }
+            Input::UnicodeText(ch) => {
+                let mut units = [0; 2];
+                let units = ch.encode_utf16(&mut units);
+                for &unit in units.iter() {
+                    out.push(FastPathInputEvent::UnicodeKeyboardEvent(
+                        KeyboardFlags::empty(),
+                        unit,
+                    ));
+                }
+                for &unit in units.iter().rev() {
+                    out.push(FastPathInputEvent::UnicodeKeyboardEvent(
+                        KeyboardFlags::RELEASE,
+                        unit,
+                    ));
+                }
+            }
             Input::Pointer { x, y, buttons } => {
                 let mut add = |flags, units| {
                     out.push(FastPathInputEvent::MouseEvent(MousePdu {
@@ -285,6 +301,32 @@ mod tests {
                     x_position: 12,
                     y_position: 34,
                 }),
+            ]
+        );
+    }
+
+    #[test]
+    fn encodes_unicode_text_as_balanced_utf16_key_events() {
+        let mut encoder = Encoder::default();
+        let mut out = Vec::new();
+        encoder.encode(Input::UnicodeText('界'), &mut out);
+        assert_eq!(
+            out,
+            [
+                FastPathInputEvent::UnicodeKeyboardEvent(KeyboardFlags::empty(), 0x754c),
+                FastPathInputEvent::UnicodeKeyboardEvent(KeyboardFlags::RELEASE, 0x754c),
+            ]
+        );
+
+        out.clear();
+        encoder.encode(Input::UnicodeText('😀'), &mut out);
+        assert_eq!(
+            out,
+            [
+                FastPathInputEvent::UnicodeKeyboardEvent(KeyboardFlags::empty(), 0xd83d),
+                FastPathInputEvent::UnicodeKeyboardEvent(KeyboardFlags::empty(), 0xde00),
+                FastPathInputEvent::UnicodeKeyboardEvent(KeyboardFlags::RELEASE, 0xde00),
+                FastPathInputEvent::UnicodeKeyboardEvent(KeyboardFlags::RELEASE, 0xd83d),
             ]
         );
     }

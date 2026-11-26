@@ -232,7 +232,7 @@ fn should_read_image(text: Option<&str>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{queue_latest, should_forward, PendingClipboard};
+    use super::{queue_latest, report_notice, should_forward, take_notice, PendingClipboard};
     use std::sync::Mutex;
 
     #[test]

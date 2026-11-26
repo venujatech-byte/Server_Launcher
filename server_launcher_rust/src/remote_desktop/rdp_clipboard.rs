@@ -1,8 +1,9 @@
 use ironrdp::cliprdr::{backend::CliprdrBackend, pdu::*};
+use std::collections::VecDeque;
 
 #[derive(Default)]
 pub(super) struct ClipboardBackend {
-    offered: Option<ClipboardFormatId>,
+    offered: VecDeque<ClipboardFormatId>,
     pub(super) receive_enabled: bool,
     pub(super) local_text: Option<String>,
     pub(super) local_image: Option<Vec<u8>>,
@@ -37,7 +38,7 @@ impl ClipboardBackend {
         if self.pending.is_some() {
             return None;
         }
-        let format = self.offered.take()?;
+        let format = self.offered.pop_front()?;
         self.pending = Some(format);
         self.superseded = false;
         Some(format)
@@ -65,9 +66,10 @@ impl CliprdrBackend for ClipboardBackend {
                 ClipboardFormatId::CF_UNICODETEXT,
             ]
             .into_iter()
-            .find(|preferred| formats.iter().any(|format| format.id() == *preferred))
+            .filter(|preferred| formats.iter().any(|format| format.id() == *preferred))
+            .collect()
         } else {
-            None
+            VecDeque::new()
         };
     }
     fn on_format_data_request(&mut self, request: FormatDataRequest) {
@@ -98,11 +100,17 @@ impl CliprdrBackend for ClipboardBackend {
                 if response.data().len() <= super::vnc::CLIPBOARD_LIMIT =>
             {
                 self.received = response.to_unicode_string().ok();
+                if self.received.is_some() {
+                    self.offered.clear();
+                }
             }
             ClipboardFormatId::CF_DIB | ClipboardFormatId::CF_DIBV5
                 if response.data().len() <= super::clipboard_image::MAX_BYTES =>
             {
                 self.received_image = super::clipboard_image::decode_dib(response.data()).ok();
+                if self.received_image.is_some() {
+                    self.offered.clear();
+                }
             }
             _ => {}
         }
@@ -157,5 +165,26 @@ mod tests {
         );
         backend.on_format_data_response(FormatDataResponse::new_unicode_string("hello ✓"));
         assert_eq!(backend.received.as_deref(), Some("hello ✓"));
+    }
+
+    #[test]
+    fn rejected_image_format_falls_back_to_text_from_same_offer() {
+        let mut backend = ClipboardBackend::new(true);
+        let formats = [
+            ClipboardFormat::new(ClipboardFormatId::CF_DIBV5),
+            ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT),
+        ];
+        backend.on_remote_copy(&formats);
+
+        assert_eq!(backend.request_format(), Some(ClipboardFormatId::CF_DIBV5));
+        backend.on_format_data_response(FormatDataResponse::new_error());
+
+        assert_eq!(
+            backend.request_format(),
+            Some(ClipboardFormatId::CF_UNICODETEXT)
+        );
+        backend.on_format_data_response(FormatDataResponse::new_unicode_string("fallback ✓"));
+        assert_eq!(backend.received.as_deref(), Some("fallback ✓"));
+        assert_eq!(backend.request_format(), None);
     }
 }

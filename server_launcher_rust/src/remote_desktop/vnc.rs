@@ -87,10 +87,12 @@ impl Input {
             }
             Self::ClipboardImage(_) => Ok(false),
             Self::UnicodeText(ch) => {
-                let keysym = u32::from(ch);
-                if keysym > 0xff {
-                    return Ok(false);
-                }
+                let codepoint = u32::from(ch);
+                let keysym = if codepoint <= 0xff {
+                    codepoint
+                } else {
+                    0x0100_0000 | codepoint
+                };
                 let [a, b, c, d] = keysym.to_be_bytes();
                 stream.write_all(&[4, 1, 0, 0, a, b, c, d])?;
                 stream.write_all(&[4, 0, 0, 0, a, b, c, d]).map(|()| false)
@@ -129,9 +131,6 @@ impl Input {
 
 fn clipboard_unsupported_reason(event: &Input) -> Option<&'static str> {
     match event {
-        Input::UnicodeText(ch) if u32::from(*ch) > 0xff => {
-            Some("Classic VNC can send Latin-1 text only")
-        }
         Input::ClipboardText(text) if text.chars().any(|ch| u32::from(ch) > 0xff) => {
             Some("Classic VNC can send Latin-1 text only")
         }
@@ -1763,14 +1762,17 @@ mod tests {
     }
 
     #[test]
-    fn writes_latin1_text_as_a_key_press_and_release() {
+    fn writes_unicode_text_as_x11_keysyms() {
         let mut wire = Vec::new();
         assert!(!Input::UnicodeText('é').write(&mut wire).unwrap());
         assert_eq!(wire, [4, 1, 0, 0, 0, 0, 0, 0xe9, 4, 0, 0, 0, 0, 0, 0, 0xe9]);
-        assert!(clipboard_unsupported_reason(&Input::UnicodeText('界')).is_some());
-        let mut unsupported = Vec::new();
-        assert!(!Input::UnicodeText('界').write(&mut unsupported).unwrap());
-        assert!(unsupported.is_empty());
+        let mut unicode_wire = Vec::new();
+        assert!(!Input::UnicodeText('界').write(&mut unicode_wire).unwrap());
+        assert_eq!(
+            unicode_wire,
+            [4, 1, 0, 0, 0x01, 0x00, 0x75, 0x4c, 4, 0, 0, 0, 0x01, 0x00, 0x75, 0x4c,]
+        );
+        assert!(clipboard_unsupported_reason(&Input::ClipboardText("界".into())).is_some());
     }
 
     #[test]

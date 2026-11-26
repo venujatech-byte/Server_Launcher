@@ -1,0 +1,118 @@
+# Remote Desktop verification guide
+
+This guide records what can be checked locally and what requires real RDP/VNC
+servers. A successful compile is not proof that a protocol session works.
+
+## Local checks
+
+Run these from `server_launcher_rust/`:
+
+```sh
+cargo fmt --check
+cargo check --offline --all-targets
+```
+
+The repository currently has formatting differences outside the remote desktop
+code. When checking formatting, run `rustfmt --check --edition 2021` on only the
+Rust files changed in the task rather than formatting the whole repository.
+The project workspace instructions restrict agent compilation to `cargo check`;
+unit and integration tests must be run by a maintainer in an environment where
+test execution is approved.
+
+## Manual connection matrix
+
+For each test, record the app revision, client OS/display backend, server OS,
+protocol, route (direct or SSH tunnel), negotiated display size, result, and
+relevant server/client logs with credentials and clipboard contents removed.
+
+| Client | Server | Protocol | Check |
+| --- | --- | --- | --- |
+| Linux X11 | Windows 10/11 or Windows Server | RDP | NLA, login, full desktop, pointer, keyboard, resize, disconnect |
+| Linux Wayland | Windows 10/11 or Windows Server | RDP | Repeat core input and resize checks; note compositor-specific limits |
+| Windows | Windows 10/11 or Windows Server | RDP | NLA, login, full desktop, pointer, keyboard, resize, disconnect |
+| Linux X11 | Linux xrdp | RDP | Direct and SSH-tunneled sessions, authentication errors, resize |
+| Linux Wayland | Linux xrdp | RDP | Repeat core rendering and input checks |
+| Windows | Linux xrdp | RDP | Direct and SSH-tunneled sessions, rendering and input |
+| Linux X11 | TigerVNC or x11vnc | VNC | RFB 3.3/3.7/3.8, auth, Raw/CopyRect/ZRLE, cursor, clipboard |
+| Linux Wayland | TigerVNC or x11vnc | VNC | Repeat core rendering and input checks |
+| Windows | TigerVNC or x11vnc | VNC | Direct and SSH-tunneled sessions, rendering and input |
+| Linux/Windows | macOS Screen Sharing | VNC | Authentication, clipboard limitations, cursor and resize |
+
+Do not expose a server port just to run this matrix. Use an existing private
+network or the host's configured SSH tunnel.
+
+## RDP checks
+
+1. Connect with security set to Auto/NLA and verify the certificate and host
+   name before credentials are sent. Verify that invalid credentials produce a
+   readable failure and no credential data in logs.
+2. Verify full desktop rendering and local pointer shape, then type text and
+   test left/right/middle plus side mouse buttons and both wheel axes.
+3. Resize the viewer with dynamic resolution enabled. Check for correct aspect
+   ratio and no stale pixels after the server changes resolution.
+4. Compare Incremental and Full-frame repaint. They should show the same remote
+   frame; Full-frame repaint may use more client CPU and does not change server
+   capture FPS, codec negotiation, or network latency.
+5. Test clipboard directions separately with Unicode text and an image under
+   the configured size cap. Confirm received content is not echoed back.
+6. Test TLS-only explicitly against a server configured for TLS. Auto must not
+   silently downgrade from NLA to legacy unencrypted RDP.
+7. Test network loss, server disconnect, retry, and close while input keys are
+   held. Confirm all remote keys/buttons are released on focus loss and close.
+
+The current renderer uses legacy bitmap updates. GFX/EGFX codecs, audio,
+microphone, drive redirection, RD Gateway, IME, and multi-monitor behavior are
+not fully implemented; mark these unsupported rather than passing them based on
+UI controls alone.
+
+## VNC checks
+
+1. Test no-auth and classic VNC password auth. Use passwords from 1 to 8 bytes;
+   verify longer inputs are rejected with a clear message rather than silently
+   truncated. Confirm unauthenticated negotiation is not used when a password
+   is configured.
+2. Verify Raw, CopyRect, and ZRLE updates, including resize and an empty
+   framebuffer. Confirm Raw/Cursor pseudo-rectangles do not get treated as
+   framebuffer pixels.
+3. Verify RichCursor and XCursor shapes, hotspot placement, pointer movement,
+   and the Show remote cursor setting. Test a server that sends only one cursor
+   shape encoding as well as a server that sends neither.
+4. Test keyboard, pointer buttons, drag, and vertical/horizontal wheel. Check
+   that view-only mode sends no input and focus loss releases held keys.
+5. Test clipboard text in both directions, including non-Latin-1 content and
+   data above the limit. Classic RFB does not support image clipboard here.
+6. Test direct public-address confirmation and SSH tunneling. Verify closing or
+   crashing the viewer cleans up the tunnel process.
+7. Request a supported and unsupported remote resolution; confirm rejection
+   leaves the prior framebuffer usable.
+
+Tight encoding, username-based VNC authentication, rich clipboard, and direct
+VNC encryption are not currently implemented. Classic VNC over a direct
+connection is unencrypted.
+
+## Session and security checks
+
+- Open two sessions and verify host/protocol pairs do not collide or duplicate.
+- Relaunch the same host/protocol and verify the existing child is focused.
+- Close a viewer, terminate it unexpectedly, and close the launcher; verify
+  children and SSH tunnels are cleaned up.
+- Verify passwords are only read from the OS credential store, never command
+  line arguments, environment variables, JSON config, logs, or crash messages.
+- Verify trust-once is not persisted, always-trust is host/port scoped, and a
+  changed certificate fingerprint blocks reconnection until reviewed.
+- Verify clipboard and screen recording are visibly indicated and can be
+  disabled. Never use real secrets in clipboard or recording tests.
+
+## Performance measurements
+
+No comparable real-server measurements are recorded yet. Measure the same host,
+resolution, scene, network path, and duration for this app and a reference
+client. Record idle viewer CPU/RAM, active CPU/RAM, display updates per second,
+receive bandwidth, and input-to-visible-response latency. Test a static desktop,
+scrolling text, and moving video separately. Report the app's FPS counter as
+received display-update batches per second, not the server's capture FPS.
+
+Run each active test for at least 30 minutes and check memory growth. Repeat
+with the window focused, unfocused, and minimized. Keep raw measurements with
+the test environment details; do not claim a performance improvement from a
+single screenshot or FPS sample.

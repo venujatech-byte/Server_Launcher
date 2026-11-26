@@ -221,9 +221,14 @@ IronRDP audio backend when enabled. Microphone capture is opt-in and registers
 IronRDP's AUDIO_INPUT dynamic channel only for profiles that enable it; capture
 starts only when the remote requests the channel. Outbound audio uses a bounded
 queue to the RDP worker. The implementation has passed the SSH PC cargo check
-but still needs live server and input-device testing. Drive redirection and
-Microsoft RD Gateway remain unsupported. The editor preserves saved drive,
-gateway, admin-session, and VNC username fields, while marking unsupported
+but still needs live server and input-device testing. RDP drive redirection now
+shares the configured local folders, defaults each new share to read-only, and
+supports explicit read/write access. Windows uses IronRDP's native backend;
+Linux and macOS route each share to an isolated root, reject write requests for
+read-only shares, and rely on IronRDP's path resolver to prevent traversal and
+symlink escape. Drive access and read-only enforcement still need real-server
+validation. Microsoft RD Gateway remains unsupported. The editor preserves
+saved gateway, admin-session, and VNC username fields, while marking unsupported
 controls read-only.
 IronRDP and its blocking adapter are available under MIT or Apache-2.0.
 

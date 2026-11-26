@@ -187,17 +187,31 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
             ui.label("The remote PC can receive audio from your selected microphone while connected.");
         }
         clipboard(ui, &mut profile.clipboard);
-        ui.collapsing("Drive redirection (unsupported)", |ui| {
-            ui.label("RDP drive sharing is not supported yet. Saved entries are preserved:");
+        ui.collapsing("Drive redirection", |ui| {
+            ui.label("Shared folders are visible to the remote PC for this session.");
+            if ui.button("Add folder…").clicked() {
+                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                    profile.drives.push(DriveShare {
+                        path,
+                        writable: false,
+                    });
+                }
+            }
             if profile.drives.is_empty() {
                 ui.label("No folders configured.");
             }
-            for drive in &profile.drives {
-                ui.label(format!(
-                    "{} · {}",
-                    drive.path.display(),
-                    if drive.writable { "read/write" } else { "read-only" }
-                ));
+            let mut remove = None;
+            for (index, drive) in profile.drives.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.label(drive.path.display().to_string());
+                    ui.checkbox(&mut drive.writable, "Allow remote changes");
+                    if ui.small_button("Remove").clicked() {
+                        remove = Some(index);
+                    }
+                });
+            }
+            if let Some(index) = remove {
+                profile.drives.remove(index);
             }
         });
         ui.collapsing("Experience", |ui| {

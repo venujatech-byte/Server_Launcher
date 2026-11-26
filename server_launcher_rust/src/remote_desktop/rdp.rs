@@ -229,6 +229,7 @@ fn run(
     let mut framed = Framed::new(socket);
     let mut connector =
         connector::ClientConnector::new(config(host, profile, &password, monitor_size), local_addr);
+    let drives_attached = super::rdp_drives::attach(&mut connector, profile)?;
     if profile.clipboard != Clipboard::Off {
         connector.attach_static_channel(CliprdrClient::new(Box::new(
             super::rdp_clipboard::ClipboardBackend::new(matches!(
@@ -242,10 +243,12 @@ fn run(
         connector.attach_static_channel(ironrdp::rdpsnd::client::Rdpsnd::new(Box::new(
             playback.clone(),
         )));
-        connector.attach_static_channel(ironrdp::rdpdr::Rdpdr::new(
-            Box::new(ironrdp::rdpdr::NoopRdpdrBackend),
-            "ServerLauncher".into(),
-        ));
+        if !drives_attached {
+            connector.attach_static_channel(ironrdp::rdpdr::Rdpdr::new(
+                Box::new(ironrdp::rdpdr::NoopRdpdrBackend),
+                "ServerLauncher".into(),
+            ));
+        }
         Some(playback)
     } else {
         None

@@ -8,6 +8,7 @@ pub(crate) mod keymap;
 pub(crate) mod probe;
 pub(crate) mod profile;
 pub(crate) mod rdp;
+pub(crate) mod rdp_drives;
 pub(crate) mod rdp_clipboard;
 pub(crate) mod rdp_input;
 mod recording;

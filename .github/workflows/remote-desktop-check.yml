@@ -1,0 +1,39 @@
+name: Remote Desktop Compile Check
+
+on:
+  push:
+    branches: [vnc/rdp]
+    paths:
+      - "server_launcher_rust/**"
+      - ".github/workflows/remote-desktop-check.yml"
+  pull_request:
+    paths:
+      - "server_launcher_rust/**"
+      - ".github/workflows/remote-desktop-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-windows:
+    name: Check Rust desktop app for Windows
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server_launcher_rust
+
+      - name: Check all targets
+        working-directory: server_launcher_rust
+        run: cargo check --locked --all-targets --target x86_64-pc-windows-msvc

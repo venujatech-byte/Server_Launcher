@@ -235,8 +235,15 @@ pub(crate) fn vnc_port(value: &str, host: &str) -> Option<u16> {
     5900u16.checked_add(display.parse().ok()?)
 }
 
+fn new_vnc_profile(host: &str) -> VncProfile {
+    VncProfile {
+        tunnel_via_ssh: super::vnc::needs_unencrypted_warning(host),
+        ..VncProfile::default()
+    }
+}
+
 pub(crate) fn vnc(ui: &mut Ui, draft: &mut Option<VncProfile>, port_text: &mut String, host: &str) {
-    let mut profile = draft.clone().unwrap_or_default();
+    let mut profile = draft.clone().unwrap_or_else(|| new_vnc_profile(host));
     ui.checkbox(&mut profile.enabled, "Enable VNC");
     ui.add_enabled_ui(profile.enabled, |ui| {
         text(ui, "Port or display *", port_text);
@@ -336,7 +343,7 @@ pub(crate) fn vnc(ui: &mut Ui, draft: &mut Option<VncProfile>, port_text: &mut S
 
 #[cfg(test)]
 mod tests {
-    use super::vnc_port;
+    use super::{new_vnc_profile, vnc_port};
 
     #[test]
     fn accepts_ports_and_displays_for_the_configured_host() {
@@ -348,6 +355,13 @@ mod tests {
         assert_eq!(vnc_port("other.invalid:1", "example.invalid"), None);
         assert_eq!(vnc_port("0", "::1"), None);
         assert_eq!(vnc_port(":65535", "::1"), None);
+    }
+
+    #[test]
+    fn new_vnc_profiles_tunnel_only_for_public_or_unknown_hosts() {
+        assert!(!new_vnc_profile("192.168.1.12").tunnel_via_ssh);
+        assert!(new_vnc_profile("100.94.20.30").tunnel_via_ssh);
+        assert!(new_vnc_profile("vnc.example.test").tunnel_via_ssh);
     }
 }
 

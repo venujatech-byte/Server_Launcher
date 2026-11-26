@@ -425,11 +425,16 @@ impl eframe::App for Viewer {
                         "Reconnecting in {}s",
                         remaining.as_secs_f64().ceil() as u64
                     ));
-                    ctx.request_repaint_after(remaining.min(Duration::from_secs(1)));
+                    ctx.request_repaint_after(
+                        remaining.clamp(Duration::from_millis(50), Duration::from_secs(1)),
+                    );
                     if ui.button("Cancel retry").clicked() {
                         if let Some(connection) = &self.connection {
-                            connection.lock().unwrap().reconnect_at = None;
-                            ctx.request_repaint();
+                            let mut connection = connection.lock().unwrap();
+                            if connection.reconnect_at.take().is_some() {
+                                connection.finished = true;
+                                ctx.request_repaint();
+                            }
                         }
                     }
                 }

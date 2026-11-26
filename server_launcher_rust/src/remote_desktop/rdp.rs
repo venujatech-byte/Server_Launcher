@@ -23,7 +23,7 @@ use ironrdp::{
         gcc::KeyboardType,
         rdp::{
             capability_sets::MajorPlatformType,
-            client_info::{PerformanceFlags, TimezoneInfo},
+            client_info::{CompressionType, PerformanceFlags, TimezoneInfo},
         },
     },
     session::{fast_path, image::DecodedImage, ActiveStageBuilder, ActiveStageOutput},
@@ -585,7 +585,7 @@ fn config(
         request_data: None,
         autologon: tls_only,
         enable_audio_playback: false,
-        compression_type: None,
+        compression_type: Some(CompressionType::Rdp61),
         pointer_software_rendering: false,
         multitransport_flags: None,
         performance_flags: performance,

@@ -87,7 +87,7 @@ probe worker and controls resolution time independently of the socket deadline.
 The live RFB implementation validates display dimensions and rectangle lengths
 before allocating and requests incremental updates. It supports Raw and
 CopyRect rectangles, classic VNC password authentication, SSH stdio forwarding
-on Unix, keyboard and pointer input, clipboard text, and server-supported
+on Unix and Windows, keyboard and pointer input, clipboard text, and server-supported
 resolution changes. Quality selects 16-bit or 32-bit pixels. Direct VNC to a
 public or unknown address requires an explicit warning confirmation. The
 configured encoding priority is not yet applied: Tight and ZRLE are unsupported,
@@ -105,15 +105,16 @@ negotiation. Username-based security modes need a separate implementation.
 
 ## SSH stream transport
 
-VNC uses OpenSSH stdio forwarding (`ssh -W 127.0.0.1:PORT`) over a private
-Unix socket pair. This reaches the same remote loopback service as a local
-forward, without binding a local listening port or racing another process
-for that port. It uses the host's key, agent, and host-key preferences. On
-Unix, password authentication uses an inherited descriptor with sshpass.
-The viewer worker owns the child and reaps it when the stream ends. Linux
-also requests a parent-death signal for the direct child. Forced termination
-of the password wrapper's descendants has not been verified. Windows and
-editor connection tests do not yet use this transport.
+On Unix, OpenSSH stdio forwarding (`ssh -W 127.0.0.1:PORT`) runs over a private
+Unix socket pair, avoiding a local listening port. On Windows, OpenSSH forwards
+to a loopback TCP port chosen from the OS ephemeral range; the viewer owns the
+child in a kill-on-close job object. Both paths use the host's key, agent, and
+host-key preferences. Unix password authentication uses an inherited
+descriptor with sshpass. Windows background tunnels require a key or agent;
+saved SSH passwords are not passed to hidden processes. The full Windows app
+cross-check could not run here because MinGW is missing, but the Windows tunnel
+module passed an isolated target `cargo check`. End-to-end tunnel behavior still
+needs validation on a Windows machine and real VNC/RDP servers.
 
 ## VNC input
 

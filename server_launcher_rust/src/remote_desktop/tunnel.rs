@@ -13,6 +13,13 @@ use std::{
     process::{Child, Command, Stdio},
 };
 
+#[cfg(windows)]
+use std::{
+    net::{TcpListener, TcpStream},
+    os::windows::{io::AsRawHandle, process::CommandExt},
+    process::{Child, Command, Stdio},
+};
+
 #[cfg(unix)]
 pub(crate) struct Tunnel {
     stream: UnixStream,
@@ -155,6 +162,160 @@ impl Drop for Tunnel {
     }
 }
 
+#[cfg(windows)]
+pub(crate) struct Tunnel {
+    stream: TcpStream,
+    child: Child,
+    _job: KillOnCloseJob,
+}
+
+#[cfg(windows)]
+struct KillOnCloseJob(isize);
+
+#[cfg(windows)]
+impl Drop for KillOnCloseJob {
+    fn drop(&mut self) {
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0 as _) };
+    }
+}
+
+#[cfg(windows)]
+impl Tunnel {
+    pub(crate) fn open(host: &SshRemoteHost, port: u16, timeout: Duration) -> io::Result<Self> {
+        if (host.credential_ref.is_some() || !host.password.trim().is_empty())
+            && host.key_path.trim().is_empty()
+            && !host.use_agent
+        {
+            return Err(io::Error::other(
+                "Windows SSH tunnels require an SSH key or agent; saved SSH passwords are not passed to background processes.",
+            ));
+        }
+
+        let listener = TcpListener::bind(("127.0.0.1", 0))?;
+        let local_addr = listener.local_addr()?;
+
+        let forward = format!(
+            "127.0.0.1:{}:127.0.0.1:{port}",
+            local_addr.port()
+        );
+        let target = format!("{}@{}", host.user.trim(), host.host.trim());
+        let mut command = Command::new("ssh.exe");
+        command
+            .args(["-o", "BatchMode=yes"])
+            .args(crate::remote::ssh_policy_args(host))
+            .args([
+                "-o",
+                "ConnectTimeout=5",
+                "-o",
+                "ExitOnForwardFailure=yes",
+                "-o",
+                "ServerAliveInterval=15",
+                "-o",
+                "ServerAliveCountMax=2",
+                "-o",
+                "ClearAllForwardings=yes",
+                "-o",
+                "PermitLocalCommand=no",
+                "-o",
+                "ForwardAgent=no",
+                "-x",
+                "-T",
+                "-N",
+            ])
+            .arg("-L")
+            .arg(forward)
+            .arg("-p")
+            .arg(host.port.to_string());
+        if !host.key_path.trim().is_empty() {
+            command.arg("-i").arg(host.key_path.trim());
+        }
+        drop(listener);
+        let mut child = command
+            .arg("--")
+            .arg(target)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(0x0800_0000)
+            .spawn()
+            .map_err(|error| io::Error::other(format!("Could not start the SSH tunnel: {error}")))?;
+        let job = match kill_on_close_job(&child) {
+            Ok(job) => job,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+        };
+
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            if child.try_wait()?.is_some() {
+                return Err(io::Error::other(
+                    "The SSH tunnel exited before connecting. Check SSH key or agent access and the remote desktop port.",
+                ));
+            }
+            if let Ok(stream) = TcpStream::connect_timeout(&local_addr, Duration::from_millis(100)) {
+                if child.try_wait()?.is_some() {
+                    return Err(io::Error::other("The SSH tunnel closed during connection."));
+                }
+                stream.set_nodelay(true)?;
+                stream.set_read_timeout(Some(timeout))?;
+                stream.set_write_timeout(Some(timeout))?;
+                return Ok(Self {
+                    stream,
+                    child,
+                    _job: job,
+                });
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "Timed out opening the SSH tunnel. Check SSH key or agent access and the remote desktop port.",
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+}
+
+#[cfg(windows)]
+fn kill_on_close_job(child: &Child) -> io::Result<KillOnCloseJob> {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, HANDLE},
+        System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            SetInformationJobObject,
+        },
+    };
+
+    let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    if job.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    let configured = unsafe {
+        SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+            std::mem::size_of_val(&limits) as u32,
+        )
+    };
+    let assigned = configured != 0
+        && unsafe { AssignProcessToJobObject(job, child.as_raw_handle() as HANDLE) } != 0;
+    if !assigned {
+        let error = io::Error::last_os_error();
+        unsafe { CloseHandle(job) };
+        return Err(io::Error::other(format!(
+            "Could not safely attach the SSH tunnel to its cleanup job: {error}"
+        )));
+    }
+    Ok(KillOnCloseJob(job as isize))
+}
+
 pub(crate) trait InputSocket: Write + Send {
     fn disconnect(&self);
 }
@@ -198,6 +359,50 @@ impl DesktopStream for Tunnel {
     }
 }
 
+#[cfg(windows)]
+impl Read for Tunnel {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        self.stream.read(bytes)
+    }
+}
+
+#[cfg(windows)]
+impl Write for Tunnel {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.stream.write(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stream.flush()
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Tunnel {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[cfg(windows)]
+impl InputSocket for Tunnel {
+    fn disconnect(&self) {
+        let _ = self.stream.shutdown(std::net::Shutdown::Both);
+    }
+}
+
+#[cfg(windows)]
+impl DesktopStream for Tunnel {
+    fn set_read_timeout(&self, timeout: Duration) -> io::Result<()> {
+        self.stream.set_read_timeout(Some(timeout))
+    }
+
+    fn input_socket(&self) -> io::Result<Box<dyn InputSocket>> {
+        Ok(Box::new(self.stream.try_clone()?))
+    }
+}
+
 pub(crate) fn open(
     host: &SshRemoteHost,
     port: u16,
@@ -207,7 +412,11 @@ pub(crate) fn open(
     {
         Tunnel::open(host, port, timeout).map(|stream| Box::new(stream) as Box<dyn DesktopStream>)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        Tunnel::open(host, port, timeout).map(|stream| Box::new(stream) as Box<dyn DesktopStream>)
+    }
+    #[cfg(all(not(unix), not(windows)))]
     {
         let _ = (host, port, timeout);
         Err(io::Error::other(

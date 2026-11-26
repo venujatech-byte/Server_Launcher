@@ -233,8 +233,7 @@ impl Connection {
                 {
                     retries = 0;
                 }
-                let should_retry =
-                    auto_reconnect && (state.connected || retries > 0) && retries < 5;
+                let should_retry = should_retry(auto_reconnect, retries);
                 state.connected = false;
                 state.input = None;
                 state.clipboard_sent = Arc::new(AtomicBool::new(false));
@@ -295,6 +294,10 @@ impl Connection {
 fn reconnect_delay(attempt: u32, entropy: u64) -> Duration {
     let base_ms = 1_000_u64 << attempt;
     Duration::from_millis(base_ms + entropy % (base_ms / 4 + 1))
+}
+
+fn should_retry(auto_reconnect: bool, retries: u32) -> bool {
+    auto_reconnect && retries < 5
 }
 
 fn use_rgb565(quality: Quality, color_depth: u8) -> bool {
@@ -1418,6 +1421,14 @@ mod tests {
     fn reconnect_backoff_grows_and_adds_bounded_jitter() {
         assert_eq!(reconnect_delay(0, 0), Duration::from_secs(1));
         assert_eq!(reconnect_delay(4, 4_000), Duration::from_secs(20));
+    }
+
+    #[test]
+    fn allows_up_to_five_retries_for_initial_failures() {
+        assert!(should_retry(true, 0));
+        assert!(should_retry(true, 4));
+        assert!(!should_retry(true, 5));
+        assert!(!should_retry(false, 0));
     }
 
     #[test]

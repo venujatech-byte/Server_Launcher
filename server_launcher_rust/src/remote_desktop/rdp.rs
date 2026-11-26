@@ -269,6 +269,7 @@ fn run(
         connector.attach_static_channel(CliprdrClient::new(Box::new(
             super::rdp_clipboard::ClipboardBackend::new(
                 matches!(profile.clipboard, Clipboard::Both | Clipboard::RemoteToLocal),
+                matches!(profile.clipboard, Clipboard::Both | Clipboard::LocalToRemote),
                 max_clipboard_image_bytes,
             ),
         )));
@@ -493,7 +494,27 @@ fn run(
         }
         events.clear();
         for event in input.try_iter().take(32) {
-            if let Input::ClipboardText(text) = &event {
+            if let Input::ClipboardFiles(paths) = &event {
+                if matches!(profile.clipboard, Clipboard::Both | Clipboard::LocalToRemote) {
+                    let (shared_paths, descriptors) =
+                        super::rdp_clipboard::shared_file_descriptors(paths);
+                    if !descriptors.is_empty() {
+                        if let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() {
+                            if let Some(clipboard) = channel.downcast_backend_mut::<
+                                super::rdp_clipboard::ClipboardBackend,
+                            >() {
+                                clipboard.local_files = shared_paths;
+                                if let Ok(offer) = channel.initiate_file_copy(descriptors) {
+                                    if let Ok(packet) = stage.process_svc_processor_messages(offer)
+                                    {
+                                        framed.write_all(&packet)?;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if let Input::ClipboardText(text) = &event {
                 if matches!(
                     profile.clipboard,
                     Clipboard::Both | Clipboard::LocalToRemote
@@ -572,8 +593,11 @@ fn run(
                 }
                 let reply = clipboard.reply.take();
                 let sent_clipboard = reply.as_ref().is_some_and(|reply| !reply.is_error());
+                let file_response = clipboard.take_file_response();
                 let request_format = clipboard.request_format();
                 let response = reply.and_then(|reply| channel.submit_format_data(reply).ok());
+                let file_response = file_response
+                    .and_then(|response| channel.submit_file_contents(response).ok());
                 let request = request_format.and_then(|format| channel.initiate_paste(format).ok());
                 if let Some(packet) =
                     response.and_then(|message| stage.process_svc_processor_messages(message).ok())
@@ -587,6 +611,11 @@ fn run(
                             .store(true, Ordering::Relaxed);
                         ctx.request_repaint();
                     }
+                }
+                if let Some(packet) = file_response
+                    .and_then(|message| stage.process_svc_processor_messages(message).ok())
+                {
+                    framed.write_all(&packet)?;
                 }
                 if request_format.is_some() {
                     if let Some(packet) = request

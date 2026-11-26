@@ -228,9 +228,15 @@ when available and falls back to X11 when Wayland clipboard initialization
 fails. Remote clipboard values remain queued when a local clipboard write fails
 and are retried while the viewer is focused; a newer remote value takes priority
 over an older retry. RDP supports Unicode text and bounded DIB images; classic
-VNC supports Latin-1 text only.
-File clipboard formats are not implemented. End-to-end clipboard behavior still
-needs testing against real RDP and VNC servers and on Wayland, X11, and Windows.
+VNC supports Latin-1 text only. The RDP viewer's **Share files** action offers
+selected local regular files through CLIPRDR, where they can be pasted on the
+remote PC. File data is served in bounded 1 MiB ranges on the RDP worker; at
+most 256 files, each under 4 GiB, are offered. Clipboard lock snapshots keep an
+in-flight paste tied to the original file list. This is an explicit picker
+action rather than automatic OS file-clipboard detection. Remote-to-local file
+clipboard download and VNC file clipboard are not implemented. End-to-end
+clipboard behavior still needs testing against real RDP and VNC servers and on
+Wayland, X11, and Windows.
 
 ## Native RDP transport
 

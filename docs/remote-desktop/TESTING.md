@@ -94,11 +94,15 @@ The checked app revision was `8ec3a0d`.
    offered in that same clipboard update.
    Change the image cap in Settings → Remote Desktop and verify images larger
    than the selected 1–64 MiB limit are not sent or accepted.
-8. Test NLA-only and TLS-only explicitly against matching servers. Auto must
+8. On RDP, use **Share files**, choose local files, and paste them on the remote
+   desktop. Include a file larger than 1 MiB to exercise multiple range
+   requests. Confirm changing the offered file list does not change an
+   in-progress paste. File clipboard transfer is local-to-remote only.
+9. Test NLA-only and TLS-only explicitly against matching servers. Auto must
    accept either encrypted mode and must reject legacy unencrypted RDP.
    Also test Administrative session against a Windows account allowed to use
    it; confirm the default profile does not request session ID 0.
-9. Use Test Connection through direct, SSH-tunneled, and gateway routes. The
+10. Use Test Connection through direct, SSH-tunneled, and gateway routes. The
    tunnel check must reach the RDP security negotiation over SSH. Connect
    through an RD Gateway whose certificate is trusted by the client.
    Confirm the RDP credentials are accepted for gateway sign-in, the gateway
@@ -108,7 +112,7 @@ The checked app revision was `8ec3a0d`.
    gateway sign-in but does not log in to the desktop. Change the gateway host
    or port and confirm the old saved RDP password is not reused; equivalent
    default-port spellings should preserve the credential binding.
-10. Start with the server unavailable, then make it available during the retry
+11. Start with the server unavailable, then make it available during the retry
    window and confirm the initial connection is retried. Confirm an
    auto-reconnecting session makes at most five attempts after a failure, then
    leaves the final error visible (or closes when Close on connection failure

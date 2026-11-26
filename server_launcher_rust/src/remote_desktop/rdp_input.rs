@@ -14,7 +14,10 @@ pub(crate) struct Encoder {
 impl Encoder {
     pub(crate) fn encode(&mut self, input: Input, out: &mut Vec<FastPathInputEvent>) {
         match input {
-            Input::VncResize { .. } | Input::ClipboardText(_) | Input::ClipboardImage(_) => {}
+            Input::VncResize { .. }
+            | Input::ClipboardText(_)
+            | Input::ClipboardImage(_)
+            | Input::ClipboardFiles(_) => {}
             Input::PointerExtra {
                 x,
                 y,

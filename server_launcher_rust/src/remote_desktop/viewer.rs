@@ -604,7 +604,12 @@ impl Viewer {
                 input.pointer.hover_pos(),
                 |event| {
                     if self.send_clipboard
-                        || !matches!(event, Input::ClipboardText(_) | Input::ClipboardImage(_))
+                        || !matches!(
+                            event,
+                            Input::ClipboardText(_)
+                                | Input::ClipboardImage(_)
+                                | Input::ClipboardFiles(_)
+                        )
                     {
                         connection.send_input(event);
                     }
@@ -1140,6 +1145,29 @@ impl eframe::App for Viewer {
                 {
                     self.fullscreen = !fullscreen;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
+                }
+                if self.protocol == DesktopProtocol::Rdp {
+                    let response = ui.add_enabled(
+                        connected && !self.view_only && self.send_clipboard,
+                        egui::Button::new("Share files"),
+                    );
+                    if response
+                        .on_hover_text("Choose files to make them available on the remote clipboard.")
+                        .clicked()
+                    {
+                        if let Some(paths) = rfd::FileDialog::new()
+                            .set_title("Share files with the remote PC")
+                            .pick_files()
+                        {
+                            if let Some(connection) = &self.connection {
+                                connection.lock().unwrap().send_input(Input::ClipboardFiles(paths));
+                                self.clipboard_notice = Some((
+                                    Instant::now(),
+                                    "Files offered to the remote clipboard".into(),
+                                ));
+                            }
+                        }
+                    }
                 }
                 if !connected && self.texture.is_some() && !self.test_pattern {
                     ui.label(&status);

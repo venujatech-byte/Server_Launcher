@@ -67,6 +67,7 @@ pub(crate) enum Input {
     UnicodeText(char),
     ClipboardText(String),
     ClipboardImage(super::clipboard_image::ClipboardImage),
+    ClipboardFiles(Vec<PathBuf>),
     VncResize {
         size: [u16; 2],
         screen: [u8; 16],
@@ -88,7 +89,7 @@ impl Input {
                 stream.write_all(&[6, 0, 0, 0, a, b, c, d])?;
                 stream.write_all(&text).map(|()| true)
             }
-            Self::ClipboardImage(_) => Ok(false),
+            Self::ClipboardImage(_) | Self::ClipboardFiles(_) => Ok(false),
             Self::UnicodeText(ch) => {
                 let codepoint = u32::from(ch);
                 let keysym = if codepoint <= 0xff {
@@ -138,6 +139,7 @@ fn clipboard_unsupported_reason(event: &Input) -> Option<&'static str> {
             Some("Classic VNC can send Latin-1 text only")
         }
         Input::ClipboardImage(_) => Some("Classic VNC does not support clipboard images"),
+        Input::ClipboardFiles(_) => Some("Classic VNC does not support clipboard files"),
         _ => None,
     }
 }

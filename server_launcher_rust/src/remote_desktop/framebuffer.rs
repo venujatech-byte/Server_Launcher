@@ -38,6 +38,7 @@ pub(crate) struct Framebuffer {
     size: [usize; 2],
     pixels: Vec<Color32>,
     dirty: Option<Region>,
+    pub(super) revision: u64,
     resized: bool,
 }
 
@@ -56,6 +57,7 @@ impl Framebuffer {
         if size != self.size {
             self.size = size;
             self.pixels = vec![Color32::BLACK; w * h];
+            self.revision = self.revision.wrapping_add(1);
             self.dirty = Some(Region {
                 origin: [0, 0],
                 size,
@@ -111,6 +113,7 @@ impl Framebuffer {
                 *target = Color32::from_rgb(pixel[0], pixel[1], pixel[2]);
             }
         }
+        self.revision = self.revision.wrapping_add(1);
         self.dirty = Some(self.dirty.map_or(region, |dirty| dirty.union(region)));
         Ok(())
     }
@@ -141,6 +144,7 @@ impl Framebuffer {
             let to = (y + row) * stride + x;
             self.pixels.copy_within(from..from + w, to);
         }
+        self.revision = self.revision.wrapping_add(1);
         self.dirty = Some(
             self.dirty
                 .map_or(destination, |dirty| dirty.union(destination)),
@@ -178,6 +182,25 @@ impl Framebuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn consuming_viewer_damage_does_not_hide_changes_from_recorder() {
+        let mut framebuffer = Framebuffer::default();
+        framebuffer.resize([1, 1]).unwrap();
+        let revision = framebuffer.revision;
+        framebuffer.take_update().unwrap();
+        assert_eq!(framebuffer.revision, revision);
+        framebuffer
+            .write_rgba(
+                Region {
+                    origin: [0, 0],
+                    size: [1, 1],
+                },
+                &[1, 2, 3, 255],
+            )
+            .unwrap();
+        assert_ne!(framebuffer.revision, revision);
+    }
 
     #[test]
     fn strided_damage_skips_source_padding() {

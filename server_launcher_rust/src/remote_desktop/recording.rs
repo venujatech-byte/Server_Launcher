@@ -89,7 +89,7 @@ fn record(
     output_bytes: &AtomicU64,
 ) -> Result<PathBuf, String> {
     let deadline = Instant::now() + Duration::from_secs(8);
-    let frame = loop {
+    let first_frame = loop {
         if stop.load(Ordering::Relaxed) {
             return Err("Recording cancelled before the first frame.".into());
         }
@@ -100,7 +100,7 @@ fn record(
             }
             if !connection.receiving_frame {
                 if let Some(frame) = connection.framebuffer.snapshot() {
-                    break frame;
+                    break (frame, connection.framebuffer.revision);
                 }
             }
         }
@@ -109,7 +109,7 @@ fn record(
         }
         thread::sleep(Duration::from_millis(16));
     };
-    let size = frame.size;
+    let size = first_frame.0.size;
     let folder = super::screenshot::pictures()?.join("ServerLauncher");
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
     let prefix = format!("remote-{}-", chrono::Local::now().format("%Y%m%d-%H%M%S"));
@@ -171,9 +171,9 @@ fn record(
                 connection,
                 stop,
                 paused,
-                frame,
+                first_frame,
                 Duration::from_millis(200),
-                |frame| {
+                |frame, _| {
                     let path = super::screenshot::save_in(
                         frame,
                         sequence.path(),
@@ -208,11 +208,13 @@ fn record(
         connection,
         stop,
         paused,
-        frame,
+        first_frame,
         Duration::from_secs_f64(1.0 / 30.0),
-        |frame| {
-            pixels.clear();
-            pixels.extend(frame.pixels.iter().flat_map(|pixel| pixel.to_array()));
+        |frame, changed| {
+            if changed {
+                pixels.clear();
+                pixels.extend(frame.pixels.iter().flat_map(|pixel| pixel.to_array()));
+            }
             pipe.write_all(&pixels)
                 .map_err(|error| format!("Could not write the recording: {error}"))?;
             frames += 1;
@@ -238,12 +240,13 @@ fn sample_frames(
     connection: &Mutex<Connection>,
     stop: &AtomicBool,
     paused: &AtomicBool,
-    mut frame: egui::ColorImage,
+    (mut frame, mut revision): (egui::ColorImage, u64),
     interval: Duration,
-    mut write: impl FnMut(&egui::ColorImage) -> Result<(), String>,
+    mut write: impl FnMut(&egui::ColorImage, bool) -> Result<(), String>,
 ) -> Result<(), String> {
     let size = frame.size;
     let mut next = Instant::now();
+    let mut changed = true;
     loop {
         if paused.load(Ordering::Relaxed) {
             if stop.load(Ordering::Relaxed) || !connection.lock().unwrap().connected {
@@ -253,7 +256,8 @@ fn sample_frames(
             next = Instant::now();
             continue;
         }
-        write(&frame)?;
+        write(&frame, changed)?;
+        changed = false;
         if stop.load(Ordering::Relaxed) {
             break Ok(());
         }
@@ -268,13 +272,15 @@ fn sample_frames(
             if !connection.connected {
                 break Ok(());
             }
-            if connection.receiving_frame {
+            if connection.receiving_frame || connection.framebuffer.revision == revision {
                 None
             } else {
+                revision = connection.framebuffer.revision;
                 connection.framebuffer.snapshot()
             }
         };
         if let Some(updated) = updated {
+            changed = true;
             frame = if updated.size == size {
                 updated
             } else {

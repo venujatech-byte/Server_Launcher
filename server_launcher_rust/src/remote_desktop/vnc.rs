@@ -252,12 +252,33 @@ fn open_direct(host: &SshRemoteHost, port: u16) -> io::Result<TcpStream> {
     let addresses = (address, port)
         .to_socket_addrs()
         .map_err(|_| error("Could not resolve the VNC host."))?;
-    let stream = addresses
+    let mut private_addresses = addresses
         .filter(|addr| private(addr.ip()))
         .take(3)
-        .find_map(|addr| TcpStream::connect_timeout(&addr, TIMEOUT).ok())
+        .peekable();
+    if private_addresses.peek().is_none() {
+        return Err(error(
+            "Direct VNC requires a private address. Enable Tunnel via SSH in the VNC tab.",
+        ));
+    }
+    let mut last_error = None;
+    let stream = private_addresses
+        .find_map(|addr| match TcpStream::connect_timeout(&addr, TIMEOUT) {
+            Ok(stream) => Some(stream),
+            Err(error) => {
+                last_error = Some(error);
+                None
+            }
+        })
         .ok_or_else(|| {
-            error("Could not connect to VNC on a private address. Check the server and port.")
+            let hint = match last_error.as_ref().map(io::Error::kind) {
+                Some(io::ErrorKind::ConnectionRefused) => {
+                    "Check that VNC is listening on this port."
+                }
+                Some(io::ErrorKind::TimedOut) => "Check the network route and firewall.",
+                _ => "Check that the host and VNC port are reachable.",
+            };
+            error(&format!("Could not reach VNC on TCP port {port}. {hint}"))
         })?;
     stream.set_read_timeout(Some(TIMEOUT))?;
     stream.set_write_timeout(Some(TIMEOUT))?;
@@ -445,6 +466,14 @@ mod tests {
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn direct_vnc_explains_when_ssh_tunnel_is_required() {
+        let host: SshRemoteHost =
+            serde_json::from_str(r#"{"id":"test","name":"Test","host":"203.0.113.10"}"#).unwrap();
+        let error = open_direct(&host, 5900).unwrap_err();
+        assert!(error.to_string().contains("Enable Tunnel via SSH"));
     }
 
     #[test]

@@ -96,7 +96,7 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
             &mut profile.quality,
             &[
                 (Quality::Auto, "Auto / manual settings"),
-                (Quality::Best, "Best · 32-bit lossless"),
+                (Quality::Best, "Best · 32-bit color"),
                 (Quality::Good, "Good · 24-bit adaptive"),
                 (Quality::Fast, "Fast · 16-bit adaptive"),
             ],

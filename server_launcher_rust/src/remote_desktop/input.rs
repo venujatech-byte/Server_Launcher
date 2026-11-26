@@ -97,8 +97,11 @@ impl Capture {
                 Event::PointerMoved(pos)
                     if visible.contains(pos) || self.buttons != 0 || self.extra_buttons != 0 =>
                 {
-                    self.position = remote_position(pos, canvas, size);
-                    send(self.pointer(self.buttons));
+                    let position = remote_position(pos, canvas, size);
+                    if position != self.position {
+                        self.position = position;
+                        send(self.pointer(self.buttons));
+                    }
                 }
                 Event::Key {
                     key,
@@ -337,5 +340,44 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn skips_pointer_moves_that_map_to_the_same_remote_pixel() {
+        let rect = Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0));
+        let mut capture = Capture::default();
+        let mut packets = Vec::new();
+        capture.events(
+            &[Event::PointerButton {
+                pos: egui::pos2(10.0, 10.0),
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            }],
+            Modifiers::NONE,
+            true,
+            rect,
+            rect,
+            [10, 10],
+            None,
+            |event| packets.push(event),
+        );
+        packets.clear();
+
+        capture.events(
+            &[
+                Event::PointerMoved(egui::pos2(10.1, 10.1)),
+                Event::PointerMoved(egui::pos2(10.2, 10.2)),
+            ],
+            Modifiers::NONE,
+            true,
+            rect,
+            rect,
+            [10, 10],
+            None,
+            |event| packets.push(event),
+        );
+
+        assert!(packets.is_empty());
     }
 }

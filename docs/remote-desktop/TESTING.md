@@ -48,6 +48,8 @@ network or the host's configured SSH tunnel.
    readable failure and no credential data in logs.
 2. Verify full desktop rendering and local pointer shape, then type text and
    test left/right/middle plus side mouse buttons and both wheel axes.
+   Confirm that a continuously changing desktop stays live over EGFX, and
+   check that the viewer's FPS counter changes with received display updates.
 3. Resize the viewer with dynamic resolution enabled. Check for correct aspect
    ratio and no stale pixels after the server changes resolution.
 4. Compare Incremental and Full-frame repaint. They should show the same remote
@@ -60,10 +62,11 @@ network or the host's configured SSH tunnel.
 7. Test network loss, server disconnect, retry, and close while input keys are
    held. Confirm all remote keys/buttons are released on focus loss and close.
 
-The current renderer uses legacy bitmap updates. GFX/EGFX codecs, audio,
-microphone, drive redirection, RD Gateway, IME, and multi-monitor behavior are
-not fully implemented; mark these unsupported rather than passing them based on
-UI controls alone.
+The renderer accepts legacy bitmap updates and EGFX updates. EGFX AVC/H.264
+decoding is not enabled, so confirm the server negotiates one of the supported
+ClearCodec/RFX paths. Audio, microphone, drive redirection, RD Gateway, IME, and
+multi-monitor behavior are not fully implemented; mark these unsupported rather
+than passing them based on UI controls alone.
 
 ## VNC checks
 

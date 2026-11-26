@@ -74,11 +74,12 @@ been completed. Record results here only after a runnable viewer is measured.
 ## Display profiles and input controls
 
 RDP profiles expose Automatic, RemoteFX, 32/24-bit true color, and 16/15-bit
-high color. The current IronRDP bitmap path does not provide the GFX AVC/RFX
-progressive pipeline, and its GCC setup rejects 8 bpp, so those Remmina entries
-are disabled. RemoteFX is advertised to the server but cannot be forced: the
-server selects the codec during negotiation. Older `quality` and `color_depth`
-fields remain intact and are used when no explicit `color_profile` is saved.
+high color. The EGFX path supports IronRDP's ClearCodec and RFX decoders, but
+does not enable AVC/H.264 because the app has no H.264 decoder; those Remmina
+AVC entries remain disabled. The legacy RemoteFX bitmap codec is advertised but
+cannot be forced: the server selects the codec during negotiation. Older
+`quality` and `color_depth` fields remain intact and are used when no explicit
+`color_profile` is saved.
 RDP and VNC can disable fractional wheel accumulation; RDP can also swap the
 primary and secondary pointer buttons for left-handed use. These are local
 input/display settings, not protocol performance modes. The VNC profile can turn
@@ -263,8 +264,9 @@ In Fit Window mode, RDP sends a single-monitor display request after the
 window has settled for 180 ms. Requests are bounded by local framebuffer
 limits and the server's advertised monitor area. Server reactivation updates
 the share ID and graphics decoder and allocates a validated framebuffer for
-the new size, restoring the negotiated bulk decompressor for fast-path updates.
-The RDP profile exposes Smooth/Fast texture filtering, Incremental/Full-frame
+the new size. IronRDP's active-stage builder restores fast-path decompression
+state during reactivation. The RDP profile exposes Smooth/Fast texture
+filtering, Incremental/Full-frame
 repainting, and Auto/Best/Good/Fast bitmap quality. Full-frame repaint is a
 client-side compatibility mode: it redraws the complete image after each
 received update, but does not alter server rendering or network behavior. Auto retains manual color-depth

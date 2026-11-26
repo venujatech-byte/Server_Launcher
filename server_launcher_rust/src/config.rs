@@ -218,6 +218,7 @@ pub struct RemoteDesktopSettings {
     pub recording_folder: Option<PathBuf>,
     pub recording_fps: u32,
     pub recording_format: RemoteRecordingFormat,
+    pub copy_screenshots_to_clipboard: bool,
 }
 
 impl Default for RemoteDesktopSettings {
@@ -229,6 +230,7 @@ impl Default for RemoteDesktopSettings {
             recording_folder: None,
             recording_fps: 30,
             recording_format: RemoteRecordingFormat::Mp4,
+            copy_screenshots_to_clipboard: false,
         }
     }
 }
@@ -531,6 +533,7 @@ mod tests {
         assert!(config.remote_desktop.recording_folder.is_none());
         assert_eq!(config.remote_desktop.recording_fps, 30);
         assert_eq!(config.remote_desktop.recording_format, RemoteRecordingFormat::Mp4);
+        assert!(!config.remote_desktop.copy_screenshots_to_clipboard);
     }
 
     #[test]

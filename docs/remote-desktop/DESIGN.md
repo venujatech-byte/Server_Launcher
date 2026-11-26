@@ -185,7 +185,8 @@ The writer publishes a completed PNG without overwriting an existing file.
 The viewer reports the result with open-file and show-folder actions.
 The user can choose a screenshot folder in Remote Desktop settings; leaving it
 unset uses Pictures/ServerLauncher. Screenshot clipboard copies and host-key
-shortcuts remain pending.
+can be enabled as a viewer default or toggled per session. Host-key shortcuts
+remain pending.
 
 Recordings use FFmpeg H.264 at 30 fps when available and fall back to a PNG
 sequence when FFmpeg is missing. The recording destination and frame rate

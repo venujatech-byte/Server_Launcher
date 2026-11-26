@@ -29,6 +29,7 @@ pub(crate) fn run(
     let recording_folder = config.remote_desktop.recording_folder.clone();
     let recording_fps = config.remote_desktop.recording_fps;
     let recording_format = config.remote_desktop.recording_format;
+    let copy_screenshots_to_clipboard = config.remote_desktop.copy_screenshots_to_clipboard;
     let warn_unencrypted_vnc = config.remote_desktop.warn_unencrypted_vnc;
     let profile = config.ssh_hosts.iter().find(|host| host.id == host_id);
     let name = profile.map_or("Remote Desktop", |host| host.name.as_str());
@@ -139,7 +140,7 @@ pub(crate) fn run(
                 protocol,
                 confirm_unencrypted_vnc,
                 clipboard_notice: None,
-                copy_screenshot: false,
+                copy_screenshot: copy_screenshots_to_clipboard,
                 screenshot_clipboard: None,
                 screenshot_queued: false,
                 screenshot: None,

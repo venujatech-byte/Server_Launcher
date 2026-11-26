@@ -81,7 +81,8 @@ store; protocol passwords are not saved in `servers.json`.
   Latin-1; clipboard images and file contents are not supported.
 - Screenshot and recording folders can be set separately under Settings →
   Remote Desktop. Recording supports MP4 (H.264) or PNG sequence, at 15, 24,
-  30, or 60 FPS. By default, captures are saved under Pictures/ServerLauncher.
+  30, or 60 FPS. Screenshot clipboard copying can be set as the viewer default.
+  By default, captures are saved under Pictures/ServerLauncher.
 
 RDP audio, microphone, drive redirection, Microsoft RD Gateway, RDP multi-monitor,
 and keyboard-layout-specific IME are not implemented. VNC Tight and ZRLE

@@ -721,6 +721,10 @@ impl LauncherApp {
                                         ui.add_space(4.0);
                                         ui.checkbox(&mut self.remote_desktop_settings.show_live_fps, "Show live FPS by default");
                                         ui.label(RichText::new("Displays the recent rate of framebuffer updates in each new viewer window.").size(10.5).color(palette.text_muted));
+                                        ui.checkbox(
+                                            &mut self.remote_desktop_settings.copy_screenshots_to_clipboard,
+                                            "Copy screenshots to the clipboard by default",
+                                        );
                                         ui.add_space(8.0);
                                         ui.checkbox(&mut self.remote_desktop_settings.warn_unencrypted_vnc, "Warn before direct VNC connections to public or unknown hosts");
                                         ui.label(RichText::new("Direct classic VNC does not encrypt screen updates or input. The warning offers an SSH tunnel before connecting.").size(10.5).color(palette.text_muted));

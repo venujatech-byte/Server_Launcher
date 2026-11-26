@@ -91,11 +91,15 @@ during negotiation. Older `quality` and `color_depth` fields remain intact and
 are used when no explicit `color_profile` is saved.
 RDP and VNC can disable fractional wheel accumulation; RDP can also swap the
 primary and secondary pointer buttons for left-handed use. These are local
-input/display settings, not protocol performance modes. The VNC profile can turn
-remote cursor display off; by default, the viewer requests RichCursor or
-XCursor shapes plus PointerPos updates and draws the cursor over the scaled framebuffer.
-Remmina's server-side local-input lock is not exposed. VNC continues to skip
-Tight encoding, and its default bell handling ignores bell messages.
+input/display settings, not protocol performance modes. The VNC editor groups
+the existing profile options into Advanced, Behavior, and SSH Tunnel sections.
+New VNC profiles request only the supported ZRLE, CopyRect, and Raw encodings.
+Old saved Tight priorities remain readable but are skipped with an explicit
+unsupported label. The profile can turn remote cursor display off; by default,
+the viewer requests RichCursor or XCursor shapes plus PointerPos updates and
+draws the cursor over the scaled framebuffer.
+Remmina's server-side local-input lock is not exposed. Tight decoding is not
+implemented, and bell messages are ignored.
 
 ## Direct connection checks
 
@@ -180,10 +184,12 @@ allows it and the connected viewer is focused. Clipboard access stays off the
 egui thread. Remote text and images are written to the local clipboard and
 fingerprinted to prevent sending them back. Text over 1 MiB and images over
 16 MiB are skipped. Native clipboard initialization retries once per second if
-the OS clipboard is temporarily unavailable. RDP supports Unicode text and
-bounded DIB images; classic VNC supports Latin-1 text only. File clipboard
-formats are not implemented. End-to-end clipboard behavior still needs testing
-against real RDP and VNC servers and on Wayland, X11, and Windows.
+the OS clipboard is temporarily unavailable. Remote clipboard values remain
+queued when a local clipboard write fails and are retried while the viewer is
+focused; a newer remote value takes priority over an older retry. RDP supports
+Unicode text and bounded DIB images; classic VNC supports Latin-1 text only.
+File clipboard formats are not implemented. End-to-end clipboard behavior still
+needs testing against real RDP and VNC servers and on Wayland, X11, and Windows.
 
 ## Native RDP transport
 

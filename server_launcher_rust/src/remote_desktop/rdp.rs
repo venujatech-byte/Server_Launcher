@@ -1196,7 +1196,7 @@ fn config(
         request_data: None,
         autologon: true,
         enable_audio_playback: profile.audio == Audio::Local,
-        enable_audio_capture: false,
+        enable_audio_capture: profile.mic,
         audio_playback_mode: None,
         compression_type: Some(CompressionType::Rdp61),
         pointer_software_rendering: true,
@@ -1314,6 +1314,12 @@ mod tests {
             ..Default::default()
         };
         assert!(!config(&host, &profile, "test-password", None).enable_audio_playback);
+        assert!(!config(&host, &profile, "test-password", None).enable_audio_capture);
+        let profile = RdpProfile {
+            mic: true,
+            ..Default::default()
+        };
+        assert!(config(&host, &profile, "test-password", None).enable_audio_capture);
     }
 
     #[test]

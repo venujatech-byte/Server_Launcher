@@ -100,7 +100,11 @@ impl Capture {
                     let position = remote_position(pos, canvas, size);
                     if position != self.position {
                         self.position = position;
-                        send(self.pointer(self.buttons));
+                        send(Input::PointerMove {
+                            x: self.position[0],
+                            y: self.position[1],
+                            buttons: self.buttons,
+                        });
                     }
                 }
                 Event::Key {
@@ -278,7 +282,7 @@ mod tests {
                     y: 50,
                     buttons: 1
                 },
-                Input::Pointer {
+                Input::PointerMove {
                     x: 199,
                     y: 99,
                     buttons: 1

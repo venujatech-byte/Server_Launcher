@@ -45,6 +45,11 @@ pub(crate) enum Input {
         y: u16,
         buttons: u8,
     },
+    PointerMove {
+        x: u16,
+        y: u16,
+        buttons: u8,
+    },
     PointerExtra {
         x: u16,
         y: u16,
@@ -95,7 +100,7 @@ impl Input {
                     .write_all(&[4, u8::from(pressed), 0, 0, a, b, c, d])
                     .map(|()| false)
             }
-            Self::Pointer { x, y, buttons } => {
+            Self::Pointer { x, y, buttons } | Self::PointerMove { x, y, buttons } => {
                 let [a, b] = x.to_be_bytes();
                 let [c, d] = y.to_be_bytes();
                 stream.write_all(&[5, buttons, a, b, c, d]).map(|()| false)
@@ -103,6 +108,15 @@ impl Input {
             // Classic RFB has no separate side-button event; its high button-mask bits
             // are commonly interpreted as wheel events by servers.
             Self::PointerExtra { .. } => Ok(false),
+        }
+    }
+}
+
+fn enqueue_input(sender: &mpsc::SyncSender<Input>, overflow: &AtomicBool, event: Input) {
+    if let Err(mpsc::TrySendError::Full(event)) = sender.try_send(event) {
+        if !matches!(event, Input::PointerMove { .. }) {
+            // Disconnect rather than lose key releases when the network is stalled.
+            overflow.store(true, Ordering::Release);
         }
     }
 }
@@ -234,10 +248,7 @@ impl Connection {
 
     pub(crate) fn send_input(&self, event: Input) {
         if let Some(input) = &self.input {
-            if matches!(input.try_send(event), Err(mpsc::TrySendError::Full(_))) {
-                // Disconnect rather than lose key releases when the network is stalled.
-                self.input_overflow.store(true, Ordering::Release);
-            }
+            enqueue_input(input, &self.input_overflow, event);
         }
     }
 }
@@ -1044,6 +1055,53 @@ mod tests {
         let mut wire = Vec::new();
         assert!(Input::ClipboardText("aé".into()).write(&mut wire).unwrap());
         assert_eq!(wire, [6, 0, 0, 0, 0, 0, 0, 2, b'a', 0xe9]);
+    }
+
+    #[test]
+    fn writes_pointer_motion_with_current_button_mask() {
+        let mut wire = Vec::new();
+        assert!(!Input::PointerMove {
+            x: 0x1234,
+            y: 0x5678,
+            buttons: 1,
+        }
+        .write(&mut wire)
+        .unwrap());
+        assert_eq!(wire, [5, 1, 0x12, 0x34, 0x56, 0x78]);
+    }
+
+    #[test]
+    fn full_input_queue_drops_only_pointer_motion() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let overflow = AtomicBool::new(false);
+        sender
+            .try_send(Input::Key {
+                keysym: 0xff0d,
+                physical_key: None,
+                pressed: true,
+            })
+            .unwrap();
+        enqueue_input(
+            &sender,
+            &overflow,
+            Input::PointerMove {
+                x: 10,
+                y: 20,
+                buttons: 0,
+            },
+        );
+        assert!(!overflow.load(Ordering::Acquire));
+        enqueue_input(
+            &sender,
+            &overflow,
+            Input::Pointer {
+                x: 10,
+                y: 20,
+                buttons: 1,
+            },
+        );
+        assert!(overflow.load(Ordering::Acquire));
+        assert!(receiver.try_recv().is_ok());
     }
 
     #[test]

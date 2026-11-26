@@ -95,6 +95,15 @@ impl Encoder {
                 }
                 self.buttons = buttons;
             }
+            Input::PointerMove { x, y, .. } => {
+                self.position = Some((x, y));
+                out.push(FastPathInputEvent::MouseEvent(MousePdu {
+                    flags: PointerFlags::MOVE,
+                    number_of_wheel_rotation_units: 0,
+                    x_position: x,
+                    y_position: y,
+                }));
+            }
         }
     }
 }
@@ -152,6 +161,38 @@ fn scancode(keysym: u32) -> Option<(u8, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pointer_motion_is_forwarded_without_changing_button_state() {
+        let mut encoder = Encoder::default();
+        let mut out = Vec::new();
+        encoder.encode(
+            Input::Pointer {
+                x: 4,
+                y: 5,
+                buttons: 1,
+            },
+            &mut out,
+        );
+        out.clear();
+        encoder.encode(
+            Input::PointerMove {
+                x: 8,
+                y: 9,
+                buttons: 1,
+            },
+            &mut out,
+        );
+        assert_eq!(
+            out,
+            [FastPathInputEvent::MouseEvent(MousePdu {
+                flags: PointerFlags::MOVE,
+                number_of_wheel_rotation_units: 0,
+                x_position: 8,
+                y_position: 9,
+            })]
+        );
+    }
 
     #[test]
     fn encodes_extended_key_release_and_button_release() {

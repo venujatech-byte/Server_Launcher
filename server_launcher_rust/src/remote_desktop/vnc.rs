@@ -1,6 +1,7 @@
 use super::{
     credentials::{self, DesktopProtocol},
     framebuffer::{Framebuffer, Region},
+    profile::Quality,
     tunnel::{self, DesktopStream},
 };
 use crate::config::SshRemoteHost;
@@ -9,7 +10,7 @@ use des::{
     Des,
 };
 use std::{
-    io::{self, Read, Write},
+    io::{self, BufReader, Read, Write},
     net::{IpAddr, TcpStream, ToSocketAddrs},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -25,6 +26,7 @@ const DESKTOP_SIZE: i32 = -223;
 const EXTENDED_DESKTOP_SIZE: i32 = -308;
 
 const TIMEOUT: Duration = Duration::from_secs(8);
+const TUNNEL_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Input {
@@ -157,7 +159,7 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
         ));
     }
     let mut stream: Box<dyn DesktopStream> = if profile.tunnel_via_ssh {
-        tunnel::open(host, profile.port, TIMEOUT)?
+        tunnel::open(host, profile.port, TUNNEL_HANDSHAKE_TIMEOUT)?
     } else {
         Box::new(open_direct(host, profile.port)?)
     };
@@ -173,6 +175,7 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
         }
     })?;
     drop(password);
+    stream.set_read_timeout(TIMEOUT)?;
     {
         let mut state = state.lock().unwrap();
         state.framebuffer.resize(size).map_err(error)?;
@@ -184,10 +187,16 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
         .into();
         state.connected = true;
     }
-    // Request little-endian 32-bit pixels with R, G and B in the first three bytes.
-    stream.write_all(&[
-        0, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16, 0, 0, 0,
-    ])?;
+    let compact_pixels = matches!(profile.quality, Quality::Auto | Quality::Fast);
+    // RGB565 halves the raw payload. Good and Best retain full color.
+    let pixel_format = if compact_pixels {
+        [16, 16, 0, 1, 0, 31, 0, 63, 0, 31, 11, 5, 0, 0, 0, 0]
+    } else {
+        [32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16, 0, 0, 0]
+    };
+    let mut format_message = [0; 20];
+    format_message[4..].copy_from_slice(&pixel_format);
+    stream.write_all(&format_message)?;
     let mut encodings = vec![2, 0, 0, 4];
     for encoding in [COPY_RECT, RAW, EXTENDED_DESKTOP_SIZE, DESKTOP_SIZE] {
         encodings.extend_from_slice(&encoding.to_be_bytes());
@@ -210,6 +219,7 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
     ctx.request_repaint();
     request(&mut *writer.lock().unwrap(), size, false)?;
 
+    let mut stream = BufReader::with_capacity(64 * 1024, stream);
     let mut pixels = Vec::new();
     loop {
         let mut kind = [0];
@@ -242,6 +252,7 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
                         &mut pixels,
                         index + 1 == count,
                         ctx,
+                        compact_pixels,
                     )? {
                         size = new_size;
                         resized = true;
@@ -407,6 +418,7 @@ fn read_rectangle(
     pixels: &mut Vec<u8>,
     last: bool,
     ctx: &egui::Context,
+    compact_pixels: bool,
 ) -> io::Result<Option<[usize; 2]>> {
     let mut rect = [0; 12];
     stream.read_exact(&mut rect)?;
@@ -460,7 +472,12 @@ fn read_rectangle(
             for row in (0..h).step_by(64) {
                 let rows = (h - row).min(64);
                 pixels.resize(w * rows * 4, 0);
-                stream.read_exact(pixels)?;
+                if compact_pixels {
+                    stream.read_exact(&mut pixels[..w * rows * 2])?;
+                    expand_rgb565(pixels);
+                } else {
+                    stream.read_exact(pixels)?;
+                }
                 state
                     .lock()
                     .unwrap()
@@ -499,9 +516,32 @@ fn read_rectangle(
     Ok(None)
 }
 
+fn expand_rgb565(pixels: &mut [u8]) {
+    // Expand backwards so unread packed pixels stay intact.
+    for index in (0..pixels.len() / 4).rev() {
+        let value = u16::from_le_bytes([pixels[index * 2], pixels[index * 2 + 1]]);
+        let red = (value >> 11) as u8;
+        let green = ((value >> 5) & 63) as u8;
+        let blue = (value & 31) as u8;
+        pixels[index * 4..][..4].copy_from_slice(&[
+            (red << 3) | (red >> 2),
+            (green << 2) | (green >> 4),
+            (blue << 3) | (blue >> 2),
+            255,
+        ]);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expands_packed_vnc_pixels_in_place() {
+        let mut pixels = [0x00, 0xf8, 0xe0, 0x07, 0x1f, 0x00, 0, 0, 0, 0, 0, 0];
+        expand_rgb565(&mut pixels);
+        assert_eq!(pixels, [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255]);
+    }
 
     struct Transcript {
         incoming: io::Cursor<Vec<u8>>,

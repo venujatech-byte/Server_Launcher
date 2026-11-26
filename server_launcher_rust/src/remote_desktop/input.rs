@@ -35,12 +35,7 @@ impl Capture {
                     let key = match event {
                         Event::Copy => b'c',
                         Event::Cut => b'x',
-                        Event::Paste(text) => {
-                            if text.len() <= super::vnc::CLIPBOARD_LIMIT {
-                                send(Input::ClipboardText(text.clone()));
-                            }
-                            b'v'
-                        }
+                        Event::Paste(_) => b'v',
                         _ => unreachable!(),
                     };
                     let previous = self.modifiers;

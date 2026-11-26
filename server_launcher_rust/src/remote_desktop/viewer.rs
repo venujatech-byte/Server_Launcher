@@ -82,6 +82,7 @@ pub(crate) fn run(
             let focus = Arc::new(AtomicBool::new(false));
             let closed = Arc::new(AtomicBool::new(false));
             let ctx = cc.egui_ctx.clone();
+            let parent_ctx = ctx.clone();
             let request_focus = focus.clone();
             let parent_closed = closed.clone();
             std::thread::spawn(move || {
@@ -90,11 +91,11 @@ pub(crate) fn run(
                 while input.read_exact(&mut command).is_ok() {
                     if command[0] == b'f' {
                         request_focus.store(true, Ordering::Release);
-                        ctx.request_repaint();
+                        parent_ctx.request_repaint();
                     }
                 }
                 parent_closed.store(true, Ordering::Release);
-                ctx.request_repaint();
+                parent_ctx.request_repaint();
             });
 
             let mut framebuffer = Framebuffer::default();
@@ -108,6 +109,8 @@ pub(crate) fn run(
                 message,
                 framebuffer,
                 connection: None,
+                clipboard_sync: send_clipboard
+                    .then(|| super::clipboard_sync::ClipboardSync::start(ctx.clone())),
                 session_host: viewer_host,
                 upload: None,
                 upload_result: None,
@@ -171,6 +174,7 @@ struct Viewer {
     message: &'static str,
     framebuffer: Framebuffer,
     connection: Option<Arc<Mutex<Connection>>>,
+    clipboard_sync: Option<super::clipboard_sync::ClipboardSync>,
     session_host: Option<crate::config::SshRemoteHost>,
     upload: Option<crate::app::DesktopUpload>,
     upload_result: Option<Result<String, String>>,
@@ -476,6 +480,9 @@ impl eframe::App for Viewer {
                 }
                 if let Some(text) = connection.clipboard_text.take() {
                     self.clipboard_notice = Some((Instant::now(), "Clipboard received"));
+                    if let Some(clipboard) = &self.clipboard_sync {
+                        clipboard.set_remote_text(text.clone());
+                    }
                     ctx.copy_text(text);
                 }
                 (
@@ -502,6 +509,18 @@ impl eframe::App for Viewer {
                     0,
                 )
             };
+        if let Some(clipboard) = &self.clipboard_sync {
+            clipboard.set_focused(
+                connected && !self.view_only && ctx.input(|input| input.focused),
+            );
+            if connected && !self.view_only {
+                if let Some(connection) = &self.connection {
+                    if let Some(text) = clipboard.take_pending() {
+                        connection.lock().unwrap().send_input(Input::ClipboardText(text));
+                    }
+                }
+            }
+        }
         if self.screenshot_queued {
             if connected {
                 self.take_screenshot(ctx);

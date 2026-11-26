@@ -126,6 +126,18 @@ are pending. Input mapping and focus release were tested in-process.
 Synthetic desktop input did not reach the loopback peer in the X11 smoke
 test, so end-to-end input behavior remains unverified.
 
+## Clipboard text
+
+When the configured direction permits local-to-remote sharing, a worker checks
+the system clipboard every 200 ms only while the viewer is connected, focused,
+and not view-only. Changed text travels over the existing bounded input queue;
+the worker does not access the clipboard on the egui thread. Remote text is
+copied to the local clipboard and tagged to prevent sending it back. Text over
+1 MiB is skipped. RDP uses Unicode text; classic VNC is limited to Latin-1.
+Image and file clipboard formats are not implemented. End-to-end clipboard
+behavior still needs testing against real RDP and VNC servers and on Wayland,
+X11, and Windows.
+
 ## Native RDP transport
 
 The viewer uses the blocking adapter matching [IronRDP 0.17](https://docs.rs/crate/ironrdp/0.17.0)

@@ -10,6 +10,7 @@ use des::{
     Des,
 };
 use std::{
+    hash::{BuildHasher, RandomState},
     io::{self, BufReader, Read, Write},
     net::{IpAddr, TcpStream, ToSocketAddrs},
     sync::{
@@ -119,6 +120,7 @@ impl Connection {
         }));
         let worker = state.clone();
         std::thread::spawn(move || {
+            let jitter = RandomState::new();
             let mut retries = 0;
             loop {
                 let started = Instant::now();
@@ -142,7 +144,7 @@ impl Connection {
                     ctx.request_repaint();
                     break;
                 }
-                let delay = reconnect_delay(retries);
+                let delay = reconnect_delay(retries, jitter.hash_one(retries));
                 retries += 1;
                 state.reconnect_at = Some(Instant::now() + delay);
                 ctx.request_repaint();
@@ -181,8 +183,9 @@ impl Connection {
     }
 }
 
-fn reconnect_delay(attempt: u32) -> Duration {
-    Duration::from_secs(1 << attempt)
+fn reconnect_delay(attempt: u32, entropy: u64) -> Duration {
+    let base_ms = 1_000_u64 << attempt;
+    Duration::from_millis(base_ms + entropy % (base_ms / 4 + 1))
 }
 
 fn error(message: &str) -> io::Error {
@@ -617,9 +620,9 @@ mod tests {
     }
 
     #[test]
-    fn reconnect_backoff_grows_to_sixteen_seconds() {
-        assert_eq!(reconnect_delay(0), Duration::from_secs(1));
-        assert_eq!(reconnect_delay(4), Duration::from_secs(16));
+    fn reconnect_backoff_grows_and_adds_bounded_jitter() {
+        assert_eq!(reconnect_delay(0, 0), Duration::from_secs(1));
+        assert_eq!(reconnect_delay(4, 4_000), Duration::from_secs(20));
     }
 
     struct Transcript {

@@ -152,6 +152,16 @@ pub(crate) fn rdp(
         ui.label("RemoteFX is advertised to the server; the server still chooses the negotiated codec.");
         choice(
             ui,
+            "Initial scaling",
+            &mut profile.scaling,
+            &[
+                (Scaling::Fit, "Fit"),
+                (Scaling::Native, "100%"),
+                (Scaling::Fill, "Fill"),
+            ],
+        );
+        choice(
+            ui,
             "Resolution",
             &mut profile.resolution,
             &[
@@ -293,6 +303,8 @@ fn new_rdp_profile(defaults: &crate::config::RemoteDesktopSettings) -> RdpProfil
     RdpProfile {
         quality: defaults.default_quality,
         clipboard: defaults.default_clipboard,
+        scaling: defaults.default_scaling,
+        auto_reconnect: defaults.default_auto_reconnect,
         ..RdpProfile::default()
     }
 }
@@ -301,6 +313,8 @@ fn new_vnc_profile(host: &str, defaults: &crate::config::RemoteDesktopSettings) 
     VncProfile {
         quality: defaults.default_quality,
         clipboard: defaults.default_clipboard,
+        scaling: defaults.default_scaling,
+        auto_reconnect: defaults.default_auto_reconnect,
         tunnel_via_ssh: super::vnc::needs_unencrypted_warning(host),
         ..VncProfile::default()
     }
@@ -446,6 +460,8 @@ mod tests {
         let defaults = RemoteDesktopSettings {
             default_quality: Quality::Fast,
             default_clipboard: Clipboard::RemoteToLocal,
+            default_scaling: super::Scaling::Native,
+            default_auto_reconnect: false,
             ..RemoteDesktopSettings::default()
         };
         let rdp = new_rdp_profile(&defaults);
@@ -453,8 +469,12 @@ mod tests {
 
         assert_eq!(rdp.quality, Quality::Fast);
         assert_eq!(rdp.clipboard, Clipboard::RemoteToLocal);
+        assert_eq!(rdp.scaling, super::Scaling::Native);
+        assert!(!rdp.auto_reconnect);
         assert_eq!(vnc.quality, Quality::Fast);
         assert_eq!(vnc.clipboard, Clipboard::RemoteToLocal);
+        assert_eq!(vnc.scaling, super::Scaling::Native);
+        assert!(!vnc.auto_reconnect);
     }
 }
 

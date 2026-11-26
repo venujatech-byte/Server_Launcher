@@ -100,8 +100,8 @@ store; protocol passwords are not saved in `servers.json`.
 - Screenshot and recording folders can be set separately under Settings →
   Remote Desktop. Recording supports MP4 (H.264), WebM (VP9), or PNG sequence,
   at 15, 24, 30, or 60 FPS, and can use an explicitly selected FFmpeg executable or
-  `ffmpeg` from `PATH`. Quality and clipboard defaults also apply to newly
-  created RDP/VNC profiles; existing profiles keep their saved choices.
+  `ffmpeg` from `PATH`. Quality, clipboard, scaling, and reconnect defaults
+  apply to newly created RDP/VNC profiles; existing profiles keep their choices.
   Screenshot clipboard copying can be set as the viewer default.
   By default, captures are saved under Pictures/ServerLauncher. Linux DEB and
   RPM packages recommend FFmpeg for MP4 recording; it remains optional because

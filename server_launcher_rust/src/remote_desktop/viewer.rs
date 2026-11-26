@@ -34,6 +34,7 @@ pub(crate) fn run(
     let recording_format = config.remote_desktop.recording_format;
     let copy_screenshots_to_clipboard = config.remote_desktop.copy_screenshots_to_clipboard;
     let warn_unencrypted_vnc = config.remote_desktop.warn_unencrypted_vnc;
+    let default_scaling = config.remote_desktop.default_scaling;
     let profile = config.ssh_hosts.iter().find(|host| host.id == host_id);
     let name = profile.map_or("Remote Desktop", |host| host.name.as_str());
     let title = format!("{name} - {}", protocol.label());
@@ -44,9 +45,11 @@ pub(crate) fn run(
         "The viewer window is ready. The protocol connection is still being implemented."
     };
     let scaling = profile
-        .and_then(|host| host.vnc.as_ref())
-        .filter(|_| protocol == DesktopProtocol::Vnc)
-        .map_or(Scaling::Fit, |profile| profile.scaling);
+        .and_then(|host| match protocol {
+            DesktopProtocol::Rdp => host.rdp.as_ref().map(|profile| profile.scaling),
+            DesktopProtocol::Vnc => host.vnc.as_ref().map(|profile| profile.scaling),
+        })
+        .unwrap_or(default_scaling);
     let show_vnc_cursor = profile
         .and_then(|host| host.vnc.as_ref())
         .filter(|_| protocol == DesktopProtocol::Vnc)

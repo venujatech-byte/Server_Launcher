@@ -317,6 +317,9 @@ Pictures/ServerLauncher and 30 FPS as defaults. Users can select a specific
 FFmpeg executable or use `ffmpeg` from `PATH`. Users can select MP4 (H.264) or a
 PNG sequence directly; the PNG fallback remains available when FFmpeg is
 missing.
+Remote Desktop settings also seed quality, clipboard direction, scaling, and
+reconnect defaults into newly created protocol profiles; saved host profiles
+retain their own values.
 
 
 In Fit Window mode, RDP sends a single-monitor display request after the

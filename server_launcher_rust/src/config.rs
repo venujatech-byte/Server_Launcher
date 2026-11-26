@@ -213,6 +213,8 @@ pub enum RemoteRecordingFormat {
 pub struct RemoteDesktopSettings {
     pub default_quality: crate::remote_desktop::profile::Quality,
     pub default_clipboard: crate::remote_desktop::profile::Clipboard,
+    pub default_scaling: crate::remote_desktop::profile::Scaling,
+    pub default_auto_reconnect: bool,
     pub show_live_fps: bool,
     pub warn_unencrypted_vnc: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -233,6 +235,8 @@ impl Default for RemoteDesktopSettings {
         Self {
             default_quality: crate::remote_desktop::profile::Quality::Auto,
             default_clipboard: crate::remote_desktop::profile::Clipboard::Both,
+            default_scaling: crate::remote_desktop::profile::Scaling::Fit,
+            default_auto_reconnect: true,
             show_live_fps: false,
             warn_unencrypted_vnc: true,
             h264_library_path: None,
@@ -546,6 +550,11 @@ mod tests {
             config.remote_desktop.default_clipboard,
             crate::remote_desktop::profile::Clipboard::Both
         );
+        assert_eq!(
+            config.remote_desktop.default_scaling,
+            crate::remote_desktop::profile::Scaling::Fit
+        );
+        assert!(config.remote_desktop.default_auto_reconnect);
         assert!(!config.remote_desktop.show_live_fps);
         assert!(config.remote_desktop.warn_unencrypted_vnc);
         assert!(config.remote_desktop.screenshot_folder.is_none());

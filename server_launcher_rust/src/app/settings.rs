@@ -770,6 +770,32 @@ impl LauncherApp {
                                                     }
                                                 });
                                         });
+                                        ui.horizontal(|ui| {
+                                            ui.label("New viewer scaling");
+                                            egui::ComboBox::from_id_salt("remote_desktop_default_scaling")
+                                                .selected_text(match self.remote_desktop_settings.default_scaling {
+                                                    crate::remote_desktop::profile::Scaling::Fit => "Fit",
+                                                    crate::remote_desktop::profile::Scaling::Native => "100%",
+                                                    crate::remote_desktop::profile::Scaling::Fill => "Fill",
+                                                })
+                                                .show_ui(ui, |ui| {
+                                                    for (scaling, label) in [
+                                                        (crate::remote_desktop::profile::Scaling::Fit, "Fit"),
+                                                        (crate::remote_desktop::profile::Scaling::Native, "100%"),
+                                                        (crate::remote_desktop::profile::Scaling::Fill, "Fill"),
+                                                    ] {
+                                                        ui.selectable_value(
+                                                            &mut self.remote_desktop_settings.default_scaling,
+                                                            scaling,
+                                                            label,
+                                                        );
+                                                    }
+                                                });
+                                        });
+                                        ui.checkbox(
+                                            &mut self.remote_desktop_settings.default_auto_reconnect,
+                                            "Auto-reconnect new RDP/VNC profiles",
+                                        );
                                         ui.label(RichText::new("These apply only when creating new host protocol profiles.").size(10.5).color(palette.text_muted));
                                         ui.add_space(8.0);
                                         ui.label(RichText::new("RDP H.264 decoder").size(12.0).strong().color(palette.text_primary));

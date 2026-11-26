@@ -74,14 +74,16 @@ store; protocol passwords are not saved in `servers.json`.
   composites the remote pointer into the displayed framebuffer. Display controls include
   smooth/fast texture filtering, incremental/full-frame repainting, Automatic and RemoteFX
   profiles, 32/24-bit true color, 16/15-bit high color, left-handed mouse mapping, and an
-  option to disable smooth scrolling. GFX AVC and 8-bit color profiles are
-  unavailable in the current renderer. The server negotiates the codec; these options do not
-  guarantee a specific frame rate or speedup.
+  option to disable smooth scrolling. The 256-color (8 bpp) profile uses legacy
+  bitmap updates; GFX AVC remains unavailable in the current renderer. The
+  server negotiates the codec; these options do not guarantee a specific frame
+  rate or speedup.
 - VNC supports classic password authentication, Raw, CopyRect, and ZRLE framebuffer
   updates, keyboard and mouse input, text clipboard sync, screenshots,
   recording, and server-supported resolution changes. Its TCP user timeout setting
   applies only to direct Linux connections; zero uses the OS default, and SSH tunnels
-  ignore it. Classic VNC is not
+  ignore it. The profile can close the viewer after connection retries fail.
+  Classic VNC is not
   encrypted; the viewer warns before a direct connection to public or unknown
   hosts. Use the SSH tunnel option on untrusted networks.
 - Both viewers offer Fit, native-size, and Fill scaling, a live received display

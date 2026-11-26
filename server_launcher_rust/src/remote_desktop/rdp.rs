@@ -5,7 +5,7 @@ use super::{
     framebuffer::Region,
     profile::{Audio, Clipboard, Quality, RdpColorProfile, RdpProfile, RdpSecurity, Resolution},
     trust::Verifier,
-    tunnel::{self, DesktopStream},
+    tunnel::{self, DesktopStream, InputSocket},
     vnc::{Connection, Input},
 };
 use crate::config::SshRemoteHost;
@@ -692,17 +692,20 @@ fn run(
 }
 
 struct GatewayStream {
-    stream: Mutex<ironrdp_mstsgu::GwClient>,
-    runtime: tokio::runtime::Runtime,
+    reader: Mutex<tokio::io::ReadHalf<ironrdp_mstsgu::GwClient>>,
+    output: Arc<GatewayOutput>,
+    runtime: Arc<tokio::runtime::Runtime>,
+    read_timeout_ms: AtomicU64,
 }
 
 impl Read for GatewayStream {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         use tokio::io::AsyncReadExt;
+        let timeout = Duration::from_millis(self.read_timeout_ms.load(Ordering::Relaxed));
         self.runtime.block_on(async {
             tokio::time::timeout(
-                CONNECT_TIMEOUT,
-                self.stream
+                timeout,
+                self.reader
                     .lock()
                     .map_err(|_| io::Error::other("RD Gateway stream lock poisoned"))?
                     .read(buffer),
@@ -715,13 +718,44 @@ impl Read for GatewayStream {
 
 impl Write for GatewayStream {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.output.write(buffer)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.output.flush()
+    }
+}
+
+impl DesktopStream for GatewayStream {
+    fn input_socket(&self) -> io::Result<Box<dyn InputSocket>> {
+        Ok(Box::new(GatewayInput {
+            output: Arc::clone(&self.output),
+        }))
+    }
+
+    fn set_read_timeout(&self, timeout: Duration) -> io::Result<()> {
+        self.read_timeout_ms.store(
+            timeout.as_millis().min(u64::MAX as u128) as u64,
+            Ordering::Relaxed,
+        );
+        Ok(())
+    }
+}
+
+struct GatewayOutput {
+    writer: Mutex<tokio::io::WriteHalf<ironrdp_mstsgu::GwClient>>,
+    runtime: Arc<tokio::runtime::Runtime>,
+}
+
+impl GatewayOutput {
+    fn write(&self, buffer: &[u8]) -> io::Result<usize> {
         use tokio::io::AsyncWriteExt;
         self.runtime.block_on(async {
             tokio::time::timeout(
                 CONNECT_TIMEOUT,
-                self.stream
+                self.writer
                     .lock()
-                    .map_err(|_| io::Error::other("RD Gateway stream lock poisoned"))?
+                    .map_err(|_| io::Error::other("RD Gateway writer lock poisoned"))?
                     .write(buffer),
             )
             .await
@@ -729,19 +763,53 @@ impl Write for GatewayStream {
         })
     }
 
-    fn flush(&mut self) -> io::Result<()> {
+    fn flush(&self) -> io::Result<()> {
         use tokio::io::AsyncWriteExt;
         self.runtime.block_on(async {
             tokio::time::timeout(
                 CONNECT_TIMEOUT,
-                self.stream
+                self.writer
                     .lock()
-                    .map_err(|_| io::Error::other("RD Gateway stream lock poisoned"))?
+                    .map_err(|_| io::Error::other("RD Gateway writer lock poisoned"))?
                     .flush(),
             )
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "RD Gateway flush timed out"))?
         })
+    }
+
+    fn shutdown(&self) {
+        use tokio::io::AsyncWriteExt;
+        let _ = self.runtime.block_on(async {
+            tokio::time::timeout(CONNECT_TIMEOUT, async {
+                self.writer
+                    .lock()
+                    .map_err(|_| io::Error::other("RD Gateway writer lock poisoned"))?
+                    .shutdown()
+                    .await
+            })
+            .await
+        });
+    }
+}
+
+struct GatewayInput {
+    output: Arc<GatewayOutput>,
+}
+
+impl Write for GatewayInput {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.output.write(buffer)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.output.flush()
+    }
+}
+
+impl InputSocket for GatewayInput {
+    fn disconnect(&self) {
+        self.output.shutdown();
     }
 }
 
@@ -783,10 +851,17 @@ fn open_gateway(
     let (stream, local_addr) = result
         .map_err(|_| error("The RD Gateway connection timed out."))?
         .map_err(|_| error("Could not connect to the RD Gateway. Check its address, certificate, and credentials."))?;
+    let runtime = Arc::new(runtime);
+    let (reader, writer) = tokio::io::split(stream);
     Ok((
         Box::new(GatewayStream {
-            stream: Mutex::new(stream),
+            reader: Mutex::new(reader),
+            output: Arc::new(GatewayOutput {
+                writer: Mutex::new(writer),
+                runtime: Arc::clone(&runtime),
+            }),
             runtime,
+            read_timeout_ms: AtomicU64::new(CONNECT_TIMEOUT.as_millis() as u64),
         }),
         local_addr,
     ))

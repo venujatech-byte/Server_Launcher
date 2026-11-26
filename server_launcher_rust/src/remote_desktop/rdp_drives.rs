@@ -1,14 +1,15 @@
 use super::profile::{DriveShare, RdpProfile};
-use ironrdp::{
-    rdpdr::{backend::RdpdrBackend, Rdpdr},
-};
+use ironrdp::rdpdr::{backend::RdpdrBackend, Rdpdr};
 use std::{io, path::Path};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use ironrdp::{
-    core::PduResult,
-    pdu::encode_err,
-    rdpdr::pdu::{efs::*, RdpdrPdu},
+    pdu::{encode_err, PduResult},
+    rdpdr::pdu::{
+        efs::*,
+        esc::{ScardCall, ScardIoCtlCode},
+        RdpdrPdu,
+    },
     svc::SvcMessage,
 };
 
@@ -292,7 +293,7 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn read_only_shares_allow_open_for_read_but_reject_mutation_rights() {
-        let request = |access, disposition, options| {
+        let request = |access: u32, disposition: u32, options: u32| {
             ServerDriveIoRequest::ServerCreateDriveRequest(DeviceCreateRequest {
                 device_io_request: DeviceIoRequest {
                     device_id: 1,

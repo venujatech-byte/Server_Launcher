@@ -151,6 +151,7 @@ pub(crate) struct VncProfile {
     pub encodings: Vec<Encoding>,
     pub color_depth: u8,
     pub view_only: bool,
+    pub show_remote_cursor: bool,
     pub disable_smooth_scrolling: bool,
     pub tcp_user_timeout_secs: u32,
     pub shared: bool,
@@ -176,6 +177,7 @@ impl Default for VncProfile {
             ],
             color_depth: 32,
             view_only: false,
+            show_remote_cursor: true,
             disable_smooth_scrolling: false,
             tcp_user_timeout_secs: 0,
             shared: true,
@@ -227,6 +229,7 @@ mod tests {
         assert_eq!(host.rdp.as_ref().unwrap().port, 3389);
         let vnc = host.vnc.as_ref().unwrap();
         assert_eq!(vnc.port, 5900);
+        assert!(vnc.show_remote_cursor);
         assert!(vnc.tunnel_via_ssh);
         assert!(!serde_json::to_string(&host)
             .unwrap()

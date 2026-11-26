@@ -407,13 +407,16 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
     {
         enabled_encodings.push(RAW);
     }
-    for encoding in [
-        RICH_CURSOR,
-        POINTER_POS[0],
-        POINTER_POS[1],
-        EXTENDED_DESKTOP_SIZE,
-        DESKTOP_SIZE,
-    ] {
+    let cursor_encodings: &[i32] = if profile.show_remote_cursor {
+        &[RICH_CURSOR, POINTER_POS[0], POINTER_POS[1]]
+    } else {
+        &[]
+    };
+    for encoding in cursor_encodings
+        .iter()
+        .copied()
+        .chain([EXTENDED_DESKTOP_SIZE, DESKTOP_SIZE])
+    {
         if !enabled_encodings.contains(&encoding) {
             enabled_encodings.push(encoding);
         }

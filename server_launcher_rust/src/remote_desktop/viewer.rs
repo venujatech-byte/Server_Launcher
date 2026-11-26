@@ -44,6 +44,10 @@ pub(crate) fn run(
         .and_then(|host| host.vnc.as_ref())
         .filter(|_| protocol == DesktopProtocol::Vnc)
         .map_or(Scaling::Fit, |profile| profile.scaling);
+    let show_vnc_cursor = profile
+        .and_then(|host| host.vnc.as_ref())
+        .filter(|_| protocol == DesktopProtocol::Vnc)
+        .is_none_or(|profile| profile.show_remote_cursor);
     let rdp_painting = profile
         .and_then(|host| host.rdp.as_ref())
         .filter(|_| protocol == DesktopProtocol::Rdp)
@@ -159,6 +163,7 @@ pub(crate) fn run(
                 texture: None,
                 vnc_cursor_texture: None,
                 vnc_cursor_revision: 0,
+                show_vnc_cursor,
                 scaling,
                 rdp_painting,
                 rdp_frame_painting,
@@ -235,6 +240,7 @@ struct Viewer {
     texture: Option<egui::TextureHandle>,
     vnc_cursor_texture: Option<egui::TextureHandle>,
     vnc_cursor_revision: u64,
+    show_vnc_cursor: bool,
     scaling: Scaling,
     rdp_painting: RdpPainting,
     rdp_frame_painting: RdpFramePainting,
@@ -611,14 +617,16 @@ impl eframe::App for Viewer {
                     None,
                 )
             };
-        if let Some((image, _, _, revision)) = &remote_cursor {
-            if self.vnc_cursor_revision != *revision {
-                self.vnc_cursor_revision = *revision;
-                self.vnc_cursor_texture = Some(ctx.load_texture(
-                    "remote-vnc-cursor",
-                    (**image).clone(),
-                    egui::TextureOptions::NEAREST,
-                ));
+        if self.show_vnc_cursor {
+            if let Some((image, _, _, revision)) = &remote_cursor {
+                if self.vnc_cursor_revision != *revision {
+                    self.vnc_cursor_revision = *revision;
+                    self.vnc_cursor_texture = Some(ctx.load_texture(
+                        "remote-vnc-cursor",
+                        (**image).clone(),
+                        egui::TextureOptions::NEAREST,
+                    ));
+                }
             }
         } else if self.protocol == DesktopProtocol::Vnc {
             self.vnc_cursor_texture = None;
@@ -1203,7 +1211,7 @@ impl eframe::App for Viewer {
                 );
                 screen
             };
-            if self.protocol == DesktopProtocol::Vnc {
+            if self.protocol == DesktopProtocol::Vnc && self.show_vnc_cursor {
                 if let (Some(texture), Some((_, hotspot, Some(position), _))) =
                     (&self.vnc_cursor_texture, &remote_cursor)
                 {

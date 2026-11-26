@@ -284,6 +284,7 @@ pub(crate) fn vnc(ui: &mut Ui, draft: &mut Option<VncProfile>, port_text: &mut S
         });
         color_depth(ui, &mut profile.color_depth);
         ui.checkbox(&mut profile.view_only, "View only");
+        ui.checkbox(&mut profile.show_remote_cursor, "Show remote cursor");
         ui.checkbox(&mut profile.disable_smooth_scrolling, "Disable smooth scrolling");
         ui.checkbox(&mut profile.shared, "Shared session");
         clipboard(ui, &mut profile.clipboard);

@@ -3237,6 +3237,8 @@ impl eframe::App for LauncherApp {
                                 egui::popup::PopupCloseBehavior::CloseOnClick,
                                 |ui| {
                                     use crate::remote_desktop::{credentials::DesktopProtocol, probe};
+                                    // Keep enough room for protocol, status, and configuration action at narrow window widths.
+                                    ui.set_min_width(270.0);
                                     ui.vertical(|ui| {
                                         ui.spacing_mut().item_spacing.y = 5.0;
                                         for protocol in DesktopProtocol::ALL {
@@ -3255,8 +3257,9 @@ impl eframe::App for LauncherApp {
 
                                             Frame::none()
                                                 .fill(p.bg_subtle)
+                                                .stroke(Stroke::new(1.0_f32, p.border))
                                                 .rounding(Rounding::same(8.0))
-                                                .inner_margin(egui::Margin::symmetric(5.0, 4.0))
+                                                .inner_margin(egui::Margin::symmetric(7.0, 5.0))
                                                 .show(ui, |ui| {
                                                     ui.horizontal(|ui| {
                                                         ui.spacing_mut().item_spacing.x = 6.0;
@@ -3283,13 +3286,13 @@ impl eframe::App for LauncherApp {
 
                                                         let settings = egui::Button::new(
                                                             RichText::new(crate::lucide::SETTINGS)
-                                                                .size(12.0)
-                                                                .color(p.text_secondary),
+                                                                .size(13.0)
+                                                                .color(p.info),
                                                         )
-                                                        .fill(p.bg_button)
-                                                        .stroke(Stroke::NONE)
+                                                        .fill(p.bg_card)
+                                                        .stroke(Stroke::new(1.0_f32, p.border))
                                                         .rounding(Rounding::same(6.0))
-                                                        .min_size(egui::vec2(28.0, 26.0));
+                                                        .min_size(egui::vec2(30.0, 28.0));
                                                         if ui.add(settings)
                                                             .hover_tip(format!("Edit {label} connection settings"))
                                                             .clicked()

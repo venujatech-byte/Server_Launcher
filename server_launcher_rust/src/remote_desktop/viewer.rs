@@ -120,6 +120,8 @@ pub(crate) fn run(
                 screenshot_clipboard: None,
                 screenshot_queued: false,
                 screenshot: None,
+                recording: None,
+                recording_result: None,
                 screenshot_result: None,
                 show_fps: false,
                 fps_sample: None,
@@ -178,6 +180,8 @@ struct Viewer {
     copy_screenshot: bool,
     screenshot_clipboard: Option<arboard::Clipboard>,
     screenshot_queued: bool,
+    recording: Option<super::recording::Recording>,
+    recording_result: Option<Result<PathBuf, String>>,
     screenshot: Option<mpsc::Receiver<super::screenshot::SaveResult>>,
     screenshot_result: Option<Result<PathBuf, String>>,
     test_pattern: bool,
@@ -492,6 +496,19 @@ impl eframe::App for Viewer {
             self.toolbar_until = Some(now + Duration::from_secs(2));
         }
         let overlay_until = self.toolbar_until.filter(|until| *until > now);
+        if let Some(recorder) = &self.recording {
+            let result = match recorder.result.try_recv() {
+                Ok(result) => Some(result),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    Some(Err("Recording worker stopped.".into()))
+                }
+                Err(mpsc::TryRecvError::Empty) => None,
+            };
+            if let Some(result) = result {
+                self.recording = None;
+                self.recording_result = Some(result);
+            }
+        }
         let toolbar = |ui: &mut egui::Ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(if self.test_pattern {
@@ -673,6 +690,34 @@ impl eframe::App for Viewer {
                 {
                     self.take_screenshot(ctx);
                 }
+                if let Some(recorder) = &self.recording {
+                    let pause = if recorder.paused() {
+                        "Resume recording"
+                    } else {
+                        "Pause recording"
+                    };
+                    if ui.button(pause).clicked() {
+                        recorder.toggle_pause();
+                        ctx.request_repaint();
+                    }
+                    if ui.button("Stop recording").clicked() {
+                        recorder.stop();
+                    }
+                } else if ui
+                    .add_enabled(
+                        connected && self.texture.is_some(),
+                        egui::Button::new("Record"),
+                    )
+                    .clicked()
+                {
+                    if let Some(connection) = &self.connection {
+                        self.recording_result = None;
+                        self.recording = Some(super::recording::Recording::start(
+                            connection.clone(),
+                            ctx.clone(),
+                        ));
+                    }
+                }
                 ui.checkbox(&mut self.copy_screenshot, "Copy screenshot");
                 ui.add_enabled_ui(connected && !self.view_only, |ui| {
                     ui.menu_button("Send keys", |ui| {
@@ -804,6 +849,35 @@ impl eframe::App for Viewer {
                                 }
                             }
                         });
+                    });
+                });
+        }
+        if self.recording.is_some() || self.recording_result.is_some() {
+            egui::Area::new(egui::Id::new("recording_indicator"))
+                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 70.0))
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        if let Some(recorder) = &self.recording {
+                            let status = if recorder.paused() {
+                                "Recording paused"
+                            } else {
+                                "● REC"
+                            };
+                            ui.colored_label(egui::Color32::LIGHT_RED, status);
+                        } else if let Some(result) = &self.recording_result {
+                            match result {
+                                Ok(path) => {
+                                    ui.label(format!("Recording saved to {}", path.display()));
+                                }
+                                Err(error) => {
+                                    ui.label(error);
+                                }
+                            }
+                            if ui.button("Dismiss").clicked() {
+                                self.recording_result = None;
+                            }
+                        }
                     });
                 });
         }

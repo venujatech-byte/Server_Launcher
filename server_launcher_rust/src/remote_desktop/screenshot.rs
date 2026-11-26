@@ -44,7 +44,7 @@ pub(crate) fn save(frame: egui::ColorImage, host: &str, protocol: &str) -> Resul
     save_in(frame, &folder, &stem).map_err(|error| format!("Could not save screenshot: {error}"))
 }
 
-fn pictures() -> Result<PathBuf, String> {
+pub(super) fn pictures() -> Result<PathBuf, String> {
     #[cfg(target_os = "linux")]
     if let Ok(output) = Command::new("xdg-user-dir").arg("PICTURES").output() {
         if output.status.success() {

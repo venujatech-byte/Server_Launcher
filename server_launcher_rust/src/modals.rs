@@ -1548,6 +1548,7 @@ pub struct SshHostModalState {
     pending_test: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     pub use_agent: bool,
     pub strict_host_key: bool,
+    ssh_credential_ref: Option<String>,
     rdp: Option<crate::remote_desktop::profile::RdpProfile>,
     vnc: Option<crate::remote_desktop::profile::VncProfile>,
 }
@@ -1567,7 +1568,7 @@ impl SshHostModalState {
             user: self.user.clone(),
             key_path: self.key_path.clone(),
             password: self.password.clone(),
-            credential_ref: None,
+            credential_ref: self.ssh_credential_ref.clone(),
             remote_cwd: self.remote_cwd.clone(),
             use_agent: self.use_agent,
             strict_host_key: self.strict_host_key,
@@ -1624,6 +1625,7 @@ impl SshHostModalState {
         self.pending_test = None;
         self.use_agent = true;
         self.strict_host_key = false;
+        self.ssh_credential_ref = None;
         self.rdp = None;
         self.vnc = None;
         self.vnc_port_text = "5900".into();
@@ -1663,6 +1665,7 @@ impl SshHostModalState {
         self.pending_test = None;
         self.use_agent = h.use_agent;
         self.strict_host_key = h.strict_host_key;
+        self.ssh_credential_ref = h.credential_ref.clone();
         self.rdp = h.rdp.clone();
         self.vnc = h.vnc.clone();
         self.vnc_port_text = h.vnc.as_ref().map_or(5900, |profile| profile.port).to_string();
@@ -1932,16 +1935,22 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                             );
                             if let Some(profile) = state.rdp.as_mut().filter(|profile| profile.enabled) {
                                 state.rdp_password.show(ui, &mut profile.credential_ref);
-                                let direct = !profile.tunnel_via_ssh && profile.gateway.trim().is_empty();
-                                let request = (direct && !state.host.trim().is_empty() && profile.port != 0)
-                                    .then(|| crate::remote_desktop::probe::ProbeRequest {
+                                let host_is_valid = !state.host.trim().is_empty() && profile.port != 0;
+                                let request = host_is_valid.then(|| {
+                                    let mut ssh_host = state.remote_detection_host();
+                                    ssh_host.password.clear();
+                                    ssh_host.credential_ref.clone_from(&state.ssh_credential_ref);
+                                    crate::remote_desktop::probe::ProbeRequest {
                                         host: state.host.trim().trim_matches(['[', ']']).into(),
                                         port: profile.port,
                                         protocol: crate::remote_desktop::credentials::DesktopProtocol::Rdp,
                                         rdp_security: profile.security,
-                                    });
-                                let hint = if direct { "Enter the host and port first." } else { "Connection tests through a tunnel or gateway are not available yet." };
-                                state.rdp_probe.show(ui, request, hint, std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))));
+                                        ssh_host: Some(ssh_host),
+                                        tunnel_via_ssh: profile.tunnel_via_ssh,
+                                        gateway: (!profile.gateway.trim().is_empty()).then(|| profile.gateway.clone()),
+                                    }
+                                });
+                                state.rdp_probe.show(ui, request, "Enter the host and port first.", std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))));
                             }
                         }
                         RemotePcTab::Vnc => {
@@ -1955,15 +1964,21 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                                 state.vnc_password.show(ui, &mut profile.credential_ref);
                                 ui.label("Classic VNC uses only the first eight bytes of the password.");
                                 let request = crate::remote_desktop::editor::vnc_port(&state.vnc_port_text, &state.host)
-                                    .filter(|_| !profile.tunnel_via_ssh && !state.host.trim().is_empty())
-                                    .map(|port| crate::remote_desktop::probe::ProbeRequest {
-                                        host: state.host.trim().trim_matches(['[', ']']).into(),
-                                        port,
-                                        protocol: crate::remote_desktop::credentials::DesktopProtocol::Vnc,
-                                        rdp_security: Default::default(),
+                                    .filter(|_| !state.host.trim().is_empty())
+                                    .map(|port| {
+                                        let mut ssh_host = state.remote_detection_host();
+                                        ssh_host.password.clear();
+                                        crate::remote_desktop::probe::ProbeRequest {
+                                            host: state.host.trim().trim_matches(['[', ']']).into(),
+                                            port,
+                                            protocol: crate::remote_desktop::credentials::DesktopProtocol::Vnc,
+                                            rdp_security: Default::default(),
+                                            ssh_host: Some(ssh_host),
+                                            tunnel_via_ssh: profile.tunnel_via_ssh,
+                                            gateway: None,
+                                        }
                                     });
-                                let hint = if profile.tunnel_via_ssh { "Connection tests through an SSH tunnel are not available yet." } else { "Enter the host and a valid port or display first." };
-                                state.vnc_probe.show(ui, request, hint, std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))));
+                                state.vnc_probe.show(ui, request, "Enter the host and a valid port or display first.", std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))));
                             }
                         }
                     }

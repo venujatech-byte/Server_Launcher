@@ -70,11 +70,14 @@ network or the host's configured SSH tunnel.
    the configured size cap. Confirm received content is not echoed back.
 8. Test NLA-only and TLS-only explicitly against matching servers. Auto must
    accept either encrypted mode and must reject legacy unencrypted RDP.
-9. Connect through an RD Gateway whose certificate is trusted by the client.
+9. Use Test Connection through direct, SSH-tunneled, and gateway routes. The
+   tunnel check must reach the RDP security negotiation over SSH. Connect
+   through an RD Gateway whose certificate is trusted by the client.
    Confirm the RDP credentials are accepted for gateway sign-in, the gateway
    forwards to the configured RDP host and port, and an untrusted gateway
    certificate blocks the connection. Confirm the editor rejects combining
-   RD Gateway with Tunnel via SSH.
+   RD Gateway with Tunnel via SSH. The probe checks the RDP handshake after
+   gateway sign-in but does not log in to the desktop.
 10. Start with the server unavailable, then make it available during the retry
    window and confirm the initial connection is retried. Confirm an
    auto-reconnecting session makes at most five attempts after a failure, then
@@ -108,8 +111,9 @@ Platform keyboard capture remains unsupported.
    that view-only mode sends no input and focus loss releases held keys.
 5. Test clipboard text in both directions, including non-Latin-1 content and
    data above the limit. Classic RFB does not support image clipboard here.
-6. Test direct public-address confirmation and SSH tunneling. Verify closing or
-   crashing the viewer cleans up the tunnel process.
+6. Test direct public-address confirmation and SSH tunneling. Use Test
+   Connection through the tunnel and confirm the RFB banner/security offer is
+   reported. Verify closing or crashing the viewer cleans up the tunnel process.
 7. Enable Close on connection failure and verify an exhausted retry sequence
    closes the viewer. With the option disabled, the final error stays visible.
 8. Request a supported and unsupported remote resolution; confirm rejection

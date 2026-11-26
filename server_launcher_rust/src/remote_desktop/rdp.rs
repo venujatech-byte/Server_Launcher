@@ -813,7 +813,7 @@ impl InputSocket for GatewayInput {
     }
 }
 
-fn open_gateway(
+pub(crate) fn open_gateway(
     endpoint: &str,
     server: &str,
     server_port: u16,
@@ -821,6 +821,7 @@ fn open_gateway(
     domain: &str,
     password: &str,
 ) -> io::Result<(Box<dyn DesktopStream>, SocketAddr)> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let endpoint = gateway_endpoint(endpoint)?;
     let username = if domain.trim().is_empty() {
         username.to_owned()

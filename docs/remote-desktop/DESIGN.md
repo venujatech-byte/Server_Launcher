@@ -107,11 +107,13 @@ format; a 16-bit gradient rectangle is rejected with a clear error.
 The host editor checks TCP reachability and the initial
 [RDP security negotiation](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/b2975bdc-6d56-49ee-9c57-f2ff3a0b6817)
 or [RFB version and security offer](https://www.rfc-editor.org/rfc/rfc6143.html).
-The probe stops before authentication and does not load passwords. Its success
-status means that the protocol endpoint responded. VNC checks run on the direct
-route only when explicitly configured. Tunnel and gateway checks require their
-respective transport implementations. The system DNS resolver runs on the
-probe worker and controls resolution time independently of the socket deadline.
+Direct and SSH-tunneled probes stop before desktop authentication and do not
+load desktop passwords. Gateway probes use the saved RDP credential only for
+gateway sign-in, then stop after the RDP security handshake; they do not log in
+to the desktop. A successful check means the protocol endpoint responded.
+Checks use the configured direct, SSH tunnel, or RD Gateway route. The system
+DNS resolver runs on direct probes; SSH and gateway routes resolve through their
+configured transport.
 
 Opening either protocol tab also starts a bounded, read-only SSH scan for
 listeners on TCP 3389 and 5900–5910 and common Linux RDP/VNC server processes.

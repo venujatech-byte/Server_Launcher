@@ -151,9 +151,69 @@ pub(crate) struct ProbeRequest {
     pub port: u16,
     pub protocol: DesktopProtocol,
     pub rdp_security: RdpSecurity,
+    pub ssh_host: Option<crate::config::SshRemoteHost>,
+    pub tunnel_via_ssh: bool,
+    pub gateway: Option<String>,
 }
 
 pub(crate) fn run(request: &ProbeRequest, timeout: Duration) -> Result<String, String> {
+    if request.tunnel_via_ssh
+        && request
+            .gateway
+            .as_deref()
+            .is_some_and(|gateway| !gateway.trim().is_empty())
+    {
+        return Err("RD Gateway and Tunnel via SSH cannot be used together.".into());
+    }
+
+    if request.tunnel_via_ssh {
+        let ssh_host = request
+            .ssh_host
+            .as_ref()
+            .ok_or_else(|| "SSH tunnel: host settings are unavailable.".to_owned())?;
+        let mut stream = super::tunnel::open(ssh_host, request.port, timeout)
+            .map_err(|error| format!("SSH tunnel: {error}"))?;
+        return check_handshake(request, &mut *stream)
+            .map(|info| format!("{info} through the SSH tunnel. Authentication was not tested."));
+    }
+
+    if let Some(gateway) = request
+        .gateway
+        .as_deref()
+        .filter(|gateway| !gateway.trim().is_empty())
+    {
+        if request.protocol != DesktopProtocol::Rdp {
+            return Err("RD Gateway can only be used for RDP.".into());
+        }
+        let host = request
+            .ssh_host
+            .as_ref()
+            .ok_or_else(|| "RD Gateway: host settings are unavailable.".to_owned())?;
+        let profile = host
+            .rdp
+            .as_ref()
+            .ok_or_else(|| "RD Gateway: save the RDP profile before testing.".to_owned())?;
+        let password = super::credentials::load(host, DesktopProtocol::Rdp)
+            .map_err(|error| format!("RD Gateway credentials: {error}"))?
+            .ok_or_else(|| "RD Gateway: save the RDP password before testing.".to_owned())?;
+        let username = if profile.same_username_as_ssh {
+            &host.user
+        } else {
+            &profile.username
+        };
+        let (mut stream, _) = super::rdp::open_gateway(
+            gateway,
+            &request.host,
+            request.port,
+            username,
+            &profile.domain,
+            &password,
+        )
+        .map_err(|error| format!("RD Gateway: {error}"))?;
+        return check_handshake(request, &mut *stream)
+            .map(|info| format!("{info} through RD Gateway. RDP authentication was not tested."));
+    }
+
     let deadline = Instant::now() + timeout;
     let addresses = (request.host.as_str(), request.port)
         .to_socket_addrs()
@@ -178,12 +238,24 @@ pub(crate) fn run(request: &ProbeRequest, timeout: Duration) -> Result<String, S
     let socket = connection
         .ok_or_else(|| format!("TCP: could not connect to port {}. {hint}", request.port))?;
     let mut stream = TimedSocket { socket, deadline };
+    check_handshake(request, &mut stream)
+        .map(|info| format!("{info}. Authentication was not tested."))
+}
+
+fn check_handshake(
+    request: &ProbeRequest,
+    stream: &mut (impl Read + Write),
+) -> Result<String, String> {
+    let hint = match request.protocol {
+        DesktopProtocol::Rdp => "Check that Remote Desktop or xrdp is listening.",
+        DesktopProtocol::Vnc => "Check that your VNC server is listening on this port.",
+    };
     let info = match request.protocol {
-        DesktopProtocol::Rdp => rdp(&mut stream, request.rdp_security),
-        DesktopProtocol::Vnc => vnc(&mut stream),
+        DesktopProtocol::Rdp => rdp(stream, request.rdp_security),
+        DesktopProtocol::Vnc => vnc(stream),
     }
     .map_err(|error| format!("Handshake: {error}. {hint}"))?;
-    Ok(format!("{info}. Authentication was not tested."))
+    Ok(info)
 }
 
 struct TimedSocket {
@@ -311,36 +383,44 @@ pub(crate) fn menu_status(
     host: &crate::config::SshRemoteHost,
     protocol: DesktopProtocol,
 ) -> (&'static str, Option<String>) {
-    let (port, rdp_security, direct) = match protocol {
+    let (port, rdp_security, tunnel_via_ssh, gateway) = match protocol {
         DesktopProtocol::Rdp => match host.rdp.as_ref().filter(|profile| profile.enabled) {
             Some(profile) => (
                 profile.port,
                 profile.security,
-                !profile.tunnel_via_ssh && profile.gateway.trim().is_empty(),
+                profile.tunnel_via_ssh,
+                (!profile.gateway.trim().is_empty()).then(|| profile.gateway.clone()),
             ),
             None => return ("○ Not configured", None),
         },
         DesktopProtocol::Vnc => match host.vnc.as_ref().filter(|profile| profile.enabled) {
-            Some(profile) => (profile.port, RdpSecurity::Auto, !profile.tunnel_via_ssh),
+            Some(profile) => (
+                profile.port,
+                RdpSecurity::Auto,
+                profile.tunnel_via_ssh,
+                None,
+            ),
             None => return ("○ Not configured", None),
         },
     };
+    let mut ssh_host = host.clone();
+    ssh_host.password.clear();
     let request = ProbeRequest {
         host: host.host.trim().trim_matches(['[', ']']).into(),
         port,
         protocol,
         rdp_security,
+        ssh_host: Some(ssh_host),
+        tunnel_via_ssh,
+        gateway,
     };
-    if direct {
-        let last = ctx.data_mut(|data| {
-            data.get_temp::<(ProbeRequest, ProbeResult)>(probe_result_id(protocol))
-        });
-        if let Some((_, result)) = last.filter(|(tested, _)| tested == &request) {
-            return match result {
-                Ok(info) => ("● Reachable", Some(info)),
-                Err(error) => ("◐ Unreachable", Some(error)),
-            };
-        }
+    let last = ctx
+        .data_mut(|data| data.get_temp::<(ProbeRequest, ProbeResult)>(probe_result_id(protocol)));
+    if let Some((_, result)) = last.filter(|(tested, _)| tested == &request) {
+        return match result {
+            Ok(info) => ("● Reachable", Some(info)),
+            Err(error) => ("◐ Unreachable", Some(error)),
+        };
     }
     ("○ Not tested", None)
 }
@@ -430,6 +510,38 @@ impl ProbeControl {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn requires_transport_settings_for_tunneled_probes() {
+        let request = ProbeRequest {
+            host: "127.0.0.1".into(),
+            port: 5900,
+            protocol: DesktopProtocol::Vnc,
+            rdp_security: RdpSecurity::Auto,
+            ssh_host: None,
+            tunnel_via_ssh: true,
+            gateway: None,
+        };
+        assert!(run(&request, Duration::from_secs(1))
+            .unwrap_err()
+            .contains("host settings are unavailable"));
+    }
+
+    #[test]
+    fn rejects_gateway_route_for_vnc_before_connecting() {
+        let request = ProbeRequest {
+            host: "127.0.0.1".into(),
+            port: 5900,
+            protocol: DesktopProtocol::Vnc,
+            rdp_security: RdpSecurity::Auto,
+            ssh_host: None,
+            tunnel_via_ssh: false,
+            gateway: Some("gateway.example.test".into()),
+        };
+        assert!(run(&request, Duration::from_secs(1))
+            .unwrap_err()
+            .contains("only be used for RDP"));
+    }
 
     #[test]
     fn server_detection_reports_only_rdp_vnc_ports_and_processes() {

@@ -705,7 +705,7 @@ impl LauncherApp {
                                     });
                             }
                             SettingsTab::RemoteDesktop => {
-                                let previous = self.remote_desktop_settings;
+                                let previous = self.remote_desktop_settings.clone();
                                 let saved_pins = crate::remote_desktop::trust::saved_pins(
                                     &self.config_path,
                                     &self.ssh_hosts,
@@ -724,6 +724,25 @@ impl LauncherApp {
                                         ui.add_space(8.0);
                                         ui.checkbox(&mut self.remote_desktop_settings.warn_unencrypted_vnc, "Warn before direct VNC connections to public or unknown hosts");
                                         ui.label(RichText::new("Direct classic VNC does not encrypt screen updates or input. The warning offers an SSH tunnel before connecting.").size(10.5).color(palette.text_muted));
+                                        ui.add_space(8.0);
+                                        ui.label(RichText::new("Screenshot folder").size(12.0).strong().color(palette.text_primary));
+                                        ui.horizontal(|ui| {
+                                            if ui.button("Choose folder…").clicked() {
+                                                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                                                    self.remote_desktop_settings.screenshot_folder = Some(path);
+                                                }
+                                            }
+                                            if self.remote_desktop_settings.screenshot_folder.is_some()
+                                                && ui.button("Use default").clicked()
+                                            {
+                                                self.remote_desktop_settings.screenshot_folder = None;
+                                            }
+                                        });
+                                        ui.label(
+                                            RichText::new(self.remote_desktop_settings.screenshot_folder.as_ref()
+                                                .map_or_else(|| "Default: Pictures/ServerLauncher".to_owned(), |path| path.display().to_string()))
+                                                .size(10.5).monospace().color(palette.text_muted),
+                                        );
                                         ui.add_space(12.0);
                                         ui.label(RichText::new("Trusted RDP certificates").size(13.0).strong().color(palette.text_primary));
                                         match &saved_pins {

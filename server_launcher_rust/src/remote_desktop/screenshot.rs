@@ -13,9 +13,10 @@ pub(crate) fn save_with_clipboard(
     host: &str,
     protocol: &str,
     copy: bool,
+    folder: Option<PathBuf>,
 ) -> SaveResult {
     let clipboard = copy.then(|| copy_frame(&frame));
-    save(frame, host, protocol).map(|path| (path, clipboard))
+    save(frame, host, protocol, folder).map(|path| (path, clipboard))
 }
 
 fn copy_frame(frame: &egui::ColorImage) -> Result<arboard::Clipboard, arboard::Error> {
@@ -33,8 +34,16 @@ fn copy_frame(frame: &egui::ColorImage) -> Result<arboard::Clipboard, arboard::E
     Ok(clipboard)
 }
 
-pub(crate) fn save(frame: egui::ColorImage, host: &str, protocol: &str) -> Result<PathBuf, String> {
-    let folder = pictures()?.join("ServerLauncher");
+pub(crate) fn save(
+    frame: egui::ColorImage,
+    host: &str,
+    protocol: &str,
+    folder: Option<PathBuf>,
+) -> Result<PathBuf, String> {
+    let folder = match folder {
+        Some(folder) => folder,
+        None => pictures()?.join("ServerLauncher"),
+    };
     let time = chrono::Local::now().format("%Y%m%d-%H%M%S");
     let stem = format!(
         "{}_{}_{time}",
@@ -157,5 +166,24 @@ mod tests {
         let png = image::open(first).unwrap().to_rgb8();
         assert_eq!(png.dimensions(), (2, 1));
         assert_eq!(png.as_raw(), &[255, 0, 0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn uses_the_selected_screenshot_folder() {
+        let folder = tempfile::tempdir().unwrap();
+        let frame = egui::ColorImage {
+            size: [1, 1],
+            pixels: vec![egui::Color32::WHITE],
+        };
+        let (path, _) = save_with_clipboard(
+            frame,
+            "test-host",
+            "RDP",
+            false,
+            Some(folder.path().to_owned()),
+        )
+        .unwrap();
+        assert_eq!(path.parent(), Some(folder.path()));
+        assert!(path.is_file());
     }
 }

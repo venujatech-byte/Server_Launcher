@@ -25,6 +25,7 @@ pub(crate) fn run(
 ) -> eframe::Result<()> {
     let config = ConfigFile::load_from_file(path);
     let show_fps = config.remote_desktop.show_live_fps;
+    let screenshot_folder = config.remote_desktop.screenshot_folder.clone();
     let warn_unencrypted_vnc = config.remote_desktop.warn_unencrypted_vnc;
     let profile = config.ssh_hosts.iter().find(|host| host.id == host_id);
     let name = profile.map_or("Remote Desktop", |host| host.name.as_str());
@@ -115,6 +116,7 @@ pub(crate) fn run(
                 upload: None,
                 upload_result: None,
                 config_path,
+                screenshot_folder,
                 texture: None,
                 scaling,
                 fullscreen: false,
@@ -179,6 +181,7 @@ struct Viewer {
     upload: Option<crate::app::DesktopUpload>,
     upload_result: Option<Result<String, String>>,
     config_path: PathBuf,
+    screenshot_folder: Option<PathBuf>,
     texture: Option<egui::TextureHandle>,
     scaling: Scaling,
     fullscreen: bool,
@@ -228,9 +231,10 @@ impl Viewer {
         let protocol = self.protocol.label();
         let ctx = ctx.clone();
         let copy = self.copy_screenshot;
+        let folder = self.screenshot_folder.clone();
         std::thread::spawn(move || {
             let _ = sender.send(super::screenshot::save_with_clipboard(
-                frame, &host, protocol, copy,
+                frame, &host, protocol, copy, folder,
             ));
             ctx.request_repaint();
         });

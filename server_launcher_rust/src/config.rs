@@ -199,11 +199,13 @@ impl Default for SshIdleSettings {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RemoteDesktopSettings {
     pub show_live_fps: bool,
     pub warn_unencrypted_vnc: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub screenshot_folder: Option<PathBuf>,
 }
 
 impl Default for RemoteDesktopSettings {
@@ -211,6 +213,7 @@ impl Default for RemoteDesktopSettings {
         Self {
             show_live_fps: false,
             warn_unencrypted_vnc: true,
+            screenshot_folder: None,
         }
     }
 }
@@ -509,6 +512,7 @@ mod tests {
         let config: ConfigFile = serde_json::from_str(r#"{"servers":[]}"#).unwrap();
         assert!(!config.remote_desktop.show_live_fps);
         assert!(config.remote_desktop.warn_unencrypted_vnc);
+        assert!(config.remote_desktop.screenshot_folder.is_none());
     }
 
     #[test]

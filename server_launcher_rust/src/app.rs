@@ -1431,7 +1431,7 @@ impl LauncherApp {
             journal_refresh_interval: Some(self.journal_refresh_interval),
             ssh_idle: self.ssh_idle,
             ssh_probe_timeouts: self.ssh_probe_timeouts,
-            remote_desktop: self.remote_desktop_settings,
+            remote_desktop: self.remote_desktop_settings.clone(),
         }
     }
 

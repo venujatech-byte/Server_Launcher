@@ -3237,8 +3237,8 @@ impl eframe::App for LauncherApp {
                                 egui::popup::PopupCloseBehavior::CloseOnClick,
                                 |ui| {
                                     use crate::remote_desktop::{credentials::DesktopProtocol, probe};
-                                    // Keep enough room for protocol, status, and configuration action at narrow window widths.
-                                    ui.set_min_width(270.0);
+                                    // Reserve a stable width so the protocol action, status, and settings gear never wrap.
+                                    ui.set_min_width(310.0);
                                     ui.vertical(|ui| {
                                         ui.spacing_mut().item_spacing.y = 5.0;
                                         for protocol in DesktopProtocol::ALL {
@@ -3258,25 +3258,27 @@ impl eframe::App for LauncherApp {
                                             Frame::none()
                                                 .fill(p.bg_subtle)
                                                 .stroke(Stroke::new(1.0_f32, p.border))
-                                                .rounding(Rounding::same(8.0))
-                                                .inner_margin(egui::Margin::symmetric(7.0, 5.0))
+                                                .rounding(Rounding::same(9.0))
+                                                .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                                                 .show(ui, |ui| {
                                                     ui.horizontal(|ui| {
-                                                        ui.spacing_mut().item_spacing.x = 6.0;
+                                                        ui.spacing_mut().item_spacing.x = 7.0;
                                                         let action = egui::Button::new(
                                                             RichText::new(format!("{}  {label}", crate::lucide::MONITOR))
-                                                                .size(11.5).strong().color(p.text_primary),
+                                                                .size(11.5)
+                                                                .strong()
+                                                                .color(p.text_primary),
                                                         )
                                                         .fill(p.bg_button)
                                                         .stroke(Stroke::NONE)
-                                                        .rounding(Rounding::same(6.0))
-                                                        .min_size(egui::vec2(92.0, 26.0));
+                                                        .rounding(Rounding::same(7.0))
+                                                        .min_size(egui::vec2(96.0, 30.0));
                                                         let connect = ui.add(action).hover_tip(action_hint).clicked();
 
                                                         let badge = Frame::none()
                                                             .fill(fill)
                                                             .rounding(Rounding::same(999.0))
-                                                            .inner_margin(egui::Margin::symmetric(7.0, 4.0))
+                                                            .inner_margin(egui::Margin::symmetric(8.0, 5.0))
                                                             .show(ui, |ui| {
                                                                 ui.label(RichText::new(status).size(10.0).color(color));
                                                             });
@@ -3284,19 +3286,21 @@ impl eframe::App for LauncherApp {
                                                             badge.response.hover_tip(detail);
                                                         }
 
+                                                        // A labeled tooltip and high-contrast surface keep profile editing discoverable.
                                                         let settings = egui::Button::new(
                                                             RichText::new(crate::lucide::SETTINGS)
-                                                                .size(13.0)
-                                                                .color(p.info),
+                                                                .size(14.0)
+                                                                .color(p.text_secondary),
                                                         )
                                                         .fill(p.bg_card)
                                                         .stroke(Stroke::new(1.0_f32, p.border))
-                                                        .rounding(Rounding::same(6.0))
-                                                        .min_size(egui::vec2(30.0, 28.0));
-                                                        if ui.add(settings)
-                                                            .hover_tip(format!("Edit {label} connection settings"))
-                                                            .clicked()
-                                                        {
+                                                        .rounding(Rounding::same(7.0))
+                                                        .min_size(egui::vec2(32.0, 30.0));
+                                                        let edit = ui
+                                                            .add(settings)
+                                                            .hover_tip(format!("Edit {label} settings"))
+                                                            .clicked();
+                                                        if edit {
                                                             self.ssh_host_modal.open_desktop(host, protocol);
                                                             ui.memory_mut(|memory| memory.close_popup());
                                                         } else if connect {

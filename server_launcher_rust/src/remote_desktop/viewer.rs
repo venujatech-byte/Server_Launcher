@@ -114,6 +114,8 @@ pub(crate) fn run(
                 host_name,
                 protocol,
                 clipboard_notice: None,
+                copy_screenshot: false,
+                screenshot_clipboard: None,
                 screenshot: None,
                 screenshot_result: None,
                 show_fps: false,
@@ -168,7 +170,9 @@ struct Viewer {
     host_name: String,
     protocol: DesktopProtocol,
     clipboard_notice: Option<(Instant, &'static str)>,
-    screenshot: Option<mpsc::Receiver<Result<PathBuf, String>>>,
+    copy_screenshot: bool,
+    screenshot_clipboard: Option<arboard::Clipboard>,
+    screenshot: Option<mpsc::Receiver<super::screenshot::SaveResult>>,
     screenshot_result: Option<Result<PathBuf, String>>,
     test_pattern: bool,
     show_fps: bool,
@@ -179,7 +183,11 @@ struct Viewer {
 impl Viewer {
     fn take_screenshot(&mut self, ctx: &egui::Context) {
         let frame = if let Some(connection) = &self.connection {
-            connection.lock().unwrap().framebuffer.snapshot()
+            let connection = connection.lock().unwrap();
+            if connection.receiving_frame {
+                return;
+            }
+            connection.framebuffer.snapshot()
         } else {
             self.framebuffer.snapshot()
         };
@@ -190,8 +198,11 @@ impl Viewer {
         let host = self.host_name.clone();
         let protocol = self.protocol.label();
         let ctx = ctx.clone();
+        let copy = self.copy_screenshot;
         std::thread::spawn(move || {
-            let _ = sender.send(super::screenshot::save(frame, &host, protocol));
+            let _ = sender.send(super::screenshot::save_with_clipboard(
+                frame, &host, protocol, copy,
+            ));
             ctx.request_repaint();
         });
     }
@@ -207,7 +218,21 @@ impl Viewer {
             };
             if let Some(result) = result {
                 self.screenshot = None;
-                self.screenshot_result = Some(result);
+                self.screenshot_result = Some(result.map(|(path, clipboard)| {
+                    if let Some(result) = clipboard {
+                        match result {
+                            Ok(clipboard) => {
+                                self.screenshot_clipboard = Some(clipboard);
+                                self.clipboard_notice = Some((Instant::now(), "Screenshot copied"));
+                            }
+                            Err(_) => {
+                                self.clipboard_notice =
+                                    Some((Instant::now(), "Screenshot clipboard unavailable"));
+                            }
+                        }
+                    }
+                    path
+                }));
             }
         }
         let Some(result) = &self.screenshot_result else {
@@ -616,6 +641,7 @@ impl eframe::App for Viewer {
                 {
                     self.take_screenshot(ctx);
                 }
+                ui.checkbox(&mut self.copy_screenshot, "Copy screenshot");
                 ui.add_enabled_ui(connected && !self.view_only, |ui| {
                     ui.menu_button("Send keys", |ui| {
                         let shortcuts: &[(&str, &[u32])] = &[
@@ -683,9 +709,9 @@ impl eframe::App for Viewer {
         }
         if let Some((shown, label)) = self.clipboard_notice {
             let remaining = Duration::from_secs(2).saturating_sub(shown.elapsed());
-            if connected && !remaining.is_zero() {
+            if !remaining.is_zero() {
                 egui::Area::new(egui::Id::new("clipboard_activity"))
-                    .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-12.0, -12.0))
+                    .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 48.0))
                     .order(egui::Order::Foreground)
                     .interactable(false)
                     .show(ctx, |ui| {

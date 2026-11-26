@@ -22,6 +22,7 @@ sysinfo = { version = "0.34", features = ["multithread"] }
 chrono = "0.4"
 rfd = "0.15"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+arboard = { version = "3.6", default-features = false, features = ["image-data"] }
 tauri = "2"
 zeroize = "1.9.0"
 des = { version = "0.8.1", features = ["zeroize"] }

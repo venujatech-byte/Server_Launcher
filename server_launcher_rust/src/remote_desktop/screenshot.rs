@@ -5,6 +5,34 @@ use std::{
     process::{Command, Stdio},
 };
 
+pub(crate) type SaveResult =
+    Result<(PathBuf, Option<Result<arboard::Clipboard, arboard::Error>>), String>;
+
+pub(crate) fn save_with_clipboard(
+    frame: egui::ColorImage,
+    host: &str,
+    protocol: &str,
+    copy: bool,
+) -> SaveResult {
+    let clipboard = copy.then(|| copy_frame(&frame));
+    save(frame, host, protocol).map(|path| (path, clipboard))
+}
+
+fn copy_frame(frame: &egui::ColorImage) -> Result<arboard::Clipboard, arboard::Error> {
+    let mut clipboard = arboard::Clipboard::new()?;
+    clipboard.set_image(arboard::ImageData {
+        width: frame.size[0],
+        height: frame.size[1],
+        bytes: frame
+            .pixels
+            .iter()
+            .flat_map(|pixel| pixel.to_array())
+            .collect::<Vec<_>>()
+            .into(),
+    })?;
+    Ok(clipboard)
+}
+
 pub(crate) fn save(frame: egui::ColorImage, host: &str, protocol: &str) -> Result<PathBuf, String> {
     let folder = pictures()?.join("ServerLauncher");
     let time = chrono::Local::now().format("%Y%m%d-%H%M%S");

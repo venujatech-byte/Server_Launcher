@@ -118,14 +118,14 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
             &mut profile.frame_painting,
             &[
                 (RdpFramePainting::Incremental, "Incremental repaint (recommended)"),
-                (RdpFramePainting::FullFrame, "Full-frame repaint (Remmina-style)"),
+                (RdpFramePainting::FullFrame, "Full-frame repaint"),
             ],
         );
         ui.label(
             "Full-frame repaint redraws the complete received image after each update. It changes client-side painting only and may use more CPU; it does not change network or server rendering behavior.",
         );
         rdp_color_profile(ui, &mut profile.color_profile);
-        ui.label("GFX profiles and 8 bpp are unavailable in this RDP renderer.");
+        ui.label("H.264 GFX profiles and 8 bpp are unavailable in this RDP renderer.");
         ui.label("RemoteFX is advertised to the server; the server still chooses the negotiated codec.");
         choice(
             ui,
@@ -286,7 +286,10 @@ pub(crate) fn vnc(ui: &mut Ui, draft: &mut Option<VncProfile>, port_text: &mut S
         color_depth(ui, &mut profile.color_depth);
         ui.checkbox(&mut profile.view_only, "View only");
         ui.checkbox(&mut profile.show_remote_cursor, "Show remote cursor");
-        ui.checkbox(&mut profile.disable_smooth_scrolling, "Disable smooth scrolling");
+        ui.checkbox(
+            &mut profile.disable_smooth_scrolling,
+            "Disable smooth scrolling",
+        );
         ui.checkbox(&mut profile.shared, "Shared session");
         clipboard(ui, &mut profile.clipboard);
         ui.label("Classic VNC shares Latin-1 text. Click the remote desktop before pasting.");

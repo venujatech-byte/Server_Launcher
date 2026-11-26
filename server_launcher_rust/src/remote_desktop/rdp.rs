@@ -32,6 +32,7 @@ use ironrdp::{
     session::{fast_path, image::DecodedImage, ActiveStageBuilder, ActiveStageOutput},
 };
 use ironrdp_blocking::Framed;
+use ironrdp_egfx::client::{GraphicsPipelineClient, GraphicsPipelineHandler};
 use std::{
     io,
     net::{SocketAddr, TcpStream, ToSocketAddrs},
@@ -128,29 +129,32 @@ fn run(
     let resize_ctx = ctx.clone();
     let multi_monitor = profile.multi_monitor;
     let [desktop_width, desktop_height] = initial_dimensions(profile, monitor_size).map(u32::from);
-    connector.attach_static_channel(DrdynvcClient::new().with_dynamic_channel(
-        DisplayControlClient::new(move |capabilities| {
-            let limit = capabilities.max_monitor_area();
-            server_limit.store(limit, Ordering::Release);
-            resize_state.lock().unwrap().rdp_resize_supported = limit != 0;
-            resize_ctx.request_repaint();
-            let layout = if multi_monitor {
-                dual_monitor_layout(desktop_width, desktop_height, limit)
-            } else {
-                None
-            };
-            if multi_monitor && layout.is_none() {
-                resize_state.lock().unwrap().status =
-                    "The RDP server did not report enough display area for two monitors.".into();
-            }
-            Ok(layout
-                .map(|layout| {
-                    let pdu: DisplayControlPdu = layout.into();
-                    vec![Box::new(pdu) as ironrdp::dvc::DvcMessage]
-                })
-                .unwrap_or_default())
-        }),
-    ));
+    connector.attach_static_channel(
+        DrdynvcClient::new()
+            .with_dynamic_channel(GraphicsPipelineClient::new(Box::new(EgfxHandler), None))
+            .with_dynamic_channel(DisplayControlClient::new(move |capabilities| {
+                let limit = capabilities.max_monitor_area();
+                server_limit.store(limit, Ordering::Release);
+                resize_state.lock().unwrap().rdp_resize_supported = limit != 0;
+                resize_ctx.request_repaint();
+                let layout = if multi_monitor {
+                    dual_monitor_layout(desktop_width, desktop_height, limit)
+                } else {
+                    None
+                };
+                if multi_monitor && layout.is_none() {
+                    resize_state.lock().unwrap().status =
+                        "The RDP server did not report enough display area for two monitors."
+                            .into();
+                }
+                Ok(layout
+                    .map(|layout| {
+                        let pdu: DisplayControlPdu = layout.into();
+                        vec![Box::new(pdu) as ironrdp::dvc::DvcMessage]
+                    })
+                    .unwrap_or_default())
+            })),
+    );
     drop(password);
     let upgrade = ironrdp_blocking::connect_begin(&mut framed, &mut connector).map_err(|_| {
         error("RDP security negotiation failed. Check the server's NLA and TLS settings.")
@@ -207,7 +211,9 @@ fn run(
     let result = ironrdp_blocking::connect_finalize(
         upgrade, connector, &mut framed, &mut NoKdc,
         hostname.to_owned().into(), binding, None,
-    ).map_err(|_| error("RDP login failed. Check the username, domain, password, and Remote Desktop permissions."))?;
+    ).map_err(|_| error("RDP login failed. Check the username, domain, password, and Remote Desktop permissions."))?
+        .into_connected()
+        .map_err(|_| error("The RDP server requested a session redirect that this client does not support."))?;
 
     let mut width = result.desktop_size.width;
     let mut height = result.desktop_size.height;
@@ -415,7 +421,7 @@ fn run(
         };
         received_bytes.fetch_add(payload.len() as u64, Ordering::Relaxed);
         let outputs = stage
-            .process(&mut image, action, &payload)
+            .process(&mut image, action, &payload, framed.last_read_at())
             .map_err(|_| error("The RDP server sent an unsupported or invalid update."))?;
         for output in outputs {
             match output {
@@ -455,6 +461,7 @@ fn run(
                             share_id,
                             enable_server_pointer,
                             pointer_software_rendering,
+                            ..
                         } = activation.connection_activation_state()
                         {
                             width = desktop_size.width;
@@ -475,7 +482,6 @@ fn run(
                                     share_id,
                                     enable_server_pointer,
                                     pointer_software_rendering,
-                                    bulk_decompressor: bulk_decompressor(compression_type),
                                 }
                                 .build(),
                             );
@@ -489,7 +495,7 @@ fn run(
                         output.clear();
                         let written = if let Some(hint) = activation.next_pdu_hint() {
                             let pdu = framed.read_by_hint(hint)?;
-                            activation.step(&pdu, &mut output)
+                            activation.step(&pdu, framed.last_read_at(), &mut output)
                         } else {
                             activation.step_no_input(&mut output)
                         }
@@ -549,17 +555,9 @@ fn publish_damage(
     Ok(())
 }
 
-fn bulk_decompressor(
-    compression_type: Option<CompressionType>,
-) -> Option<ironrdp_bulk::BulkCompressor> {
-    let compression_type = match compression_type? {
-        CompressionType::K8 => ironrdp_bulk::CompressionType::Rdp4,
-        CompressionType::K64 => ironrdp_bulk::CompressionType::Rdp5,
-        CompressionType::Rdp6 => ironrdp_bulk::CompressionType::Rdp6,
-        CompressionType::Rdp61 => ironrdp_bulk::CompressionType::Rdp61,
-    };
-    ironrdp_bulk::BulkCompressor::new(compression_type).ok()
-}
+struct EgfxHandler;
+
+impl GraphicsPipelineHandler for EgfxHandler {}
 
 pub(crate) fn display_dimensions(width: u32, height: u32) -> [u32; 2] {
     [width.clamp(200, 4096) & !1, height.clamp(200, 4096)]
@@ -674,10 +672,12 @@ fn config(
         domain: (!profile.domain.trim().is_empty()).then(|| profile.domain.clone()),
         enable_tls: tls_only,
         enable_credssp: !tls_only,
-        keyboard_type: KeyboardType::IbmEnhanced,
+        enable_standard_rdp_security: false,
+        keyboard_type: KeyboardType::IBM_ENHANCED,
         keyboard_subtype: 0,
         keyboard_layout: profile.keyboard_layout.unwrap_or(0),
         keyboard_functional_keys_count: 12,
+        connection_type: ironrdp::pdu::gcc::ConnectionType::BroadbandHigh,
         ime_file_name: String::new(),
         dig_product_id: String::new(),
         desktop_size: connector::DesktopSize { width, height },
@@ -700,16 +700,28 @@ fn config(
         request_data: None,
         autologon: tls_only,
         enable_audio_playback: false,
+        enable_audio_capture: false,
+        audio_playback_mode: None,
         compression_type: Some(CompressionType::Rdp61),
         pointer_software_rendering: true,
         multitransport_flags: None,
+        support_dyn_vc_gfx_protocol: true,
+        rdp_version: ironrdp::pdu::gcc::RdpVersion::V5_PLUS,
         performance_flags: performance,
         desktop_scale_factor: 0,
+        desktop_physical_size: None,
+        desktop_orientation: None,
+        device_scale_factor: None,
+        monitor_layout: None,
+        monitor_extended_layout: None,
+        relative_mouse_input: false,
         hardware_id: None,
         license_cache: None,
         timezone_info: TimezoneInfo::default(),
         alternate_shell: String::new(),
         work_dir: String::new(),
+        remote_application_mode: false,
+        rail_support_level: ironrdp::pdu::rdp::capability_sets::RailSupportLevel::empty(),
     }
 }
 
@@ -783,11 +795,5 @@ mod tests {
         assert!(fit_server_limit(200, 200, 39_999).is_none());
         let [width, height] = fit_server_limit(4000, 3000, 510_000).unwrap();
         assert!(width % 2 == 0 && width * height <= 510_000);
-    }
-
-    #[test]
-    fn restores_the_negotiated_bulk_decompressor_after_reactivation() {
-        assert!(bulk_decompressor(Some(CompressionType::Rdp61)).is_some());
-        assert!(bulk_decompressor(None).is_none());
     }
 }

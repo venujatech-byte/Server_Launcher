@@ -199,15 +199,18 @@ the two extended side buttons with MouseEventEx. The viewer forwards committed
 non-ASCII egui IME text where the platform backend provides commit events;
 preedit candidates are not sent. Linux egui-winit 0.29 drops IME events, so
 Linux composition still depends on text events delivered by its keyboard
-backend. Native keyboard grabbing supports Linux/X11. In a Wayland session with
-`DISPLAY` available, the separate viewer process selects XWayland so it can use
-that grab without changing the launcher's display backend.
+backend. Native keyboard grabbing supports Linux/X11. In a Wayland session, the
+separate viewer process tests whether `DISPLAY` is reachable and selects
+XWayland only if it responds, leaving the main launcher on Wayland and avoiding
+an X11-only viewer when XWayland is unavailable. The viewer initializes Xlib's
+thread support before starting its event loop and keyboard-capture workers.
 
 On Linux/X11, Right Ctrl is configurable as a host-key prefix. Right Ctrl+F
 toggles fullscreen, +S takes a screenshot, +R starts/stops recording, +D closes
 the viewer, and +K opens the Send keys window. Other Right Ctrl combinations
 are forwarded normally. Native grabs are unavailable on Windows and Wayland
-sessions without XWayland; those platforms keep the direct egui input path.
+sessions without a reachable XWayland server; those platforms keep the direct
+egui input path.
 Input mapping and focus release were tested in-process. Synthetic desktop input
 did not reach the loopback peer in the X11 smoke test, so end-to-end input
 behavior remains unverified.

@@ -9,6 +9,25 @@ use std::{
 };
 use x11_dl::xlib;
 
+pub(crate) fn prefer_x11_when_available() {
+    if !std::env::var_os("DISPLAY").is_some_and(|display| !display.is_empty()) {
+        return;
+    }
+    let Ok(xlib) = xlib::Xlib::open() else {
+        return;
+    };
+    if unsafe { (xlib.XInitThreads)() } == 0 {
+        return;
+    }
+    let display = unsafe { (xlib.XOpenDisplay)(ptr::null()) };
+    if display.is_null() {
+        return;
+    }
+    unsafe { (xlib.XCloseDisplay)(display) };
+    std::env::remove_var("WAYLAND_DISPLAY");
+    std::env::remove_var("WAYLAND_SOCKET");
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HostShortcut {
     Fullscreen,

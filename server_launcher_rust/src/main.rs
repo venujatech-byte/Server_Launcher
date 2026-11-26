@@ -231,6 +231,8 @@ fn main() -> eframe::Result<()> {
         let theme = session_args.next().and_then(|arg| arg.into_string().ok());
         if let (Some(host), Some(protocol), Some(path), Some(theme)) = (host, protocol, path, theme) {
             let test_pattern = session_args.next().is_some_and(|arg| arg == "--test-pattern");
+            #[cfg(target_os = "linux")]
+            remote_desktop::prepare_viewer_display_backend();
             return remote_desktop::viewer::run(&host, protocol, &path, &theme, test_pattern);
         }
         eprintln!("Invalid remote desktop session arguments.");

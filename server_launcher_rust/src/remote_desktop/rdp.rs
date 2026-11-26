@@ -702,7 +702,10 @@ impl Read for GatewayStream {
         self.runtime.block_on(async {
             tokio::time::timeout(
                 CONNECT_TIMEOUT,
-                self.stream.lock().map_err(io::Error::other)?.read(buffer),
+                self.stream
+                    .lock()
+                    .map_err(|_| io::Error::other("RD Gateway stream lock poisoned"))?
+                    .read(buffer),
             )
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "RD Gateway read timed out"))?
@@ -716,7 +719,10 @@ impl Write for GatewayStream {
         self.runtime.block_on(async {
             tokio::time::timeout(
                 CONNECT_TIMEOUT,
-                self.stream.lock().map_err(io::Error::other)?.write(buffer),
+                self.stream
+                    .lock()
+                    .map_err(|_| io::Error::other("RD Gateway stream lock poisoned"))?
+                    .write(buffer),
             )
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "RD Gateway write timed out"))?
@@ -728,7 +734,10 @@ impl Write for GatewayStream {
         self.runtime.block_on(async {
             tokio::time::timeout(
                 CONNECT_TIMEOUT,
-                self.stream.lock().map_err(io::Error::other)?.flush(),
+                self.stream
+                    .lock()
+                    .map_err(|_| io::Error::other("RD Gateway stream lock poisoned"))?
+                    .flush(),
             )
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "RD Gateway flush timed out"))?

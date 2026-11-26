@@ -94,11 +94,12 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
             "Security",
             &mut profile.security,
             &[
-                (RdpSecurity::Auto, "Auto"),
+                (RdpSecurity::Auto, "Auto (NLA only)"),
                 (RdpSecurity::Nla, "NLA"),
                 (RdpSecurity::Tls, "TLS"),
             ],
         );
+        ui.label("Auto requires NLA. Choose TLS explicitly for servers without NLA.");
         choice(
             ui,
             "Display painting",

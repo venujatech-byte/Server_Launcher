@@ -22,6 +22,10 @@ pub(crate) enum PendingClipboard {
     Image(ClipboardImage),
 }
 
+fn queue_latest(slot: &Mutex<Option<PendingClipboard>>, value: PendingClipboard) {
+    *slot.lock().unwrap() = Some(value);
+}
+
 impl ClipboardSync {
     pub(crate) fn start(ctx: egui::Context, read_local: bool) -> Self {
         let focused = Arc::new(AtomicBool::new(false));
@@ -103,15 +107,16 @@ impl ClipboardSync {
                                 let fingerprint = image_fingerprint(&image.rgba);
                                 if last_image != Some(fingerprint) {
                                     last_image = Some(fingerprint);
-                                    *worker_pending_local.lock().unwrap() =
-                                        Some(PendingClipboard::Image(image));
+                                    queue_latest(
+                                        &worker_pending_local,
+                                        PendingClipboard::Image(image),
+                                    );
                                     ctx.request_repaint();
                                 }
                             }
                         } else if let Ok(text) = local_text {
                             if should_forward(&text, &mut last_text) {
-                                *worker_pending_local.lock().unwrap() =
-                                    Some(PendingClipboard::Text(text));
+                                queue_latest(&worker_pending_local, PendingClipboard::Text(text));
                                 ctx.request_repaint();
                             }
                         }
@@ -134,11 +139,11 @@ impl ClipboardSync {
     }
 
     pub(crate) fn set_remote_text(&self, text: String) {
-        *self.remote.lock().unwrap() = Some(PendingClipboard::Text(text));
+        queue_latest(&self.remote, PendingClipboard::Text(text));
     }
 
     pub(crate) fn set_remote_image(&self, image: ClipboardImage) {
-        *self.remote.lock().unwrap() = Some(PendingClipboard::Image(image));
+        queue_latest(&self.remote, PendingClipboard::Image(image));
     }
 
     pub(crate) fn take_pending(&self) -> Option<PendingClipboard> {
@@ -172,7 +177,8 @@ fn should_read_image(text: Option<&str>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::should_forward;
+    use super::{queue_latest, should_forward, PendingClipboard};
+    use std::sync::Mutex;
 
     #[test]
     fn forwards_changes_once_and_respects_transfer_limit() {
@@ -190,5 +196,24 @@ mod tests {
         assert!(super::should_read_image(None));
         assert!(super::should_read_image(Some("")));
         assert!(!super::should_read_image(Some("text")));
+    }
+
+    #[test]
+    fn latest_clipboard_kind_replaces_an_older_pending_value() {
+        let slot = Mutex::new(None);
+        queue_latest(
+            &slot,
+            PendingClipboard::Image(super::ClipboardImage {
+                width: 1,
+                height: 1,
+                rgba: vec![0, 0, 0, 255],
+            }),
+        );
+        queue_latest(&slot, PendingClipboard::Text("new text".into()));
+
+        assert!(matches!(
+            slot.into_inner().unwrap(),
+            Some(PendingClipboard::Text(text)) if text == "new text"
+        ));
     }
 }

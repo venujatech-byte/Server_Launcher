@@ -216,11 +216,15 @@ profile requests two side-by-side remote monitors whose combined width and heigh
 come from the selected resolution. The viewer shows them in one combined window
 and disables fit-to-window resize to preserve the layout. IronRDP exposes the
 server's aggregate display-area limit but not its monitor-count limit, so the
-server may still reject the two-monitor request. Audio, microphone, drive
-redirection, and RD Gateway remain unsupported.
-The editor keeps audio, microphone, drive-sharing, RDP gateway/admin, and VNC
-username profile values for compatibility, but presents those controls as
-unsupported and read-only until their protocol support is implemented.
+server may still reject the two-monitor request. RDP playback uses the native
+IronRDP audio backend when enabled. Microphone capture is opt-in and registers
+IronRDP's AUDIO_INPUT dynamic channel only for profiles that enable it; capture
+starts only when the remote requests the channel. Outbound audio uses a bounded
+queue to the RDP worker. The implementation has passed the SSH PC cargo check
+but still needs live server and input-device testing. Drive redirection and
+Microsoft RD Gateway remain unsupported. The editor preserves saved drive,
+gateway, admin-session, and VNC username fields, while marking unsupported
+controls read-only.
 IronRDP and its blocking adapter are available under MIT or Apache-2.0.
 
 The RDP viewer now registers IronRDP's EGFX dynamic channel before advertising

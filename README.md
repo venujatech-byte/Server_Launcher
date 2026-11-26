@@ -102,8 +102,11 @@ store; protocol passwords are not saved in `servers.json`.
   30, or 60 FPS. Screenshot clipboard copying can be set as the viewer default.
   By default, captures are saved under Pictures/ServerLauncher.
 
-RDP microphone, drive redirection, Microsoft RD Gateway, and keyboard-layout-specific
-IME are not implemented. Linux source builds need the ALSA development package
+RDP microphone capture is available as an opt-in profile setting. When enabled,
+the remote PC can request audio from the local default input device while the
+session is connected; it is off by default and has only been compile-checked,
+not tested against a live RDP server or microphone. Drive redirection, Microsoft
+RD Gateway, and keyboard-layout-specific IME are not implemented. Linux source builds need the ALSA development package
 (`libasound2-dev` on Ubuntu/Debian, `alsa-lib-devel` on Fedora/RHEL) for local
 RDP audio playback. RDP dual-display layout is best-effort: the server must
 support two monitors, and the viewer presents their combined desktop in one

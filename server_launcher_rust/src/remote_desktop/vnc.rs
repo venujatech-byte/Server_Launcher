@@ -16,7 +16,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc, Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use zeroize::Zeroizing;
 
@@ -75,6 +75,7 @@ pub(crate) struct Connection {
     pub framebuffer: Framebuffer,
     pub status: String,
     pub connected: bool,
+    pub(crate) reconnect_at: Option<Instant>,
     pub(crate) receiving_frame: bool,
     pub(crate) clipboard_text: Option<String>,
     pub(crate) vnc_screen: Option<[u8; 16]>,
@@ -86,20 +87,26 @@ pub(crate) struct Connection {
 
 impl Connection {
     pub(crate) fn start(host: SshRemoteHost, ctx: egui::Context) -> Arc<Mutex<Self>> {
-        Self::start_worker("Connecting to VNC…", ctx, move |state, ctx| {
+        let reconnect = host
+            .vnc
+            .as_ref()
+            .is_some_and(|profile| profile.auto_reconnect);
+        Self::start_worker("Connecting to VNC…", reconnect, ctx, move |state, ctx| {
             run(&host, state, ctx)
         })
     }
 
     pub(crate) fn start_worker(
-        initial_status: &str,
+        initial_status: &'static str,
+        auto_reconnect: bool,
         ctx: egui::Context,
-        run: impl FnOnce(&Arc<Mutex<Self>>, &egui::Context) -> io::Result<()> + Send + 'static,
+        run: impl Fn(&Arc<Mutex<Self>>, &egui::Context) -> io::Result<()> + Send + 'static,
     ) -> Arc<Mutex<Self>> {
         let state = Arc::new(Mutex::new(Self {
             framebuffer: Framebuffer::default(),
             status: initial_status.into(),
             connected: false,
+            reconnect_at: None,
             receiving_frame: false,
             clipboard_text: None,
             vnc_screen: None,
@@ -110,12 +117,43 @@ impl Connection {
         }));
         let worker = state.clone();
         std::thread::spawn(move || {
-            let result = run(&worker, &ctx);
-            if let Err(error) = result {
+            let mut retries = 0;
+            loop {
+                let started = Instant::now();
+                let result = run(&worker, &ctx);
                 let mut state = worker.lock().unwrap();
+                if state.connected && started.elapsed() >= Duration::from_secs(30) {
+                    retries = 0;
+                }
+                let should_retry =
+                    auto_reconnect && (state.connected || retries > 0) && retries < 5;
                 state.connected = false;
                 state.input = None;
-                state.status = error.to_string();
+                state.clipboard_text = None;
+                state.vnc_screen = None;
+                state.resize_request = None;
+                state.status = result
+                    .err()
+                    .map_or_else(|| "Session ended".into(), |error| error.to_string());
+                if !should_retry {
+                    ctx.request_repaint();
+                    break;
+                }
+                let delay = reconnect_delay(retries);
+                retries += 1;
+                state.reconnect_at = Some(Instant::now() + delay);
+                ctx.request_repaint();
+                drop(state);
+
+                std::thread::sleep(delay);
+                let mut state = worker.lock().unwrap();
+                if state.reconnect_at.take().is_none() {
+                    break;
+                }
+                state.status = initial_status.into();
+                state.framebuffer = Framebuffer::default();
+                state.receiving_frame = false;
+                state.input_overflow = Arc::new(AtomicBool::new(false));
                 ctx.request_repaint();
             }
         });
@@ -136,6 +174,10 @@ impl Connection {
             }
         }
     }
+}
+
+fn reconnect_delay(attempt: u32) -> Duration {
+    Duration::from_secs(1 << attempt)
 }
 
 fn error(message: &str) -> io::Error {
@@ -567,6 +609,12 @@ mod tests {
             .write(&mut wire)
             .unwrap();
         assert_eq!(wire, [6, 0, 0, 0, 0, 0, 0, 2, b'a', 0xe9]);
+    }
+
+    #[test]
+    fn reconnect_backoff_grows_to_sixteen_seconds() {
+        assert_eq!(reconnect_delay(0), Duration::from_secs(1));
+        assert_eq!(reconnect_delay(4), Duration::from_secs(16));
     }
 
     struct Transcript {

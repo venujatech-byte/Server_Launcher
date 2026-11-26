@@ -45,7 +45,11 @@ pub(crate) fn start(
     config_path: PathBuf,
     ctx: egui::Context,
 ) -> Arc<Mutex<Connection>> {
-    Connection::start_worker("Connecting to RDP…", ctx, move |state, ctx| {
+    let reconnect = host
+        .rdp
+        .as_ref()
+        .is_some_and(|profile| profile.auto_reconnect);
+    Connection::start_worker("Connecting to RDP…", reconnect, ctx, move |state, ctx| {
         run(&host, &config_path, state, ctx)
     })
 }

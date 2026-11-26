@@ -325,7 +325,7 @@ impl eframe::App for Viewer {
             });
             return;
         }
-        let (update, status, connected) = if let Some(connection) = &self.connection {
+        let (update, status, connected, reconnect_at) = if let Some(connection) = &self.connection {
             let mut connection = connection.lock().unwrap();
             if let Some(text) = connection.clipboard_text.take() {
                 ctx.copy_text(text);
@@ -338,10 +338,20 @@ impl eframe::App for Viewer {
                 },
                 connection.status.clone(),
                 connection.connected,
+                connection.reconnect_at,
             )
         } else {
-            (self.framebuffer.take_update(), self.message.into(), false)
+            (
+                self.framebuffer.take_update(),
+                self.message.into(),
+                false,
+                None,
+            )
         };
+        if !connected {
+            self.capture = Capture::default();
+            self.last_window_size = None;
+        }
         if connected && self.show_fps {
             let (since, frames) = self.fps_sample.get_or_insert_with(|| (Instant::now(), 0));
             *frames += u32::from(update.is_some());
@@ -393,6 +403,20 @@ impl eframe::App for Viewer {
                             ui.selectable_value(&mut self.scaling, scale, scale_label(scale));
                         }
                     });
+                if let Some(deadline) = reconnect_at {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    ui.label(format!(
+                        "Reconnecting in {}s",
+                        remaining.as_secs_f64().ceil() as u64
+                    ));
+                    ctx.request_repaint_after(remaining.min(Duration::from_secs(1)));
+                    if ui.button("Cancel retry").clicked() {
+                        if let Some(connection) = &self.connection {
+                            connection.lock().unwrap().reconnect_at = None;
+                            ctx.request_repaint();
+                        }
+                    }
+                }
                 if ui.checkbox(&mut self.show_fps, "Show live FPS").changed() {
                     ctx.request_repaint();
                 }

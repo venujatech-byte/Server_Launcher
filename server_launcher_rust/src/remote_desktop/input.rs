@@ -5,6 +5,7 @@ use std::collections::HashMap;
 #[derive(Default)]
 pub(crate) struct Capture {
     active: bool,
+    keyboard_capture: bool,
     held: HashMap<Key, (u32, Option<Key>)>,
     modifiers: Modifiers,
     buttons: u8,
@@ -21,6 +22,17 @@ impl Capture {
             left_handed_mouse,
             disable_smooth_scrolling,
             ..Default::default()
+        }
+    }
+
+    pub(crate) fn keyboard_capture(&self) -> bool {
+        self.keyboard_capture
+    }
+
+    pub(crate) fn set_keyboard_capture(&mut self, enabled: bool, mut send: impl FnMut(Input)) {
+        self.keyboard_capture = enabled;
+        if !enabled {
+            self.release_inputs(&mut send);
         }
     }
 
@@ -41,7 +53,7 @@ impl Capture {
         }
         let visible = canvas.intersect(clip);
         for event in events {
-            if self.active {
+            if self.active || self.keyboard_capture {
                 match event {
                     Event::Text(text) | Event::Ime(egui::ImeEvent::Commit(text)) => {
                         for ch in text.chars().filter(|ch| !ch.is_ascii()) {
@@ -86,7 +98,7 @@ impl Capture {
                     ..
                 } => {
                     if pressed && !visible.contains(pos) {
-                        self.release(&mut send);
+                        self.release_inputs(&mut send);
                     } else if let Some(button) = extra_mouse_button(button) {
                         if pressed {
                             self.active = true;
@@ -136,7 +148,7 @@ impl Capture {
                     repeat,
                     modifiers,
                     ..
-                } if self.active => {
+                } if self.active || self.keyboard_capture => {
                     self.sync_modifiers(modifiers, &mut send);
                     if pressed && !repeat {
                         if let Some(keysym) = keysym(key) {
@@ -186,20 +198,19 @@ impl Capture {
                 _ => {}
             }
         }
-        if self.active {
+        if self.active || self.keyboard_capture {
             self.sync_modifiers(modifiers, &mut send);
         }
     }
 
     pub(crate) fn release(&mut self, mut send: impl FnMut(Input)) {
+        self.keyboard_capture = false;
+        self.release_inputs(&mut send);
+    }
+
+    fn release_inputs(&mut self, mut send: impl FnMut(Input)) {
         self.active = false;
-        for (_, (keysym, physical_key)) in self.held.drain() {
-            send(Input::Key {
-                keysym,
-                physical_key,
-                pressed: false,
-            });
-        }
+        self.release_keys(&mut send);
         for (button, bit) in [(1, 1), (2, 2)] {
             if self.extra_buttons & bit != 0 {
                 send(Input::PointerExtra {
@@ -211,12 +222,22 @@ impl Capture {
             }
         }
         self.extra_buttons = 0;
-        self.sync_modifiers(Modifiers::NONE, &mut send);
         if self.buttons != 0 {
             self.buttons = 0;
             send(self.pointer(0));
         }
         self.wheel = Vec2::ZERO;
+    }
+
+    fn release_keys(&mut self, mut send: impl FnMut(Input)) {
+        for (_, (keysym, physical_key)) in self.held.drain() {
+            send(Input::Key {
+                keysym,
+                physical_key,
+                pressed: false,
+            });
+        }
+        self.sync_modifiers(Modifiers::NONE, &mut send);
     }
 
     fn sync_modifiers(&mut self, next: Modifiers, mut send: impl FnMut(Input)) {
@@ -306,6 +327,48 @@ mod tests {
             |event| packets.push(event),
         );
         assert_eq!(packets, [Input::UnicodeText('é'), Input::UnicodeText('界')]);
+    }
+
+    #[test]
+    fn keyboard_capture_forwards_keys_without_a_canvas_click() {
+        let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(100.0, 50.0));
+        let mut capture = Capture::default();
+        capture.set_keyboard_capture(true, |_| {});
+        let mut packets = Vec::new();
+        capture.events(
+            &[Event::Key {
+                key: Key::A,
+                physical_key: Some(Key::A),
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }],
+            Modifiers::NONE,
+            true,
+            rect,
+            rect,
+            [100, 50],
+            None,
+            |event| packets.push(event),
+        );
+        assert_eq!(
+            packets,
+            [Input::Key {
+                keysym: b'a' as u32,
+                physical_key: Some(Key::A),
+                pressed: true,
+            }]
+        );
+        capture.set_keyboard_capture(false, |event| packets.push(event));
+        assert!(!capture.keyboard_capture());
+        assert_eq!(
+            packets.last(),
+            Some(&Input::Key {
+                keysym: b'a' as u32,
+                physical_key: Some(Key::A),
+                pressed: false,
+            })
+        );
     }
 
     #[test]

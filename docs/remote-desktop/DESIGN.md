@@ -288,6 +288,13 @@ scancodes, five RDP pointer buttons, and both scroll axes. RDP scancode mapping
 uses egui's physical key when available, while VNC keeps logical keysyms. IME
 and a full interactive RDP server test remain pending.
 
+The viewer toolbar's Keyboard toggle routes ordinary key events while the
+viewer window is focused, without requiring a click inside the remote canvas.
+Desktop-reserved shortcuts such as Super and Alt+Tab may still be intercepted
+by the local window manager; use the adjacent Send keys menu to send those
+shortcuts explicitly. Capturing those physical shortcuts requires a native
+platform keyboard grab and remains unimplemented.
+
 Unknown-issuer RDP certificates can now be explicitly trusted from the
 viewer after comparing the SHA-256 fingerprint. Validity dates and TLS
 handshake signatures are checked for all certificates. System-trusted

@@ -1037,12 +1037,31 @@ impl eframe::App for Viewer {
                 }
                 ui.checkbox(&mut self.copy_screenshot, "Copy screenshot");
                 ui.add_enabled_ui(connected && !self.view_only, |ui| {
+                    let keyboard_capture = self.capture.keyboard_capture();
+                    let keyboard_button = ui.selectable_label(
+                        keyboard_capture,
+                        format!("{} Keyboard", crate::lucide::KEYBOARD),
+                    );
+                    if keyboard_button
+                        .on_hover_text(
+                            "Route keyboard input to the remote while this viewer is focused. Use Send keys for shortcuts handled by your desktop.",
+                        )
+                        .clicked()
+                    {
+                        if let Some(connection) = &self.connection {
+                            let connection = connection.lock().unwrap();
+                            self.capture.set_keyboard_capture(!keyboard_capture, |event| {
+                                connection.send_input(event)
+                            });
+                        }
+                    }
                     ui.menu_button("Send keys", |ui| {
                         let shortcuts: &[(&str, &[u32])] = &[
                             ("Ctrl+Alt+Del", &[0xffe3, 0xffe9, 0xffff]),
                             ("Alt+Tab", &[0xffe9, 0xff09]),
                             ("Alt+F4", &[0xffe9, 0xffc1]),
-                            ("Windows key", &[0xffeb]),
+                            ("Super / Windows key", &[0xffeb]),
+                            ("Super+Tab", &[0xffeb, 0xff09]),
                             ("Win+L", &[0xffeb, b'l' as u32]),
                             ("Win+D", &[0xffeb, b'd' as u32]),
                             ("Ctrl+Shift+Esc", &[0xffe3, 0xffe1, 0xff1b]),
@@ -1067,10 +1086,17 @@ impl eframe::App for Viewer {
                         });
                     });
                 });
-                ui.add_enabled(
+                let view_only_response = ui.add_enabled(
                     connected,
                     egui::Checkbox::new(&mut self.view_only, "View only"),
                 );
+                if view_only_response.changed() && self.view_only {
+                    if let Some(connection) = &self.connection {
+                        let connection = connection.lock().unwrap();
+                        self.capture
+                            .release(|event| connection.send_input(event));
+                    }
+                }
                 if connected {
                     let label = if self.toolbar_pinned {
                         "Unpin toolbar"

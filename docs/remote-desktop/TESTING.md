@@ -64,6 +64,9 @@ The checked app revision was `8ec3a0d`.
    test left/right/middle plus side mouse buttons and both wheel axes.
    Confirm that a continuously changing desktop stays live over EGFX, and
    check that the viewer's FPS counter changes with received display updates.
+   Enable Keyboard in the viewer toolbar and type without clicking the remote
+   canvas first. Confirm ordinary keys reach the remote. Test Super and Alt+Tab
+   through Send keys; the host desktop may intercept those physical shortcuts.
    Enable View only and confirm the display remains live while keyboard,
    pointer, and outgoing clipboard input are suppressed.
 4. Resize the viewer with dynamic resolution enabled. Check for correct aspect

@@ -63,8 +63,8 @@ the final versions.
 - Persist each viewer's native window geometry separately by host ID and
   protocol so opening a different session cannot reuse another session's size.
 - Keep at most 32 validated framebuffer damage regions per update, merging
-  overlaps and falling back to one full-frame upload at the cap. This avoids
-  uploading large empty areas between distant screen changes. A worker wakes
+  overlaps and, at the cap, combining the pair with the smallest added area.
+  This avoids replacing sparse updates with a full-frame upload. A worker wakes
   the UI on frame and control changes. Never poll at a fixed refresh rate when
   nothing changes. Keep recording work outside the viewer update path.
 - Gate VNC transport, RDP certificate trust and redirection before sending

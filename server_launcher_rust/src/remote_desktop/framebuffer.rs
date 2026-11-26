@@ -203,15 +203,43 @@ impl Framebuffer {
                 index += 1;
             }
         }
-        if self.dirty.len() == MAX_DIRTY_REGIONS {
-            self.dirty.clear();
-            self.dirty.push(Region {
-                origin: [0, 0],
-                size: self.size,
-            });
-        } else {
+
+        if self.dirty.len() < MAX_DIRTY_REGIONS {
             self.dirty.push(region);
+            return;
         }
+
+        self.dirty.push(region);
+        let mut closest = (0, 1);
+        let mut least_expansion = usize::MAX;
+        for left in 0..self.dirty.len() {
+            for right in (left + 1)..self.dirty.len() {
+                let a = self.dirty[left];
+                let b = self.dirty[right];
+                let union = a.union(b);
+                let area = |region: Region| region.size[0] * region.size[1];
+                let expansion = area(union).saturating_sub(area(a) + area(b));
+                if expansion < least_expansion {
+                    closest = (left, right);
+                    least_expansion = expansion;
+                }
+            }
+        }
+
+        let (left, right) = closest;
+        region = self.dirty[left].union(self.dirty[right]);
+        self.dirty.swap_remove(right);
+        self.dirty.swap_remove(left);
+        let mut index = 0;
+        while index < self.dirty.len() {
+            if region.intersects(self.dirty[index]) {
+                region = region.union(self.dirty.swap_remove(index));
+                index = 0;
+            } else {
+                index += 1;
+            }
+        }
+        self.dirty.push(region);
     }
 
     pub(crate) fn take_updates(&mut self) -> Vec<Update> {
@@ -354,9 +382,9 @@ mod tests {
     }
 
     #[test]
-    fn caps_damage_region_count_with_a_full_frame_update() {
+    fn caps_damage_region_count_by_merging_the_least_extra_area() {
         let mut fb = Framebuffer::default();
-        fb.resize([MAX_DIRTY_REGIONS + 1, 1]).unwrap();
+        fb.resize([100, 1]).unwrap();
         fb.take_updates();
         for x in 0..=MAX_DIRTY_REGIONS {
             fb.write_rgba(
@@ -369,9 +397,15 @@ mod tests {
             .unwrap();
         }
         let updates = fb.take_updates();
-        assert_eq!(updates.len(), 1);
-        assert_eq!(updates[0].origin, [0, 0]);
-        assert_eq!(updates[0].image.size, [MAX_DIRTY_REGIONS + 1, 1]);
+        assert_eq!(updates.len(), MAX_DIRTY_REGIONS);
+        assert!(updates.iter().all(|update| update.image.size[0] <= 2));
+        assert_eq!(
+            updates
+                .iter()
+                .map(|update| update.image.size[0] * update.image.size[1])
+                .sum::<usize>(),
+            MAX_DIRTY_REGIONS + 1
+        );
     }
 
     #[test]

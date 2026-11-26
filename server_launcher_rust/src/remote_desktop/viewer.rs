@@ -47,16 +47,13 @@ pub(crate) fn run(
             .as_ref()
             .and_then(|host| host.rdp.as_ref())
             .is_some_and(|profile| profile.resolution == Resolution::FitWindow);
-    let send_clipboard = protocol == DesktopProtocol::Vnc
-        && viewer_host
-            .as_ref()
-            .and_then(|host| host.vnc.as_ref())
-            .is_some_and(|profile| {
-                matches!(
-                    profile.clipboard,
-                    Clipboard::Both | Clipboard::LocalToRemote
-                )
-            });
+    let send_clipboard = viewer_host
+        .as_ref()
+        .and_then(|host| match protocol {
+            DesktopProtocol::Vnc => host.vnc.as_ref().map(|profile| profile.clipboard),
+            DesktopProtocol::Rdp => host.rdp.as_ref().map(|profile| profile.clipboard),
+        })
+        .is_some_and(|direction| matches!(direction, Clipboard::Both | Clipboard::LocalToRemote));
     let config_path = path.to_owned();
     let palette = ThemeMode::from_id_str(theme).palette();
     let options = eframe::NativeOptions {

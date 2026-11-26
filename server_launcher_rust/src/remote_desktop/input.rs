@@ -37,13 +37,7 @@ impl Capture {
                         Event::Cut => b'x',
                         Event::Paste(text) => {
                             if text.len() <= super::vnc::CLIPBOARD_LIMIT {
-                                if let Some(bytes) = text
-                                    .chars()
-                                    .map(|ch| u8::try_from(u32::from(ch)).ok())
-                                    .collect()
-                                {
-                                    send(Input::ClipboardText(bytes));
-                                }
+                                send(Input::ClipboardText(text.clone()));
                             }
                             b'v'
                         }

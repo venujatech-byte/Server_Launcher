@@ -6,11 +6,14 @@ use super::{
     profile::{Clipboard, RdpProfile, RdpSecurity, Resolution},
     trust::Verifier,
     tunnel::{self, DesktopStream},
-    vnc::Connection,
+    vnc::{Connection, Input},
 };
 use crate::config::SshRemoteHost;
 use ironrdp::{
-    cliprdr::{pdu::ClipboardFormatId, CliprdrClient},
+    cliprdr::{
+        pdu::{ClipboardFormat, ClipboardFormatId},
+        CliprdrClient,
+    },
     connector::{self, connection_activation::ConnectionActivationState, sspi, Sequence},
     core::WriteBuf,
     displaycontrol::client::DisplayControlClient,
@@ -113,7 +116,10 @@ fn run(
         Clipboard::Both | Clipboard::RemoteToLocal
     ) {
         connector.attach_static_channel(CliprdrClient::new(Box::new(
-            super::rdp_clipboard::ClipboardBackend::default(),
+            super::rdp_clipboard::ClipboardBackend::new(matches!(
+                profile.clipboard,
+                Clipboard::Both | Clipboard::RemoteToLocal
+            )),
         )));
     }
     let max_monitor_area = Arc::new(AtomicU64::new(0));
@@ -270,7 +276,33 @@ fn run(
         }
         events.clear();
         for event in input.try_iter().take(32) {
-            encoder.encode(event, &mut events);
+            if let Input::ClipboardText(text) = event {
+                if matches!(
+                    profile.clipboard,
+                    Clipboard::Both | Clipboard::LocalToRemote
+                ) && !text.contains('\0')
+                    && text.encode_utf16().count() < super::vnc::CLIPBOARD_LIMIT / 2
+                {
+                    if let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() {
+                        if let Some(clipboard) =
+                            channel.downcast_backend_mut::<super::rdp_clipboard::ClipboardBackend>()
+                        {
+                            clipboard.local_text = Some(text);
+                            if let Ok(offer) = channel.initiate_copy(&[ClipboardFormat::new(
+                                ClipboardFormatId::CF_UNICODETEXT,
+                            )]) {
+                                let packet =
+                                    stage.process_svc_processor_messages(offer).map_err(|_| {
+                                        error("Could not encode the local clipboard offer.")
+                                    })?;
+                                framed.write_all(&packet)?;
+                            }
+                        }
+                    }
+                }
+            } else {
+                encoder.encode(event, &mut events);
+            }
         }
         if !events.is_empty() {
             let frames = stage
@@ -290,13 +322,20 @@ fn run(
                     state.lock().unwrap().clipboard_text = Some(text);
                     ctx.request_repaint();
                 }
-                if clipboard.request_text() {
-                    let request = channel
-                        .initiate_paste(ClipboardFormatId::CF_UNICODETEXT)
-                        .map_err(|_| error("Could not request remote clipboard text."))?;
+                let reply = clipboard.reply.take();
+                let request_text = clipboard.request_text();
+                let response = reply
+                    .map(|reply| channel.submit_format_data(reply))
+                    .transpose()
+                    .map_err(|_| error("Could not prepare local clipboard text."))?;
+                let request = request_text
+                    .then(|| channel.initiate_paste(ClipboardFormatId::CF_UNICODETEXT))
+                    .transpose()
+                    .map_err(|_| error("Could not request remote clipboard text."))?;
+                for message in response.into_iter().chain(request) {
                     let packet = stage
-                        .process_svc_processor_messages(request)
-                        .map_err(|_| error("Could not encode the remote clipboard request."))?;
+                        .process_svc_processor_messages(message)
+                        .map_err(|_| error("Could not encode the clipboard message."))?;
                     framed.write_all(&packet)?;
                 }
             }

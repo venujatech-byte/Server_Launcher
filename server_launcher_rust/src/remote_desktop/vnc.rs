@@ -35,7 +35,7 @@ const TUNNEL_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 pub(crate) enum Input {
     Key { keysym: u32, pressed: bool },
     Pointer { x: u16, y: u16, buttons: u8 },
-    ClipboardText(Vec<u8>),
+    ClipboardText(String),
     VncResize { size: [u16; 2], screen: [u8; 16] },
 }
 
@@ -43,6 +43,13 @@ impl Input {
     fn write(self, stream: &mut impl Write) -> io::Result<()> {
         match self {
             Self::ClipboardText(text) => {
+                let Some(text): Option<Vec<u8>> = text
+                    .chars()
+                    .map(|ch| u8::try_from(u32::from(ch)).ok())
+                    .collect()
+                else {
+                    return Ok(());
+                };
                 let [a, b, c, d] = (text.len() as u32).to_be_bytes();
                 stream.write_all(&[6, 0, 0, 0, a, b, c, d])?;
                 stream.write_all(&text)
@@ -649,9 +656,7 @@ mod tests {
     #[test]
     fn writes_classic_clipboard_message() {
         let mut wire = Vec::new();
-        Input::ClipboardText(vec![b'a', 0xe9])
-            .write(&mut wire)
-            .unwrap();
+        Input::ClipboardText("aé".into()).write(&mut wire).unwrap();
         assert_eq!(wire, [6, 0, 0, 0, 0, 0, 0, 2, b'a', 0xe9]);
     }
 

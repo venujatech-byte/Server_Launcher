@@ -1,16 +1,32 @@
 use ironrdp::cliprdr::{backend::CliprdrBackend, pdu::*};
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(super) struct ClipboardBackend {
     offered: bool,
+    pub(super) receive_enabled: bool,
+    pub(super) local_text: Option<String>,
+    pub(super) reply: Option<OwnedFormatDataResponse>,
     pending: bool,
     superseded: bool,
     pub(super) received: Option<String>,
 }
 
+impl std::fmt::Debug for ClipboardBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClipboardBackend").finish_non_exhaustive()
+    }
+}
+
 ironrdp::core::impl_as_any!(ClipboardBackend);
 
 impl ClipboardBackend {
+    pub(super) fn new(receive_enabled: bool) -> Self {
+        Self {
+            receive_enabled,
+            ..Default::default()
+        }
+    }
+
     pub(super) fn request_text(&mut self) -> bool {
         if self.pending || !std::mem::take(&mut self.offered) {
             return false;
@@ -34,11 +50,19 @@ impl CliprdrBackend for ClipboardBackend {
     fn on_remote_copy(&mut self, formats: &[ClipboardFormat]) {
         self.superseded = self.pending;
         self.received = None;
-        self.offered = formats
-            .iter()
-            .any(|format| format.id() == ClipboardFormatId::CF_UNICODETEXT);
+        self.offered = self.receive_enabled
+            && formats
+                .iter()
+                .any(|format| format.id() == ClipboardFormatId::CF_UNICODETEXT);
     }
-    fn on_format_data_request(&mut self, _: FormatDataRequest) {}
+    fn on_format_data_request(&mut self, request: FormatDataRequest) {
+        self.reply = Some(match &self.local_text {
+            Some(text) if request.format == ClipboardFormatId::CF_UNICODETEXT => {
+                FormatDataResponse::new_unicode_string(text)
+            }
+            _ => FormatDataResponse::new_error(),
+        });
+    }
     fn on_format_data_response(&mut self, response: FormatDataResponse<'_>) {
         if std::mem::take(&mut self.pending)
             && !self.superseded
@@ -60,7 +84,10 @@ mod tests {
 
     #[test]
     fn newer_offer_invalidates_in_flight_clipboard_text() {
-        let mut backend = ClipboardBackend::default();
+        let mut backend = ClipboardBackend {
+            receive_enabled: true,
+            ..Default::default()
+        };
         let formats = [ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT)];
         backend.on_remote_copy(&formats);
         assert!(backend.request_text());

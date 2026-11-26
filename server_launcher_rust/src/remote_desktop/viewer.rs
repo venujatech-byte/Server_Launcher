@@ -666,6 +666,10 @@ impl eframe::App for Viewer {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
+        if password_retry {
+            self.texture = None;
+            self.vnc_cursor_texture = None;
+        }
         if self.show_vnc_cursor {
             if let Some((image, _, _, revision)) = &remote_cursor {
                 if self.vnc_cursor_revision != *revision {

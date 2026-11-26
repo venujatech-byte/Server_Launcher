@@ -299,8 +299,9 @@ validation. RD Gateway uses the pinned IronRDP MS-TSGU transport over HTTPS and
 the saved RDP username/password for gateway authentication. Gateway TLS uses
 strict system-root validation; SSH tunneling cannot be combined with this route.
 This path still needs a live gateway test. RDP administrative sessions request
-session ID 0 through GCC cluster data. The VNC username field remains visible
-but unsupported by the classic VNC authentication implementation.
+session ID 0 through GCC cluster data. VNC username/password authentication
+uses VeNCrypt Plain only inside an SSH tunnel; classic VNC authentication is
+password-only.
 IronRDP and its blocking adapter are available under MIT or Apache-2.0.
 
 The RDP viewer now registers IronRDP's EGFX dynamic channel before advertising

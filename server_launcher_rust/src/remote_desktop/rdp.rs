@@ -526,20 +526,25 @@ fn run(
                     }
                 }
             } else if let Input::ClipboardFiles(paths) = &event {
-                if matches!(profile.clipboard, Clipboard::Both | Clipboard::LocalToRemote) {
+                if matches!(
+                    profile.clipboard,
+                    Clipboard::Both | Clipboard::LocalToRemote
+                ) {
                     let (shared_paths, descriptors) =
                         super::rdp_clipboard::shared_file_descriptors(paths);
-                    if !descriptors.is_empty() {
-                        if let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() {
-                            if let Some(clipboard) = channel.downcast_backend_mut::<
-                                super::rdp_clipboard::ClipboardBackend,
-                            >() {
-                                clipboard.local_files = shared_paths;
-                                if let Ok(offer) = channel.initiate_file_copy(descriptors) {
-                                    if let Ok(packet) = stage.process_svc_processor_messages(offer)
-                                    {
-                                        framed.write_all(&packet)?;
-                                    }
+                    if let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() {
+                        if let Some(clipboard) =
+                            channel.downcast_backend_mut::<super::rdp_clipboard::ClipboardBackend>()
+                        {
+                            clipboard.set_local_files(shared_paths);
+                            let offer = if descriptors.is_empty() {
+                                channel.initiate_copy(&[])
+                            } else {
+                                channel.initiate_file_copy(descriptors)
+                            };
+                            if let Ok(offer) = offer {
+                                if let Ok(packet) = stage.process_svc_processor_messages(offer) {
+                                    framed.write_all(&packet)?;
                                 }
                             }
                         }
@@ -556,8 +561,7 @@ fn run(
                         if let Some(clipboard) =
                             channel.downcast_backend_mut::<super::rdp_clipboard::ClipboardBackend>()
                         {
-                            clipboard.local_text = Some(text.clone());
-                            clipboard.local_image = None;
+                            clipboard.set_local_text(text.clone());
                             if let Ok(offer) = channel.initiate_copy(&[ClipboardFormat::new(
                                 ClipboardFormatId::CF_UNICODETEXT,
                             )]) {
@@ -581,8 +585,7 @@ fn run(
                             if let Some(clipboard) = channel
                                 .downcast_backend_mut::<super::rdp_clipboard::ClipboardBackend>()
                             {
-                                clipboard.local_text = None;
-                                clipboard.local_image = Some(image);
+                                clipboard.set_local_image(image);
                                 if let Ok(offer) = channel.initiate_copy(&[
                                     ClipboardFormat::new(ClipboardFormatId::CF_DIBV5),
                                     ClipboardFormat::new(ClipboardFormatId::CF_DIB),

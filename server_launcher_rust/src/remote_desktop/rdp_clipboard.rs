@@ -96,6 +96,24 @@ impl ClipboardBackend {
         self.remote_download_result.take()
     }
 
+    pub(super) fn set_local_text(&mut self, text: String) {
+        self.local_files.clear();
+        self.local_text = Some(text);
+        self.local_image = None;
+    }
+
+    pub(super) fn set_local_image(&mut self, image: Vec<u8>) {
+        self.local_files.clear();
+        self.local_text = None;
+        self.local_image = Some(image);
+    }
+
+    pub(super) fn set_local_files(&mut self, files: Vec<PathBuf>) {
+        self.local_text = None;
+        self.local_image = None;
+        self.local_files = files;
+    }
+
     pub(super) fn start_remote_download(&mut self, directory: PathBuf) {
         if self.active_remote_download.is_some() || !self.remote_download_queue.is_empty() {
             self.remote_download_result =
@@ -590,6 +608,27 @@ mod tests {
             assert!(!response.is_error());
             assert_eq!(response.data(), payload);
         }
+    }
+
+    #[test]
+    fn replacing_shared_files_with_text_or_an_image_revokes_the_old_file_offer() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("shared.txt");
+        std::fs::write(&file, b"private content").unwrap();
+        let mut backend = ClipboardBackend {
+            local_files: vec![file],
+            ..Default::default()
+        };
+
+        backend.set_local_text("new clipboard text".into());
+        assert!(backend.local_files.is_empty());
+        assert_eq!(backend.local_text.as_deref(), Some("new clipboard text"));
+
+        backend.set_local_files(vec![directory.path().join("next.txt")]);
+        backend.set_local_image(vec![1, 2, 3]);
+        assert!(backend.local_files.is_empty());
+        assert!(backend.local_text.is_none());
+        assert_eq!(backend.local_image.as_deref(), Some(&[1, 2, 3][..]));
     }
 
     #[test]

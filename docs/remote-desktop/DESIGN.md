@@ -216,6 +216,12 @@ window has settled for 180 ms. Requests are bounded by local framebuffer
 limits and the server's advertised monitor area. Server reactivation updates
 the share ID and graphics decoder and allocates a validated framebuffer for
 the new size, restoring the negotiated bulk decompressor for fast-path updates.
-The selected color depth is advertised as a preference.
+The RDP profile exposes Smooth/Fast texture filtering, Incremental/Full-frame
+painting, and Auto/Best/Good/Fast bitmap quality. Auto retains manual color-depth
+selection; Best requests 32-bit without lossy bitmap flags, while Good and Fast
+request 24-bit and 16-bit and allow dynamic color fidelity/subsampling. These
+capabilities allow the server to adapt; they do not guarantee a specific frame
+rate or speedup. The viewer's live FPS counts received display-update batches,
+not the server's capture FPS or local rendered FPS.
 Dimension normalization has unit coverage. A live resize against Windows
 RDP or xrdp still needs verification.

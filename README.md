@@ -71,13 +71,19 @@ store; protocol passwords are not saved in `servers.json`.
   recording, and dynamic resize when the server supports Display Control. Saved certificate
   fingerprints can be reviewed or removed in Settings → Remote Desktop. The RDP profile can
   request two side-by-side remote displays using the selected combined resolution.
+  Its profile also has **Painting** (smooth or fast filtering), **Frame painting**
+  (incremental damage regions or full-frame compatibility), and **Quality**
+  (Auto/manual depth, Best, Good, or Fast) options. Good and Fast allow adaptive
+  color fidelity/subsampling; actual speed depends on the server and connection.
 - VNC supports classic password authentication, Raw, CopyRect, and ZRLE framebuffer
   updates, keyboard and mouse input, text clipboard sync, screenshots,
   recording, and server-supported resolution changes. Classic VNC is not
   encrypted; the viewer warns before a direct connection to public or unknown
   hosts. Use the SSH tunnel option on untrusted networks.
-- Both viewers offer Fit, native-size, and Fill scaling, a live framebuffer
-  update-rate display, and a statistics menu. Local clipboard text is read only
+- Both viewers offer Fit, native-size, and Fill scaling, a live received display
+  update-rate display, and a statistics menu. The FPS value counts update batches
+  delivered by the remote server; it is not the server's capture rate or the
+  local display's rendered frame rate. Local clipboard text is read only
   while the connected viewer window is focused. Classic VNC text is limited to
   Latin-1; VNC clipboard images and file contents are not supported.
 - Screenshot and recording folders can be set separately under Settings →

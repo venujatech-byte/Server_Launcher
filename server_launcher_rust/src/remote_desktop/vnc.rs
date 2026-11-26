@@ -76,6 +76,7 @@ pub(crate) struct Connection {
     pub framebuffer: Framebuffer,
     pub status: String,
     pub connected: bool,
+    pub(crate) connected_since: Option<Instant>,
     pub(crate) finished: bool,
     pub(crate) reconnect_at: Option<Instant>,
     pub(crate) receiving_frame: bool,
@@ -108,6 +109,7 @@ impl Connection {
             framebuffer: Framebuffer::default(),
             status: initial_status.into(),
             connected: false,
+            connected_since: None,
             finished: false,
             reconnect_at: None,
             receiving_frame: false,
@@ -123,10 +125,13 @@ impl Connection {
             let jitter = RandomState::new();
             let mut retries = 0;
             loop {
-                let started = Instant::now();
                 let result = run(&worker, &ctx);
                 let mut state = worker.lock().unwrap();
-                if state.connected && started.elapsed() >= Duration::from_secs(30) {
+                if state
+                    .connected_since
+                    .take()
+                    .is_some_and(|since| since.elapsed() >= Duration::from_secs(30))
+                {
                     retries = 0;
                 }
                 let should_retry =
@@ -248,6 +253,7 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
         }
         .into();
         state.connected = true;
+        state.connected_since = Some(Instant::now());
     }
     let compact_pixels = matches!(profile.quality, Quality::Auto | Quality::Fast);
     // RGB565 halves the raw payload. Good and Best retain full color.

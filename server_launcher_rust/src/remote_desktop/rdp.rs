@@ -185,6 +185,7 @@ fn run(
             .resize([width.into(), height.into()])
             .map_err(error)?;
         shared.connected = true;
+        shared.connected_since = Some(Instant::now());
         shared.status = if profile.tunnel_via_ssh {
             "Connected · TLS verified · SSH tunnel"
         } else {

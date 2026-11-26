@@ -338,7 +338,7 @@ impl eframe::App for Viewer {
             });
             return;
         }
-        let (update, status, connected, reconnect_at, finished) =
+        let (update, status, connected, reconnect_at, finished, connected_since) =
             if let Some(connection) = &self.connection {
                 let mut connection = connection.lock().unwrap();
                 if let Some(text) = connection.clipboard_text.take() {
@@ -354,6 +354,7 @@ impl eframe::App for Viewer {
                     connection.connected,
                     connection.reconnect_at,
                     connection.finished,
+                    connection.connected_since,
                 )
             } else {
                 (
@@ -362,6 +363,7 @@ impl eframe::App for Viewer {
                     false,
                     None,
                     false,
+                    None,
                 )
             };
         if !connected {
@@ -458,6 +460,28 @@ impl eframe::App for Viewer {
                 if self.show_fps && connected {
                     ui.label(format!("{:.1} FPS", self.fps));
                 }
+                ui.add_enabled_ui(connected, |ui| {
+                    ui.menu_button("Stats", |ui| {
+                        ui.label(self.protocol.label());
+                        ui.label(&status);
+                        if let Some(texture) = &self.texture {
+                            let [width, height] = texture.size();
+                            ui.label(format!("Remote resolution  {width} × {height}"));
+                        }
+                        if let Some(since) = connected_since {
+                            let seconds = since.elapsed().as_secs();
+                            ui.label(format!(
+                                "Session time  {}:{:02}",
+                                seconds / 60,
+                                seconds % 60
+                            ));
+                            ctx.request_repaint_after(Duration::from_secs(1));
+                        }
+                        if self.show_fps {
+                            ui.label(format!("Displayed updates  {:.1} FPS", self.fps));
+                        }
+                    });
+                });
                 if self.protocol == DesktopProtocol::Vnc {
                     if let Some(connection) = &self.connection {
                         let connection = connection.lock().unwrap();

@@ -751,26 +751,33 @@ impl eframe::App for Viewer {
             }
         }
         if self.upload.is_some() || self.upload_result.is_some() {
-            egui::TopBottomPanel::bottom("viewer_upload").show(ctx, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    if let Some(upload) = &self.upload {
-                        ui.spinner();
-                        ui.label(&upload.progress);
-                        if ui.button("Cancel upload").clicked() {
-                            upload.cancel();
-                        }
-                    }
-                    if let Some(result) = &self.upload_result {
-                        let message = match result {
-                            Ok(message) | Err(message) => message,
-                        };
-                        ui.label(message);
-                        if ui.button("Dismiss").clicked() {
-                            self.upload_result = None;
-                        }
-                    }
+            egui::Area::new(egui::Id::new("viewer_upload"))
+                .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(12.0, -12.0))
+                .order(egui::Order::Foreground)
+                .movable(false)
+                .show(ctx, |ui| {
+                    ui.set_max_width((screen.width() - 24.0).min(460.0));
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            if let Some(upload) = &self.upload {
+                                ui.spinner();
+                                ui.label(&upload.progress);
+                                if ui.button("Cancel upload").clicked() {
+                                    upload.cancel();
+                                }
+                            }
+                            if let Some(result) = &self.upload_result {
+                                let message = match result {
+                                    Ok(message) | Err(message) => message,
+                                };
+                                ui.label(message);
+                                if ui.button("Dismiss").clicked() {
+                                    self.upload_result = None;
+                                }
+                            }
+                        });
+                    });
                 });
-            });
         }
         self.screenshot_notification(ctx);
         egui::CentralPanel::default().show(ctx, |ui| {

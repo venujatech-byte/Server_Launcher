@@ -204,7 +204,7 @@ fn upload(
             return Err(format!("Duplicate upload name: {name}"));
         }
         let target = shell_quote(&model::join(directory, name));
-        backend::execute(host, &format!("if [ -e {target} ] || [ -L {target} ]; then printf 'Destination already exists: %s\\n' {target} >&2; exit 1; fi"), 15)?;
+        backend::execute_cancellable(host, &format!("if [ -e {target} ] || [ -L {target} ]; then printf 'Destination already exists: %s\\n' {target} >&2; exit 1; fi"), 15, Some(cancel))?;
     }
     for (index, path) in paths.iter().enumerate() {
         let name = path

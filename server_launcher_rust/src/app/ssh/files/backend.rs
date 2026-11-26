@@ -1,5 +1,5 @@
 use super::{model, transfers, SshRemoteHost};
-use crate::remote::{build_ssh_command, shell_quote, ssh_probe_output};
+use crate::remote::{build_ssh_command, shell_quote, ssh_probe_output_cancellable};
 use std::{
     sync::{mpsc, Arc, Mutex},
     time::Duration,
@@ -66,7 +66,7 @@ pub(super) fn start(host: &SshRemoteHost, job: Job, ctx: egui::Context) -> Worke
                 } else {
                     format!("cd -- {} && pwd -P", shell_quote(&configured))
                 };
-                let output = execute(&host, &command, 15)?;
+                let output = execute_cancellable(&host, &command, 15, Some(&worker_cancel))?;
                 let directory =
                     String::from_utf8(output).map_err(|_| "Invalid remote upload directory.")?;
                 let directory = directory.strip_suffix('\n').unwrap_or(&directory);
@@ -196,9 +196,19 @@ pub(super) fn execute(
     command: &str,
     timeout: u64,
 ) -> Result<Vec<u8>, String> {
-    let output = ssh_probe_output(
+    execute_cancellable(host, command, timeout, None)
+}
+
+pub(super) fn execute_cancellable(
+    host: &SshRemoteHost,
+    command: &str,
+    timeout: u64,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<Vec<u8>, String> {
+    let output = ssh_probe_output_cancellable(
         build_ssh_command(host, command),
         Duration::from_secs(timeout),
+        cancel,
     )
     .map_err(|error| error.to_string())?;
     if output.status.success() {

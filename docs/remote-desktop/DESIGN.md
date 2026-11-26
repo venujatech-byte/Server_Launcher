@@ -73,13 +73,15 @@ been completed. Record results here only after a runnable viewer is measured.
 
 ## Display profiles and input controls
 
-RDP profiles expose Automatic, RemoteFX, 32/24-bit true color, and 16/15-bit
-high color. The EGFX path supports IronRDP's ClearCodec and RFX decoders, but
-does not enable AVC/H.264 because the app has no H.264 decoder; those Remmina
-AVC entries remain disabled. The legacy RemoteFX bitmap codec is advertised but
-cannot be forced: the server selects the codec during negotiation. Older
-`quality` and `color_depth` fields remain intact and are used when no explicit
-`color_profile` is saved.
+RDP profiles expose Automatic, GFX RFX, GFX RFX Progressive, legacy RemoteFX,
+32/24-bit true color, and 16/15-bit high color. The EGFX path supports
+IronRDP's ClearCodec and RFX decoders. Explicit GFX RFX profile choices limit
+the advertised capability version, while Automatic lets the server choose
+among supported paths. AVC/H.264 remains disabled because the app has no H.264
+decoder, so those Remmina entries remain unavailable. The legacy RemoteFX
+bitmap codec is advertised but cannot be forced: the server selects the codec
+during negotiation. Older `quality` and `color_depth` fields remain intact and
+are used when no explicit `color_profile` is saved.
 RDP and VNC can disable fractional wheel accumulation; RDP can also swap the
 primary and secondary pointer buttons for left-handed use. These are local
 input/display settings, not protocol performance modes. The VNC profile can turn

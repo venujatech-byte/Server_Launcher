@@ -27,9 +27,14 @@ choices!(Resolution {
     MatchLocalScreen
 });
 choices!(RdpPainting { Smooth, Fast });
-choices!(RdpFramePainting { Incremental, FullFrame });
+choices!(RdpFramePainting {
+    Incremental,
+    FullFrame
+});
 choices!(RdpColorProfile {
     Automatic,
+    GfxRfx,
+    GfxRfxProgressive,
     RemoteFx,
     TrueColor32,
     TrueColor24,

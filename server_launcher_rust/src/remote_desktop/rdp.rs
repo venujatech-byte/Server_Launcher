@@ -131,7 +131,12 @@ fn run(
     let [desktop_width, desktop_height] = initial_dimensions(profile, monitor_size).map(u32::from);
     connector.attach_static_channel(
         DrdynvcClient::new()
-            .with_dynamic_channel(GraphicsPipelineClient::new(Box::new(EgfxHandler), None))
+            .with_dynamic_channel(GraphicsPipelineClient::new(
+                Box::new(EgfxHandler {
+                    color_profile: profile.color_profile.unwrap_or_default(),
+                }),
+                None,
+            ))
             .with_dynamic_channel(DisplayControlClient::new(move |capabilities| {
                 let limit = capabilities.max_monitor_area();
                 server_limit.store(limit, Ordering::Release);
@@ -555,9 +560,54 @@ fn publish_damage(
     Ok(())
 }
 
-struct EgfxHandler;
+struct EgfxHandler {
+    color_profile: RdpColorProfile,
+}
 
-impl GraphicsPipelineHandler for EgfxHandler {}
+impl GraphicsPipelineHandler for EgfxHandler {
+    fn capabilities(&self) -> Vec<ironrdp_egfx::pdu::CapabilitySet> {
+        use ironrdp_egfx::pdu::{CapabilitiesV107Flags, CapabilitiesV8Flags, CapabilitySet as Cap};
+        match self.color_profile {
+            RdpColorProfile::GfxRfx => vec![Cap::V8 {
+                flags: CapabilitiesV8Flags::SMALL_CACHE,
+            }],
+            RdpColorProfile::GfxRfxProgressive => vec![Cap::V10_7 {
+                flags: CapabilitiesV107Flags::AVC_DISABLED | CapabilitiesV107Flags::SMALL_CACHE,
+            }],
+            _ => vec![
+                Cap::V10_7 {
+                    flags: CapabilitiesV107Flags::SMALL_CACHE,
+                },
+                Cap::V10_6 {
+                    flags: ironrdp_egfx::pdu::CapabilitiesV104Flags::SMALL_CACHE,
+                },
+                Cap::V10_5 {
+                    flags: ironrdp_egfx::pdu::CapabilitiesV104Flags::SMALL_CACHE,
+                },
+                Cap::V10_4 {
+                    flags: ironrdp_egfx::pdu::CapabilitiesV104Flags::SMALL_CACHE,
+                },
+                Cap::V10_3 {
+                    flags: ironrdp_egfx::pdu::CapabilitiesV103Flags::empty(),
+                },
+                Cap::V10_2 {
+                    flags: ironrdp_egfx::pdu::CapabilitiesV10Flags::SMALL_CACHE,
+                },
+                Cap::V10_1,
+                Cap::V10 {
+                    flags: ironrdp_egfx::pdu::CapabilitiesV10Flags::SMALL_CACHE,
+                },
+                Cap::V8_1 {
+                    flags: ironrdp_egfx::pdu::CapabilitiesV81Flags::AVC420_ENABLED
+                        | ironrdp_egfx::pdu::CapabilitiesV81Flags::SMALL_CACHE,
+                },
+                Cap::V8 {
+                    flags: CapabilitiesV8Flags::SMALL_CACHE,
+                },
+            ],
+        }
+    }
+}
 
 pub(crate) fn display_dimensions(width: u32, height: u32) -> [u32; 2] {
     [width.clamp(200, 4096) & !1, height.clamp(200, 4096)]
@@ -729,6 +779,8 @@ fn bitmap_quality(profile: &RdpProfile) -> (u32, bool) {
     if let Some(color_profile) = profile.color_profile {
         return match color_profile {
             RdpColorProfile::Automatic
+            | RdpColorProfile::GfxRfx
+            | RdpColorProfile::GfxRfxProgressive
             | RdpColorProfile::RemoteFx
             | RdpColorProfile::TrueColor32 => (32, false),
             RdpColorProfile::TrueColor24 => (24, false),
@@ -795,5 +847,27 @@ mod tests {
         assert!(fit_server_limit(200, 200, 39_999).is_none());
         let [width, height] = fit_server_limit(4000, 3000, 510_000).unwrap();
         assert!(width % 2 == 0 && width * height <= 510_000);
+    }
+
+    #[test]
+    fn gfx_profile_limits_advertised_capabilities() {
+        let rfx = EgfxHandler {
+            color_profile: RdpColorProfile::GfxRfx,
+        }
+        .capabilities();
+        assert!(matches!(
+            rfx.as_slice(),
+            [ironrdp_egfx::pdu::CapabilitySet::V8 { .. }]
+        ));
+
+        let progressive = EgfxHandler {
+            color_profile: RdpColorProfile::GfxRfxProgressive,
+        }
+        .capabilities();
+        assert!(matches!(
+            progressive.as_slice(),
+            [ironrdp_egfx::pdu::CapabilitySet::V10_7 { flags }]
+                if flags.contains(ironrdp_egfx::pdu::CapabilitiesV107Flags::AVC_DISABLED)
+        ));
     }
 }

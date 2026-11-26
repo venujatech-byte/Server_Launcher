@@ -46,6 +46,11 @@ fn color_depth(ui: &mut Ui, value: &mut u8) {
 fn rdp_color_profile(ui: &mut Ui, value: &mut Option<RdpColorProfile>) {
     const SUPPORTED: &[(RdpColorProfile, &str)] = &[
         (RdpColorProfile::Automatic, "Automatic (32 bpp)"),
+        (RdpColorProfile::GfxRfx, "GFX RFX (32 bpp)"),
+        (
+            RdpColorProfile::GfxRfxProgressive,
+            "GFX RFX Progressive (32 bpp)",
+        ),
         (RdpColorProfile::RemoteFx, "RemoteFX (32 bpp)"),
         (RdpColorProfile::TrueColor32, "True color (32 bpp)"),
         (RdpColorProfile::TrueColor24, "True color (24 bpp)"),
@@ -69,8 +74,6 @@ fn rdp_color_profile(ui: &mut Ui, value: &mut Option<RdpColorProfile>) {
                 ui.separator();
                 ui.add_enabled(false, egui::Button::new("GFX AVC444 (32 bpp)"));
                 ui.add_enabled(false, egui::Button::new("GFX AVC420 (32 bpp)"));
-                ui.add_enabled(false, egui::Button::new("GFX RFX (32 bpp)"));
-                ui.add_enabled(false, egui::Button::new("GFX RFX Progressive (32 bpp)"));
                 ui.add_enabled(false, egui::Button::new("256 colors (8 bpp)"));
             });
     });
@@ -125,7 +128,7 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
             "Full-frame repaint redraws the complete received image after each update. It changes client-side painting only and may use more CPU; it does not change network or server rendering behavior.",
         );
         rdp_color_profile(ui, &mut profile.color_profile);
-        ui.label("H.264 GFX profiles and 8 bpp are unavailable in this RDP renderer.");
+        ui.label("GFX RFX uses the graphics pipeline; AVC/H.264 and 8 bpp remain unavailable.");
         ui.label("RemoteFX is advertised to the server; the server still chooses the negotiated codec.");
         choice(
             ui,

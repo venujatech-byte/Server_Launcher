@@ -76,7 +76,10 @@ The checked app revision was `8ec3a0d`.
    session falls back without advertising AVC. Confirm other profiles continue
    to negotiate EGFX.
 7. Test clipboard directions separately with Unicode text and an image under
-   the configured size cap. Confirm received content is not echoed back.
+   the configured size cap. Confirm received content is not echoed back. Also
+   test a clipboard source that advertises DIBV5 before Unicode text but rejects
+   or returns invalid DIBV5 data; the client should still receive the text
+   offered in that same clipboard update.
 8. Test NLA-only and TLS-only explicitly against matching servers. Auto must
    accept either encrypted mode and must reject legacy unencrypted RDP.
    Also test Administrative session against a Windows account allowed to use

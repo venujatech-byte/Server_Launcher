@@ -152,7 +152,11 @@ fn record(
             "-pix_fmt",
             "yuv420p",
             "-movflags",
-            "+faststart",
+            "+empty_moov+frag_keyframe+default_base_moof",
+            "-g",
+            "30",
+            "-flush_packets",
+            "1",
         ])
         .arg(&output)
         .stdin(Stdio::piped())

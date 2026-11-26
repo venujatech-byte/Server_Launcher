@@ -199,17 +199,28 @@ username profile values for compatibility, but presents those controls as
 unsupported and read-only until their protocol support is implemented.
 IronRDP and its blocking adapter are available under MIT or Apache-2.0.
 
-The RDP renderer currently consumes the legacy bitmap update path. The pinned
-connector does not advertise `SUPPORT_DYN_VC_GFX_PROTOCOL`, and the session
-does not attach an EGFX decoder/compositor. Smooth/Fast filtering and
-incremental/full-frame painting affect only local rendering; they cannot enable
-modern codec negotiation or remove network/decode latency. Direct RDP and the
-Windows tunnel socket already enable TCP_NODELAY, so Nagle buffering is not the
-current cause. Matching a modern client's smoothness requires wiring an EGFX
-dynamic channel, advertising only codecs that are actually decoded, and
-compositing its surface updates into the framebuffer. Upstream tracks that
-integration in [IronRDP issue #1464](https://github.com/Devolutions/IronRDP/issues/1464).
-Do not describe local full-frame repaint as equivalent to EGFX.
+The RDP renderer currently consumes the legacy bitmap update path. This app
+pins IronRDP 0.17.0 / connector 0.10.0, which does not advertise
+`SUPPORT_DYN_VC_GFX_PROTOCOL`, and it does not attach an EGFX decoder or
+compositor. Smooth/Fast filtering and incremental/full-frame painting affect
+only local rendering; they cannot enable modern codec negotiation or remove
+network/decode latency. Direct RDP and the Windows tunnel socket already enable
+TCP_NODELAY, so Nagle buffering is not the current cause.
+
+The screenshot reference is a live desktop framebuffer: each received remote
+update must be decoded and composited into the same persistent image. A local
+full-frame repaint redraws that image but does not make the server send more
+frames or use a newer codec. Upstream completed client EGFX registration,
+session rendering and the connector capability flag in August 2026
+([IronRDP issue #1464](https://github.com/Devolutions/IronRDP/issues/1464)).
+Those changes are not in this app's pinned dependencies: published
+`ironrdp-egfx` 0.5.0 and connector/blocking 0.12.0 use the newer IronRDP 0.3
+core / 0.11 PDU generation, rather than the app's 0.2 core / 0.9 PDU stack.
+The next performance implementation therefore needs a coordinated IronRDP
+stack migration, then EGFX channel registration, supported-codec negotiation,
+and compositing into the existing framebuffer. Never advertise EGFX until all
+three paths are active; servers may otherwise switch to a stream the viewer
+cannot render.
 
 The optional live FPS value counts received display-update batches per second
 from the RDP/VNC workers. It is not the remote compositor's native capture rate.

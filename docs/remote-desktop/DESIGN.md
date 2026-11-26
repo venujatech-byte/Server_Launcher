@@ -182,10 +182,14 @@ writes it only to the SSH process's askpass pipe. The password is not passed in
 arguments or environment variables. Windows tunnels with password-only SSH
 profiles still need runtime validation on Windows and real VNC/RDP servers.
 
-## VNC input
+## Viewer input
 
-Click the remote canvas to capture keyboard input. On focus loss or a click
-outside the canvas, the viewer releases tracked keys, modifiers and buttons.
+Clicking the remote canvas captures pointer input and enables keyboard input.
+The Keyboard toolbar toggle also enables keyboard input without a canvas click
+while the viewer window is focused. On focus loss or a click outside the
+canvas, the viewer releases tracked keys, modifiers and buttons. The keyboard
+toggle remains enabled across focus changes so native capture can resume when
+the viewer regains focus.
 The VNC worker omits its input channel in view-only mode. A bounded queue
 disconnects on overflow so a key release cannot silently disappear. Pointer
 coordinates follow the displayed canvas and are clamped during a drag.
@@ -209,10 +213,12 @@ egui thread. Remote text and images are written to the local clipboard and
 fingerprinted to prevent sending them back. Text over 1 MiB is skipped; the
 RDP image limit is configurable from 1 to 64 MiB (16 MiB by default) and applies
 in both directions. Native clipboard initialization retries once per second if
-the OS clipboard is temporarily unavailable. Remote clipboard values remain
-queued when a local clipboard write fails and are retried while the viewer is
-focused; a newer remote value takes priority over an older retry. RDP supports
-Unicode text and bounded DIB images; classic VNC supports Latin-1 text only.
+the OS clipboard is temporarily unavailable. Linux uses Wayland data-control
+when available and falls back to X11 when Wayland clipboard initialization
+fails. Remote clipboard values remain queued when a local clipboard write fails
+and are retried while the viewer is focused; a newer remote value takes priority
+over an older retry. RDP supports Unicode text and bounded DIB images; classic
+VNC supports Latin-1 text only.
 File clipboard formats are not implemented. End-to-end clipboard behavior still
 needs testing against real RDP and VNC servers and on Wayland, X11, and Windows.
 

@@ -30,7 +30,7 @@ chrono = "0.4"
 rfd = "0.15"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 flate2 = "1.1"
-arboard = { version = "3.6", default-features = false, features = ["image-data"] }
+arboard = { version = "3.6", default-features = false, features = ["image-data", "wayland-data-control"] }
 tauri = "2"
 zeroize = "1.9.0"
 des = { version = "0.8.1", features = ["zeroize"] }

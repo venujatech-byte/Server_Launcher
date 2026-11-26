@@ -1672,7 +1672,13 @@ impl SshHostModalState {
     }
 }
 
-pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palette: &ThemePalette, timeout_seconds: u32) -> ModalAction {
+pub fn render_ssh_host_modal(
+    ctx: &Context,
+    state: &mut SshHostModalState,
+    palette: &ThemePalette,
+    timeout_seconds: u32,
+    desktop_defaults: &crate::config::RemoteDesktopSettings,
+) -> ModalAction {
     if !state.open {
         state.pending_test = None;
         state.clear_desktop_passwords();
@@ -1927,7 +1933,11 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                             });
                         }
                         RemotePcTab::Rdp => {
-                            crate::remote_desktop::editor::rdp(ui, &mut state.rdp);
+                            crate::remote_desktop::editor::rdp(
+                                ui,
+                                &mut state.rdp,
+                                desktop_defaults,
+                            );
                             state.server_detection.show(
                                 ui,
                                 &state.remote_detection_host(),
@@ -1965,7 +1975,13 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                             state.rdp_probe.show(ui, request, "Enter the host and port first.", std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))));
                         }
                         RemotePcTab::Vnc => {
-                            crate::remote_desktop::editor::vnc(ui, &mut state.vnc, &mut state.vnc_port_text, &state.host);
+                            crate::remote_desktop::editor::vnc(
+                                ui,
+                                &mut state.vnc,
+                                &mut state.vnc_port_text,
+                                &state.host,
+                                desktop_defaults,
+                            );
                             state.server_detection.show(
                                 ui,
                                 &state.remote_detection_host(),

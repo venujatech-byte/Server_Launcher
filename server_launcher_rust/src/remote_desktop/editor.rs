@@ -96,8 +96,12 @@ fn rdp_color_profile(ui: &mut Ui, value: &mut Option<RdpColorProfile>) {
     );
 }
 
-pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
-    let mut profile = draft.clone().unwrap_or_default();
+pub(crate) fn rdp(
+    ui: &mut Ui,
+    draft: &mut Option<RdpProfile>,
+    defaults: &crate::config::RemoteDesktopSettings,
+) {
+    let mut profile = draft.clone().unwrap_or_else(|| new_rdp_profile(defaults));
     ui.checkbox(&mut profile.enabled, "Enable RDP");
     ui.add_enabled_ui(profile.enabled, |ui| {
         ui.horizontal(|ui| {
@@ -285,15 +289,33 @@ pub(crate) fn vnc_port(value: &str, host: &str) -> Option<u16> {
     5900u16.checked_add(display.parse().ok()?)
 }
 
-fn new_vnc_profile(host: &str) -> VncProfile {
+fn new_rdp_profile(defaults: &crate::config::RemoteDesktopSettings) -> RdpProfile {
+    RdpProfile {
+        quality: defaults.default_quality,
+        clipboard: defaults.default_clipboard,
+        ..RdpProfile::default()
+    }
+}
+
+fn new_vnc_profile(host: &str, defaults: &crate::config::RemoteDesktopSettings) -> VncProfile {
     VncProfile {
+        quality: defaults.default_quality,
+        clipboard: defaults.default_clipboard,
         tunnel_via_ssh: super::vnc::needs_unencrypted_warning(host),
         ..VncProfile::default()
     }
 }
 
-pub(crate) fn vnc(ui: &mut Ui, draft: &mut Option<VncProfile>, port_text: &mut String, host: &str) {
-    let mut profile = draft.clone().unwrap_or_else(|| new_vnc_profile(host));
+pub(crate) fn vnc(
+    ui: &mut Ui,
+    draft: &mut Option<VncProfile>,
+    port_text: &mut String,
+    host: &str,
+    defaults: &crate::config::RemoteDesktopSettings,
+) {
+    let mut profile = draft
+        .clone()
+        .unwrap_or_else(|| new_vnc_profile(host, defaults));
     ui.checkbox(&mut profile.enabled, "Enable VNC");
     ui.add_enabled_ui(profile.enabled, |ui| {
         text(ui, "Port or display *", port_text);
@@ -393,7 +415,11 @@ pub(crate) fn vnc(ui: &mut Ui, draft: &mut Option<VncProfile>, port_text: &mut S
 
 #[cfg(test)]
 mod tests {
-    use super::{new_vnc_profile, vnc_port};
+    use super::{new_rdp_profile, new_vnc_profile, vnc_port};
+    use crate::{
+        config::RemoteDesktopSettings,
+        remote_desktop::profile::{Clipboard, Quality},
+    };
 
     #[test]
     fn accepts_ports_and_displays_for_the_configured_host() {
@@ -409,9 +435,26 @@ mod tests {
 
     #[test]
     fn new_vnc_profiles_tunnel_only_for_public_or_unknown_hosts() {
-        assert!(!new_vnc_profile("192.168.1.12").tunnel_via_ssh);
-        assert!(new_vnc_profile("100.94.20.30").tunnel_via_ssh);
-        assert!(new_vnc_profile("vnc.example.test").tunnel_via_ssh);
+        let defaults = RemoteDesktopSettings::default();
+        assert!(!new_vnc_profile("192.168.1.12", &defaults).tunnel_via_ssh);
+        assert!(new_vnc_profile("100.94.20.30", &defaults).tunnel_via_ssh);
+        assert!(new_vnc_profile("vnc.example.test", &defaults).tunnel_via_ssh);
+    }
+
+    #[test]
+    fn new_remote_profiles_use_global_quality_and_clipboard_defaults() {
+        let defaults = RemoteDesktopSettings {
+            default_quality: Quality::Fast,
+            default_clipboard: Clipboard::RemoteToLocal,
+            ..RemoteDesktopSettings::default()
+        };
+        let rdp = new_rdp_profile(&defaults);
+        let vnc = new_vnc_profile("192.168.1.12", &defaults);
+
+        assert_eq!(rdp.quality, Quality::Fast);
+        assert_eq!(rdp.clipboard, Clipboard::RemoteToLocal);
+        assert_eq!(vnc.quality, Quality::Fast);
+        assert_eq!(vnc.clipboard, Clipboard::RemoteToLocal);
     }
 }
 

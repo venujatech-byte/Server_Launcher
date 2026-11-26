@@ -722,6 +722,56 @@ impl LauncherApp {
                                         ui.checkbox(&mut self.remote_desktop_settings.show_live_fps, "Show live FPS by default");
                                         ui.label(RichText::new("Displays the recent rate of framebuffer updates in each new viewer window.").size(10.5).color(palette.text_muted));
                                         ui.add_space(8.0);
+                                        ui.horizontal(|ui| {
+                                            ui.label("New RDP/VNC profile quality");
+                                            egui::ComboBox::from_id_salt("remote_desktop_default_quality")
+                                                .selected_text(match self.remote_desktop_settings.default_quality {
+                                                    crate::remote_desktop::profile::Quality::Auto => "Auto",
+                                                    crate::remote_desktop::profile::Quality::Best => "Best",
+                                                    crate::remote_desktop::profile::Quality::Good => "Good",
+                                                    crate::remote_desktop::profile::Quality::Fast => "Fast",
+                                                })
+                                                .show_ui(ui, |ui| {
+                                                    for (quality, label) in [
+                                                        (crate::remote_desktop::profile::Quality::Auto, "Auto"),
+                                                        (crate::remote_desktop::profile::Quality::Best, "Best"),
+                                                        (crate::remote_desktop::profile::Quality::Good, "Good"),
+                                                        (crate::remote_desktop::profile::Quality::Fast, "Fast"),
+                                                    ] {
+                                                        ui.selectable_value(
+                                                            &mut self.remote_desktop_settings.default_quality,
+                                                            quality,
+                                                            label,
+                                                        );
+                                                    }
+                                                });
+                                        });
+                                        ui.horizontal(|ui| {
+                                            ui.label("New RDP/VNC profile clipboard");
+                                            egui::ComboBox::from_id_salt("remote_desktop_default_clipboard")
+                                                .selected_text(match self.remote_desktop_settings.default_clipboard {
+                                                    crate::remote_desktop::profile::Clipboard::Both => "Both directions",
+                                                    crate::remote_desktop::profile::Clipboard::RemoteToLocal => "Remote to local",
+                                                    crate::remote_desktop::profile::Clipboard::LocalToRemote => "Local to remote",
+                                                    crate::remote_desktop::profile::Clipboard::Off => "Off",
+                                                })
+                                                .show_ui(ui, |ui| {
+                                                    for (direction, label) in [
+                                                        (crate::remote_desktop::profile::Clipboard::Both, "Both directions"),
+                                                        (crate::remote_desktop::profile::Clipboard::RemoteToLocal, "Remote to local"),
+                                                        (crate::remote_desktop::profile::Clipboard::LocalToRemote, "Local to remote"),
+                                                        (crate::remote_desktop::profile::Clipboard::Off, "Off"),
+                                                    ] {
+                                                        ui.selectable_value(
+                                                            &mut self.remote_desktop_settings.default_clipboard,
+                                                            direction,
+                                                            label,
+                                                        );
+                                                    }
+                                                });
+                                        });
+                                        ui.label(RichText::new("These apply only when creating new host protocol profiles.").size(10.5).color(palette.text_muted));
+                                        ui.add_space(8.0);
                                         ui.label(RichText::new("RDP H.264 decoder").size(12.0).strong().color(palette.text_primary));
                                         ui.horizontal(|ui| {
                                             if ui.button("Choose Cisco OpenH264 library…").clicked() {

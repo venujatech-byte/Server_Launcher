@@ -3648,7 +3648,13 @@ impl eframe::App for LauncherApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             }
         }
-        let ssh_modal_action = render_ssh_host_modal(ctx, &mut self.ssh_host_modal, &p, self.ssh_probe_timeouts.connection_test_seconds);
+        let ssh_modal_action = render_ssh_host_modal(
+            ctx,
+            &mut self.ssh_host_modal,
+            &p,
+            self.ssh_probe_timeouts.connection_test_seconds,
+            &self.remote_desktop_settings,
+        );
         match ssh_modal_action {
             ModalAction::SaveSshHost(mut new_host, old_id, mut staged) => {
                 let previous_hosts = self.ssh_hosts.clone();

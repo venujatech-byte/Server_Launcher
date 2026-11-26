@@ -210,6 +210,8 @@ pub enum RemoteRecordingFormat {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RemoteDesktopSettings {
+    pub default_quality: crate::remote_desktop::profile::Quality,
+    pub default_clipboard: crate::remote_desktop::profile::Clipboard,
     pub show_live_fps: bool,
     pub warn_unencrypted_vnc: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -228,6 +230,8 @@ pub struct RemoteDesktopSettings {
 impl Default for RemoteDesktopSettings {
     fn default() -> Self {
         Self {
+            default_quality: crate::remote_desktop::profile::Quality::Auto,
+            default_clipboard: crate::remote_desktop::profile::Clipboard::Both,
             show_live_fps: false,
             warn_unencrypted_vnc: true,
             h264_library_path: None,
@@ -533,6 +537,14 @@ mod tests {
     #[test]
     fn old_config_defaults_remote_desktop_safety_settings() {
         let config: ConfigFile = serde_json::from_str(r#"{"servers":[]}"#).unwrap();
+        assert_eq!(
+            config.remote_desktop.default_quality,
+            crate::remote_desktop::profile::Quality::Auto
+        );
+        assert_eq!(
+            config.remote_desktop.default_clipboard,
+            crate::remote_desktop::profile::Clipboard::Both
+        );
         assert!(!config.remote_desktop.show_live_fps);
         assert!(config.remote_desktop.warn_unencrypted_vnc);
         assert!(config.remote_desktop.screenshot_folder.is_none());

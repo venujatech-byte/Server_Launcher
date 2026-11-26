@@ -68,8 +68,13 @@ the final versions.
   protocol channel wiring. Exercise X11 and Wayland modifier handling and use
   an explicit Send keys action where the desktop reserves shortcuts.
 
-No connection, platform interoperability, or performance measurements have
-been completed. Record results here only after a runnable viewer is measured.
+Compile checks on 2026-11-26 passed for Linux (`cargo check --locked
+--all-targets` on the SSH test PC) and Windows x86_64 MSVC (`cargo check
+--locked --all-targets --target x86_64-pc-windows-msvc` in GitHub Actions) at
+`d0409ef`. These checks do not prove that either viewer connects or performs
+well. No connection, platform interoperability, or performance measurements
+have been completed. Record those results here only after a runnable viewer is
+measured.
 
 ## Display profiles and input controls
 
@@ -161,10 +166,10 @@ to a loopback TCP port chosen from the OS ephemeral range; the viewer owns the
 child in a kill-on-close job object. Both paths use the host's key, agent, and
 host-key preferences. Unix password authentication uses an inherited
 descriptor with sshpass. Windows background tunnels require a key or agent;
-saved SSH passwords are not passed to hidden processes. The full Windows app
-cross-check could not run here because MinGW is missing, but the Windows tunnel
-module passed an isolated target `cargo check`. End-to-end tunnel behavior still
-needs validation on a Windows machine and real VNC/RDP servers.
+saved SSH passwords are not passed to hidden processes. The full Windows
+x86_64 MSVC app passed the GitHub Actions compile check, but the viewer and
+tunnel still need runtime validation on a Windows machine and real VNC/RDP
+servers.
 
 ## VNC input
 

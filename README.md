@@ -133,8 +133,9 @@ window. VNC
 username-based authentication is not implemented. VNC cursor
 shapes can be toggled in the VNC profile; they are enabled by default and need
 server support for RichCursor or XCursor shapes and PointerPos. SSH desktop tunnels support Unix
-and Windows key/agent credentials; Windows password-only
-SSH tunnels are not supported. Protocol interoperation and performance still
+and Windows key/agent credentials. Windows password-only SSH tunnels use the
+OS credential store through OpenSSH askpass and still need runtime validation.
+Protocol interoperation and performance still
 need testing against real servers on Windows, Linux X11, and Linux Wayland.
 
 ### Local Apps & Packages

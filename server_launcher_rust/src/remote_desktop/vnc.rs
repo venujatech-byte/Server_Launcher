@@ -157,6 +157,7 @@ pub(crate) struct Connection {
     pub(crate) received_bytes: Arc<AtomicU64>,
     pub(crate) connected_since: Option<Instant>,
     pub(crate) finished: bool,
+    pub(crate) password_retry: bool,
     pub(crate) reconnect_at: Option<Instant>,
     pub(crate) receiving_frame: bool,
     pub(crate) clipboard_too_large: bool,
@@ -178,13 +179,20 @@ pub(crate) struct Connection {
 }
 
 impl Connection {
-    pub(crate) fn start(host: SshRemoteHost, ctx: egui::Context) -> Arc<Mutex<Self>> {
+    pub(crate) fn start(
+        host: SshRemoteHost,
+        session_password: Option<Zeroizing<String>>,
+        ctx: egui::Context,
+    ) -> Arc<Mutex<Self>> {
         let reconnect = host
             .vnc
             .as_ref()
-            .is_some_and(|profile| profile.auto_reconnect);
+            .is_some_and(|profile| profile.auto_reconnect)
+            && session_password.is_none();
+        let session_password = Arc::new(Mutex::new(session_password));
         Self::start_worker("Connecting to VNC…", reconnect, ctx, move |state, ctx| {
-            run(&host, state, ctx)
+            let password = session_password.lock().unwrap().take();
+            run(&host, password, state, ctx)
         })
     }
 
@@ -202,6 +210,7 @@ impl Connection {
             received_bytes: Arc::new(AtomicU64::new(0)),
             connected_since: None,
             finished: false,
+            password_retry: false,
             reconnect_at: None,
             receiving_frame: false,
             clipboard_too_large: false,
@@ -235,7 +244,15 @@ impl Connection {
                 {
                     retries = 0;
                 }
-                let should_retry = should_retry(auto_reconnect, retries);
+                let password_retry = result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|error| error.kind() == io::ErrorKind::PermissionDenied);
+                let should_retry = should_retry_after(
+                    auto_reconnect,
+                    retries,
+                    result.as_ref().err().map(io::Error::kind),
+                );
                 state.connected = false;
                 state.input = None;
                 state.clipboard_sent = Arc::new(AtomicBool::new(false));
@@ -251,6 +268,7 @@ impl Connection {
                 state.status = result
                     .err()
                     .map_or_else(|| "Session ended".into(), |error| error.to_string());
+                state.password_retry = password_retry;
                 if !should_retry {
                     state.finished = true;
                     ctx.request_repaint();
@@ -270,6 +288,7 @@ impl Connection {
                     break;
                 }
                 state.status = initial_status.into();
+                state.password_retry = false;
                 state.framebuffer = Framebuffer::default();
                 state.received_bytes.store(0, Ordering::Relaxed);
                 state.receiving_frame = false;
@@ -302,6 +321,14 @@ fn should_retry(auto_reconnect: bool, retries: u32) -> bool {
     auto_reconnect && retries < 5
 }
 
+fn should_retry_after(
+    auto_reconnect: bool,
+    retries: u32,
+    error_kind: Option<io::ErrorKind>,
+) -> bool {
+    should_retry(auto_reconnect, retries) && error_kind != Some(io::ErrorKind::PermissionDenied)
+}
+
 fn use_rgb565(quality: Quality, color_depth: u8) -> bool {
     match quality {
         Quality::Fast => true,
@@ -325,6 +352,10 @@ mod warning_tests {
 
 fn error(message: &str) -> io::Error {
     io::Error::other(message)
+}
+
+fn authentication_error(message: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::PermissionDenied, message)
 }
 
 fn private(address: IpAddr) -> bool {
@@ -352,7 +383,12 @@ pub(crate) fn needs_unencrypted_warning(host: &str) -> bool {
         .map_or(true, |address| !private(address))
 }
 
-fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> io::Result<()> {
+fn run(
+    host: &SshRemoteHost,
+    session_password: Option<Zeroizing<String>>,
+    state: &Mutex<Connection>,
+    ctx: &egui::Context,
+) -> io::Result<()> {
     let profile = host
         .vnc
         .as_ref()
@@ -363,15 +399,20 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
             "This VNC viewer supports classic password authentication without a username.",
         ));
     }
-    let password =
-        credentials::load(host, DesktopProtocol::Vnc).map_err(|message| error(&message))?;
+    let password = match session_password {
+        Some(password) => Some(password),
+        None => credentials::load(host, DesktopProtocol::Vnc)
+            .map_err(|message| authentication_error(&message))?,
+    };
     if password.as_ref().is_some_and(|value| value.is_empty()) {
-        return Err(error(
+        return Err(authentication_error(
             "The saved VNC password is empty. Update it in the VNC tab.",
         ));
     }
     if password.as_ref().is_some_and(|value| value.len() > 8) {
-        return Err(error("Classic VNC passwords must be no longer than 8 bytes."));
+        return Err(error(
+            "Classic VNC passwords must be no longer than 8 bytes.",
+        ));
     }
     let mut stream: Box<dyn DesktopStream> = if profile.tunnel_via_ssh {
         tunnel::open(host, profile.port, TUNNEL_HANDSHAKE_TIMEOUT)?
@@ -622,11 +663,7 @@ impl<R: Read> Read for CountReads<R> {
     }
 }
 
-fn open_direct(
-    host: &SshRemoteHost,
-    port: u16,
-    user_timeout_secs: u32,
-) -> io::Result<TcpStream> {
+fn open_direct(host: &SshRemoteHost, port: u16, user_timeout_secs: u32) -> io::Result<TcpStream> {
     let address = host.host.trim().trim_matches(['[', ']']);
     let addresses = (address, port)
         .to_socket_addrs()
@@ -663,7 +700,10 @@ fn set_tcp_user_timeout(stream: &TcpStream, seconds: u32) -> io::Result<()> {
         return Ok(());
     }
     let timeout_ms = seconds.checked_mul(1_000).ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "TCP user timeout is too large.")
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "TCP user timeout is too large.",
+        )
     })?;
 
     #[cfg(target_os = "linux")]
@@ -698,10 +738,14 @@ fn handshake(
     password: Option<&[u8]>,
 ) -> io::Result<[usize; 2]> {
     if password.is_some_and(|password| password.is_empty()) {
-        return Err(error("The saved VNC password is empty. Update it in the VNC tab."));
+        return Err(authentication_error(
+            "The saved VNC password is empty. Update it in the VNC tab.",
+        ));
     }
     if password.is_some_and(|password| password.len() > 8) {
-        return Err(error("Classic VNC passwords must be no longer than 8 bytes."));
+        return Err(error(
+            "Classic VNC passwords must be no longer than 8 bytes.",
+        ));
     }
     let mut version = [0; 12];
     stream.read_exact(&mut version)?;
@@ -731,11 +775,13 @@ fn handshake(
         }
     };
     if !compatible {
-        return Err(error(if password.is_some() {
-            "The VNC server did not offer classic password authentication."
+        return Err(if password.is_some() {
+            error("The VNC server did not offer classic password authentication.")
         } else {
-            "The VNC server requires a password or does not offer a supported security mode."
-        }));
+            authentication_error(
+                "The VNC server requires a password or does not offer a supported security mode.",
+            )
+        });
     }
     if let Some(password) = password {
         let mut challenge = [0; 16];
@@ -747,7 +793,7 @@ fn handshake(
         let mut result = [0; 4];
         stream.read_exact(&mut result)?;
         if result != [0; 4] {
-            return Err(error(
+            return Err(authentication_error(
                 "The VNC server rejected authentication. Check the password or try again later.",
             ));
         }
@@ -1808,6 +1854,16 @@ mod tests {
         assert!(should_retry(true, 4));
         assert!(!should_retry(true, 5));
         assert!(!should_retry(false, 0));
+    }
+
+    #[test]
+    fn authentication_failures_do_not_retry_automatically() {
+        assert!(!should_retry_after(
+            true,
+            0,
+            Some(io::ErrorKind::PermissionDenied)
+        ));
+        assert!(should_retry_after(true, 0, Some(io::ErrorKind::TimedOut)));
     }
 
     #[test]

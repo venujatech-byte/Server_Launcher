@@ -53,6 +53,7 @@ use std::{
     time::{Duration, Instant},
 };
 use x509_cert::der::Decode;
+use zeroize::Zeroizing;
 
 const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -148,19 +149,27 @@ pub(crate) fn start(
     host: SshRemoteHost,
     config_path: PathBuf,
     monitor_size: Option<[u32; 2]>,
+    session_password: Option<Zeroizing<String>>,
     ctx: egui::Context,
 ) -> Arc<Mutex<Connection>> {
     let reconnect = host
         .rdp
         .as_ref()
-        .is_some_and(|profile| profile.auto_reconnect);
+        .is_some_and(|profile| profile.auto_reconnect)
+        && session_password.is_none();
+    let session_password = Arc::new(Mutex::new(session_password));
     Connection::start_worker("Connecting to RDP…", reconnect, ctx, move |state, ctx| {
-        run(&host, &config_path, monitor_size, state, ctx)
+        let password = session_password.lock().unwrap().take();
+        run(&host, &config_path, monitor_size, password, state, ctx)
     })
 }
 
 fn error(message: &str) -> io::Error {
     io::Error::other(message)
+}
+
+fn authentication_error(message: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::PermissionDenied, message)
 }
 
 struct NoKdc;
@@ -178,6 +187,7 @@ fn run(
     host: &SshRemoteHost,
     config_path: &Path,
     monitor_size: Option<[u32; 2]>,
+    session_password: Option<Zeroizing<String>>,
     state: &Arc<Mutex<Connection>>,
     ctx: &egui::Context,
 ) -> io::Result<()> {
@@ -205,9 +215,14 @@ fn run(
     } else {
         None
     };
-    let password = credentials::load(host, DesktopProtocol::Rdp)
-        .map_err(|message| error(&message))?
-        .ok_or_else(|| error("Save an RDP password in the host settings before connecting."))?;
+    let password = match session_password {
+        Some(password) => password,
+        None => credentials::load(host, DesktopProtocol::Rdp)
+            .map_err(|message| authentication_error(&message))?
+            .ok_or_else(|| {
+                authentication_error("No saved RDP password is available for this host.")
+            })?,
+    };
     let hostname = host.host.trim().trim_matches(['[', ']']);
     let server_name = rustls::pki_types::ServerName::try_from(hostname.to_owned())
         .map_err(|_| error("The saved RDP host is not a valid TLS name."))?;
@@ -379,7 +394,7 @@ fn run(
     let result = ironrdp_blocking::connect_finalize(
         upgrade, connector, &mut framed, &mut NoKdc,
         hostname.to_owned().into(), binding, None,
-    ).map_err(|_| error("RDP login failed. Check the username, domain, password, and Remote Desktop permissions."))?
+    ).map_err(|_| authentication_error("RDP login failed. Check the username, domain, password, and Remote Desktop permissions."))?
         .into_connected()
         .map_err(|_| error("The RDP server requested a session redirect that this client does not support."))?;
 

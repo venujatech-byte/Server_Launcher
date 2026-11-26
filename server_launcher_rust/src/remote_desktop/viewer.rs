@@ -15,6 +15,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use zeroize::Zeroizing;
 
 pub(crate) fn run(
     host_id: &str,
@@ -200,6 +201,7 @@ pub(crate) fn run(
                 fps: 0.0,
                 receive_sample: None,
                 receive_kbps: 0.0,
+                password_entry: Zeroizing::new(String::new()),
             }))
         }),
     )
@@ -209,6 +211,7 @@ fn start_connection(
     host: crate::config::SshRemoteHost,
     config_path: &Path,
     protocol: DesktopProtocol,
+    session_password: Option<Zeroizing<String>>,
     ctx: &egui::Context,
 ) -> Arc<Mutex<Connection>> {
     match protocol {
@@ -221,9 +224,15 @@ fn start_connection(
             let monitor_size = monitor_pixels.map(|size| {
                 super::rdp::display_dimensions(size.x.round() as u32, size.y.round() as u32)
             });
-            super::rdp::start(host, config_path.to_owned(), monitor_size, ctx.clone())
+            super::rdp::start(
+                host,
+                config_path.to_owned(),
+                monitor_size,
+                session_password,
+                ctx.clone(),
+            )
         }
-        DesktopProtocol::Vnc => Connection::start(host, ctx.clone()),
+        DesktopProtocol::Vnc => Connection::start(host, session_password, ctx.clone()),
     }
 }
 
@@ -278,6 +287,7 @@ struct Viewer {
     fps: f64,
     receive_sample: Option<(Instant, u64)>,
     receive_kbps: f64,
+    password_entry: Zeroizing<String>,
 }
 
 impl Viewer {
@@ -457,6 +467,7 @@ impl eframe::App for Viewer {
                     host.clone(),
                     &self.config_path,
                     self.protocol,
+                    None,
                     ctx,
                 ));
             }
@@ -554,76 +565,81 @@ impl eframe::App for Viewer {
             connected,
             reconnect_at,
             finished,
+            password_retry,
             connected_since,
             received_bytes,
             display_updates,
             remote_cursor,
-        ) =
-            if let Some(connection) = &self.connection {
-                let mut connection = connection.lock().unwrap();
-                if connection.clipboard_sent.swap(false, Ordering::Relaxed) {
-                    self.clipboard_notice = Some((Instant::now(), "Clipboard sent"));
+        ) = if let Some(connection) = &self.connection {
+            let mut connection = connection.lock().unwrap();
+            if connection.clipboard_sent.swap(false, Ordering::Relaxed) {
+                self.clipboard_notice = Some((Instant::now(), "Clipboard sent"));
+            }
+            if connection
+                .clipboard_unsupported
+                .swap(false, Ordering::Relaxed)
+            {
+                self.clipboard_notice = Some((
+                    Instant::now(),
+                    "Classic VNC supports Latin-1 text only; images are unsupported",
+                ));
+            }
+            if std::mem::take(&mut connection.clipboard_too_large) {
+                self.clipboard_notice = Some((Instant::now(), "Clipboard exceeds the 1 MiB limit"));
+            }
+            if let Some(text) = connection.clipboard_text.take() {
+                self.clipboard_notice = Some((Instant::now(), "Clipboard received"));
+                if let Some(clipboard) = &self.clipboard_sync {
+                    clipboard.set_remote_text(text);
+                } else {
+                    ctx.copy_text(text);
                 }
-                if connection.clipboard_unsupported.swap(false, Ordering::Relaxed) {
-                    self.clipboard_notice = Some((
-                        Instant::now(),
-                        "Classic VNC supports Latin-1 text only; images are unsupported",
-                    ));
+            }
+            if let Some(image) = connection.clipboard_image.take() {
+                self.clipboard_notice = Some((Instant::now(), "Clipboard image received"));
+                if let Some(clipboard) = &self.clipboard_sync {
+                    clipboard.set_remote_image(image);
                 }
-                if std::mem::take(&mut connection.clipboard_too_large) {
-                    self.clipboard_notice =
-                        Some((Instant::now(), "Clipboard exceeds the 1 MiB limit"));
-                }
-                if let Some(text) = connection.clipboard_text.take() {
-                    self.clipboard_notice = Some((Instant::now(), "Clipboard received"));
-                    if let Some(clipboard) = &self.clipboard_sync {
-                        clipboard.set_remote_text(text);
-                    } else {
-                        ctx.copy_text(text);
-                    }
-                }
-                if let Some(image) = connection.clipboard_image.take() {
-                    self.clipboard_notice = Some((Instant::now(), "Clipboard image received"));
-                    if let Some(clipboard) = &self.clipboard_sync {
-                        clipboard.set_remote_image(image);
-                    }
-                }
-                (
-                    if connection.receiving_frame {
-                        Vec::new()
-                    } else {
-                        connection.framebuffer.take_updates()
-                    },
-                    connection.status.clone(),
-                    connection.connected,
-                    connection.reconnect_at,
-                    connection.finished,
-                    connection.connected_since,
-                    connection.received_bytes.load(Ordering::Relaxed),
-                    connection.display_updates,
-                    connection.vnc_cursor.as_ref().map(|image| {
-                        (
-                            image.clone(),
-                            connection.vnc_cursor_hotspot,
-                            connection.vnc_cursor_position,
-                            connection.vnc_cursor_revision,
-                        )
-                    }),
-                )
-            } else {
-                (
-                    self.framebuffer.take_updates(),
-                    self.message.into(),
-                    false,
-                    None,
-                    false,
-                    None,
-                    0,
-                    0,
-                    None,
-                )
-            };
-        if should_close_after_failure(self.close_on_failure, finished, connected) {
+            }
+            (
+                if connection.receiving_frame {
+                    Vec::new()
+                } else {
+                    connection.framebuffer.take_updates()
+                },
+                connection.status.clone(),
+                connection.connected,
+                connection.reconnect_at,
+                connection.finished,
+                connection.password_retry,
+                connection.connected_since,
+                connection.received_bytes.load(Ordering::Relaxed),
+                connection.display_updates,
+                connection.vnc_cursor.as_ref().map(|image| {
+                    (
+                        image.clone(),
+                        connection.vnc_cursor_hotspot,
+                        connection.vnc_cursor_position,
+                        connection.vnc_cursor_revision,
+                    )
+                }),
+            )
+        } else {
+            (
+                self.framebuffer.take_updates(),
+                self.message.into(),
+                false,
+                false,
+                None,
+                false,
+                None,
+                0,
+                0,
+                None,
+            )
+        };
+        if should_close_after_failure(self.close_on_failure, finished, connected) && !password_retry
+        {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
@@ -795,6 +811,7 @@ impl eframe::App for Viewer {
                                 host.clone(),
                                 &self.config_path,
                                 self.protocol,
+                                None,
                                 ctx,
                             ));
                             self.texture = None;
@@ -1192,7 +1209,56 @@ impl eframe::App for Viewer {
                 }
             }
             let Some(texture) = &self.texture else {
-                ui.centered_and_justified(|ui| ui.label(&status));
+                if password_retry && self.session_host.is_some() {
+                    let mut retry = false;
+                    ui.with_layout(
+                        egui::Layout::centered_and_justified(egui::Direction::TopDown),
+                        |ui| {
+                            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                                ui.set_max_width(420.0);
+                                ui.heading("Sign-in needs a password");
+                                ui.label(&status);
+                                ui.add_space(8.0);
+                                ui.label(
+                                    "Enter a password for this session. It will not be saved.",
+                                );
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut *self.password_entry)
+                                        .password(true)
+                                        .hint_text("Password"),
+                                );
+                                if self.protocol == DesktopProtocol::Vnc {
+                                    ui.label("Classic VNC accepts at most 8 password bytes.");
+                                }
+                                let valid = !self.password_entry.is_empty()
+                                    && (self.protocol != DesktopProtocol::Vnc
+                                        || self.password_entry.len() <= 8);
+                                retry = ui
+                                    .add_enabled(
+                                        valid,
+                                        egui::Button::new("Connect for this session"),
+                                    )
+                                    .clicked();
+                            });
+                        },
+                    );
+                    if retry {
+                        if let Some(host) = &self.session_host {
+                            let password = std::mem::take(&mut self.password_entry);
+                            self.connection = Some(start_connection(
+                                host.clone(),
+                                &self.config_path,
+                                self.protocol,
+                                Some(password),
+                                ctx,
+                            ));
+                            self.texture = None;
+                            ctx.request_repaint();
+                        }
+                    }
+                } else {
+                    ui.centered_and_justified(|ui| ui.label(&status));
+                }
                 return;
             };
             let native = texture.size_vec2() / ctx.pixels_per_point();

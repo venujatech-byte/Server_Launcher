@@ -3,13 +3,14 @@
 use super::{
     credentials::{self, DesktopProtocol},
     framebuffer::Region,
-    profile::{RdpProfile, RdpSecurity, Resolution},
+    profile::{Clipboard, RdpProfile, RdpSecurity, Resolution},
     trust::Verifier,
     tunnel::{self, DesktopStream},
     vnc::Connection,
 };
 use crate::config::SshRemoteHost;
 use ironrdp::{
+    cliprdr::{pdu::ClipboardFormatId, CliprdrClient},
     connector::{self, connection_activation::ConnectionActivationState, sspi, Sequence},
     core::WriteBuf,
     displaycontrol::client::DisplayControlClient,
@@ -107,6 +108,14 @@ fn run(
     let mut framed = Framed::new(socket);
     let mut connector =
         connector::ClientConnector::new(config(host, profile, &password, monitor_size), local_addr);
+    if matches!(
+        profile.clipboard,
+        Clipboard::Both | Clipboard::RemoteToLocal
+    ) {
+        connector.attach_static_channel(CliprdrClient::new(Box::new(
+            super::rdp_clipboard::ClipboardBackend::default(),
+        )));
+    }
     let max_monitor_area = Arc::new(AtomicU64::new(0));
     let server_limit = max_monitor_area.clone();
     let resize_state = state.clone();
@@ -270,6 +279,25 @@ fn run(
             for frame in frames {
                 if let ActiveStageOutput::ResponseFrame(bytes) = frame {
                     framed.write_all(&bytes)?;
+                }
+            }
+        }
+        if let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() {
+            if let Some(clipboard) =
+                channel.downcast_backend_mut::<super::rdp_clipboard::ClipboardBackend>()
+            {
+                if let Some(text) = clipboard.received.take() {
+                    state.lock().unwrap().clipboard_text = Some(text);
+                    ctx.request_repaint();
+                }
+                if clipboard.request_text() {
+                    let request = channel
+                        .initiate_paste(ClipboardFormatId::CF_UNICODETEXT)
+                        .map_err(|_| error("Could not request remote clipboard text."))?;
+                    let packet = stage
+                        .process_svc_processor_messages(request)
+                        .map_err(|_| error("Could not encode the remote clipboard request."))?;
+                    framed.write_all(&packet)?;
                 }
             }
         }

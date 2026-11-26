@@ -457,9 +457,10 @@ fn run(
         .as_ref()
         .filter(|p| p.enabled)
         .ok_or_else(|| error("VNC is disabled for this host."))?;
-    if !profile.username.trim().is_empty() {
-        return Err(error(
-            "This VNC viewer supports classic password authentication without a username.",
+    let username = profile.username.trim();
+    if !username.is_empty() && !profile.tunnel_via_ssh {
+        return Err(authentication_error(
+            "VNC username authentication requires Tunnel via SSH so the credentials stay encrypted.",
         ));
     }
     let password = match session_password {
@@ -472,9 +473,19 @@ fn run(
             "The saved VNC password is empty. Update it in the VNC tab.",
         ));
     }
-    if password.as_ref().is_some_and(|value| value.len() > 8) {
+    if username.is_empty() && password.as_ref().is_some_and(|value| value.len() > 8) {
         return Err(error(
             "Classic VNC passwords must be no longer than 8 bytes.",
+        ));
+    }
+    if !username.is_empty()
+        && (username.len() > 1024
+            || password
+                .as_ref()
+                .is_none_or(|value| value.is_empty() || value.len() > 4096))
+    {
+        return Err(authentication_error(
+            "VNC username authentication requires a password; the username must be at most 1024 bytes and the password at most 4096 bytes.",
         ));
     }
     let mut stream: Box<dyn DesktopStream> = if profile.tunnel_via_ssh {
@@ -494,7 +505,9 @@ fn run(
     let mut size = handshake(
         &mut stream,
         profile.shared,
+        (!username.is_empty()).then_some(username.as_bytes()),
         password.as_deref().map(String::as_bytes),
+        profile.tunnel_via_ssh,
     ).map_err(|err| {
         if profile.tunnel_via_ssh && matches!(err.kind(), io::ErrorKind::UnexpectedEof | io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset | io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock) {
             error("The SSH tunnel did not reach the VNC server. Check SSH access and whether VNC is listening on the remote loopback address.")
@@ -805,16 +818,35 @@ fn set_tcp_user_timeout(stream: &TcpStream, seconds: u32) -> io::Result<()> {
 fn handshake(
     stream: &mut (impl Read + Write),
     shared: bool,
+    username: Option<&[u8]>,
     password: Option<&[u8]>,
+    allow_tunneled_plain: bool,
 ) -> io::Result<[usize; 2]> {
+    if username.is_some() && !allow_tunneled_plain {
+        return Err(authentication_error(
+            "VNC username authentication requires Tunnel via SSH so the credentials stay encrypted.",
+        ));
+    }
+    if username.is_some() && password.map_or(true, |password| password.is_empty()) {
+        return Err(authentication_error(
+            "VNC username authentication requires a non-empty password.",
+        ));
+    }
     if password.is_some_and(|password| password.is_empty()) {
         return Err(authentication_error(
             "The saved VNC password is empty. Update it in the VNC tab.",
         ));
     }
-    if password.is_some_and(|password| password.len() > 8) {
+    if username.is_none() && password.is_some_and(|password| password.len() > 8) {
         return Err(error(
             "Classic VNC passwords must be no longer than 8 bytes.",
+        ));
+    }
+    if username.is_some_and(|username| username.is_empty() || username.len() > 1024)
+        || password.is_some_and(|password| password.len() > 4096)
+    {
+        return Err(authentication_error(
+            "VNC username/password authentication requires a non-empty username (at most 1024 bytes) and a password no longer than 4096 bytes.",
         ));
     }
     let mut version = [0; 12];
@@ -826,8 +858,19 @@ fn handshake(
         return Err(error("The server did not offer a supported VNC version."));
     }
     stream.write_all(&version)?;
-    let preferred = if password.is_some() { 2 } else { 1 };
+    let preferred = if username.is_some() {
+        19
+    } else if password.is_some() {
+        2
+    } else {
+        1
+    };
     let compatible = if &version == b"RFB 003.003\n" {
+        if username.is_some() {
+            return Err(authentication_error(
+                "This VNC server uses an older protocol without tunneled username authentication.",
+            ));
+        }
         let mut kind = [0; 4];
         stream.read_exact(&mut kind)?;
         let offered = u32::from_be_bytes(kind);
@@ -862,13 +905,52 @@ fn handshake(
             "The VNC server did not offer a supported security mode.",
         ));
     }
-    if let Some(password) = password {
+    if username.is_some() {
+        let mut server_version = [0; 2];
+        stream.read_exact(&mut server_version)?;
+        if server_version != [0, 2] {
+            return Err(error(
+                "The VNC server offered an unsupported VeNCrypt version.",
+            ));
+        }
+        stream.write_all(&[0, 2])?;
+        let mut acknowledgement = [0];
+        stream.read_exact(&mut acknowledgement)?;
+        if acknowledgement != [0] {
+            return Err(authentication_error(
+                "The VNC server rejected VeNCrypt negotiation.",
+            ));
+        }
+        let mut count = [0];
+        stream.read_exact(&mut count)?;
+        if count[0] > 64 {
+            return Err(error("The VNC server offered too many VeNCrypt subtypes."));
+        }
+        let mut subtypes = vec![0; usize::from(count[0]) * 4];
+        stream.read_exact(&mut subtypes)?;
+        if !subtypes
+            .chunks_exact(4)
+            .any(|subtype| subtype == 256u32.to_be_bytes())
+        {
+            return Err(authentication_error(
+                "The VNC server does not offer VeNCrypt Plain authentication. Configure the server for VeNCrypt Plain and keep Tunnel via SSH enabled.",
+            ));
+        }
+        stream.write_all(&256u32.to_be_bytes())?;
+        let username = username.unwrap();
+        let password = password
+            .ok_or_else(|| authentication_error("Enter a VNC password before connecting."))?;
+        stream.write_all(&(username.len() as u32).to_be_bytes())?;
+        stream.write_all(&(password.len() as u32).to_be_bytes())?;
+        stream.write_all(username)?;
+        stream.write_all(password)?;
+    } else if let Some(password) = password {
         let mut challenge = [0; 16];
         stream.read_exact(&mut challenge)?;
         let response = response(password, challenge);
         stream.write_all(&*response)?;
     }
-    if password.is_some() || &version == b"RFB 003.008\n" {
+    if username.is_some() || password.is_some() || &version == b"RFB 003.008\n" {
         let mut result = [0; 4];
         stream.read_exact(&mut result)?;
         if result != [0; 4] {
@@ -1649,11 +1731,13 @@ mod tests {
     #[test]
     fn rejects_invalid_classic_password_lengths_before_reading_the_server() {
         let mut stream = io::Cursor::new(Vec::<u8>::new());
-        assert!(handshake(&mut stream, true, Some(b"123456789"))
-            .unwrap_err()
-            .to_string()
-            .contains("8 bytes"));
-        assert!(handshake(&mut stream, true, Some(b""))
+        assert!(
+            handshake(&mut stream, true, None, Some(b"123456789"), false)
+                .unwrap_err()
+                .to_string()
+                .contains("8 bytes")
+        );
+        assert!(handshake(&mut stream, true, None, Some(b""), false)
             .unwrap_err()
             .to_string()
             .contains("empty"));
@@ -2053,7 +2137,7 @@ mod tests {
             incoming: io::Cursor::new(b"RFB 003.008\n\x01\x01".to_vec()),
             outgoing: Vec::new(),
         };
-        assert!(handshake(&mut peer, true, Some(b"test")).is_err());
+        assert!(handshake(&mut peer, true, None, Some(b"test"), false).is_err());
         assert_eq!(peer.outgoing, b"RFB 003.008\n");
     }
 
@@ -2064,7 +2148,7 @@ mod tests {
             outgoing: Vec::new(),
         };
         assert_eq!(
-            handshake(&mut password_offer, true, None)
+            handshake(&mut password_offer, true, None, None, false)
                 .unwrap_err()
                 .kind(),
             io::ErrorKind::PermissionDenied
@@ -2075,7 +2159,7 @@ mod tests {
             outgoing: Vec::new(),
         };
         assert_eq!(
-            handshake(&mut unsupported_offer, true, None)
+            handshake(&mut unsupported_offer, true, None, None, false)
                 .unwrap_err()
                 .kind(),
             io::ErrorKind::Other
@@ -2093,10 +2177,62 @@ mod tests {
             incoming: io::Cursor::new(input),
             outgoing: Vec::new(),
         };
-        assert_eq!(handshake(&mut peer, true, Some(b"test")).unwrap(), [16, 8]);
+        assert_eq!(
+            handshake(&mut peer, true, None, Some(b"test"), false).unwrap(),
+            [16, 8]
+        );
         assert_eq!(&peer.outgoing[..13], b"RFB 003.008\n\x02");
         assert_eq!(&peer.outgoing[13..29], &*response(b"test", [0; 16]));
         assert_eq!(&peer.outgoing[29..], &[1]);
+    }
+
+    #[test]
+    fn vencrypt_plain_username_auth_is_only_allowed_inside_the_ssh_tunnel() {
+        let mut direct = Transcript {
+            incoming: io::Cursor::new(Vec::new()),
+            outgoing: Vec::new(),
+        };
+        assert_eq!(
+            handshake(&mut direct, true, Some(b"alice"), Some(b"secret"), false)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        assert!(direct.outgoing.is_empty());
+
+        let mut input = b"RFB 003.008\n\x01\x13".to_vec();
+        input.extend_from_slice(&[0, 2]); // VeNCrypt 0.2
+        input.extend_from_slice(&[0, 2]); // Success, two subtypes follow
+        input.extend_from_slice(&[0x00, 0x00, 0x01, 0x03]); // VeNCrypt TLSPlain
+        input.extend_from_slice(&[0x00, 0x00, 0x01, 0x00]); // VeNCrypt Plain
+        input.extend_from_slice(&[0; 4]); // SecurityResult
+        input.extend_from_slice(&[0, 16, 0, 8]);
+        input.extend_from_slice(&[0; 20]);
+        let mut peer = Transcript {
+            incoming: io::Cursor::new(input),
+            outgoing: Vec::new(),
+        };
+
+        assert_eq!(
+            handshake(
+                &mut peer,
+                true,
+                Some(b"alice"),
+                Some(b"correct horse"),
+                true,
+            )
+            .unwrap(),
+            [16, 8]
+        );
+        let mut expected = b"RFB 003.008\n".to_vec();
+        expected.extend_from_slice(&[19, 0, 2]);
+        expected.extend_from_slice(&256u32.to_be_bytes());
+        expected.extend_from_slice(&5u32.to_be_bytes());
+        expected.extend_from_slice(&13u32.to_be_bytes());
+        expected.extend_from_slice(b"alice");
+        expected.extend_from_slice(b"correct horse");
+        expected.push(1);
+        assert_eq!(peer.outgoing, expected);
     }
 
     #[test]

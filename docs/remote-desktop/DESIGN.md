@@ -148,7 +148,12 @@ pseudo-encodings; Auto leaves those choices to the server. Servers may ignore
 these optional hints. Direct VNC to a public or unknown address requires an
 explicit warning confirmation. The configured encoding priority is applied for
 the supported encodings.
-Username-based authentication is unsupported.
+Username/password authentication uses VeNCrypt 0.2's Plain subtype only when
+the RFB stream is inside the configured SSH tunnel. The profile refuses to
+send those credentials over direct VNC, and the client will not downgrade to
+classic VNC password authentication if VeNCrypt Plain is unavailable. This
+requires a server configured to offer VeNCrypt Plain; TLSPlain/X509Plain and
+direct VNC TLS are not implemented.
 Rich and X cursor shapes are drawn locally when the server supports either
 cursor encoding and a PointerPos extension. ZRLE uses one bounded persistent zlib stream per
 connection. Classic RFB clipboard text is Latin-1; outgoing Unicode text and
@@ -167,7 +172,9 @@ and [RustCrypto DES 0.8.1](https://docs.rs/des/0.8.1/des/) with its zeroize feat
 DES is used only for this legacy challenge response. A direct session itself is
 unencrypted, so public or unknown endpoints trigger a confirmation before use.
 A configured password requires VNC authentication and rules out unauthenticated
-negotiation. Username-based security modes need a separate implementation.
+negotiation. When a username is configured, the SSH tunnel encrypts VeNCrypt
+Plain authentication credentials in transit; direct username/password
+connections are rejected.
 
 ## SSH stream transport
 

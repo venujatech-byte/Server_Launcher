@@ -336,14 +336,8 @@ pub(crate) fn vnc(
         if let Some(port) = vnc_port(port_text, host) {
             profile.port = port;
         }
-        ui.add_enabled_ui(false, |ui| {
-            text(
-                ui,
-                "Username (not supported by this client)",
-                &mut profile.username,
-            );
-        });
-        ui.label("Only classic VNC password authentication is supported.");
+        text(ui, "Username (optional)", &mut profile.username);
+        ui.label("Username/password login requires VeNCrypt Plain and Tunnel via SSH. Direct plaintext credentials are blocked.");
         choice(ui, "Quality", &mut profile.quality, &[
             (Quality::Auto, "Auto"),
             (Quality::Best, "Best"),

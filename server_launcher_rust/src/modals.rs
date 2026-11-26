@@ -1991,7 +1991,15 @@ pub fn render_ssh_host_modal(
                             );
                             let tunnel_via_ssh = if let Some(profile) = state.vnc.as_mut().filter(|profile| profile.enabled) {
                                 state.vnc_password.show(ui, &mut profile.credential_ref);
-                                ui.label("Classic VNC uses only the first eight bytes of the password.");
+                                if profile.username.trim().is_empty() {
+                                    ui.label("Classic VNC passwords are limited to eight bytes.");
+                                } else if !profile.tunnel_via_ssh {
+                                    let error_color = ui.visuals().error_fg_color;
+                                    ui.colored_label(
+                                        error_color,
+                                        "Enable Tunnel via SSH before using username/password authentication.",
+                                    );
+                                }
                                 Some(profile.tunnel_via_ssh)
                             } else {
                                 None

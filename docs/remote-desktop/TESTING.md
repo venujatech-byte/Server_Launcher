@@ -150,6 +150,14 @@ the viewer's **Send keys** menu.
    verify longer inputs are rejected with a clear message rather than silently
    truncated. Confirm unauthenticated negotiation is not used when a password
    is configured.
+   Configure a test server to offer VeNCrypt 0.2 Plain authentication and
+   connect through the SSH tunnel with a username and password. Verify the
+   profile password is read from the OS credential store, VeNCrypt Plain is
+   selected only inside the SSH tunnel, and authentication succeeds. Repeat
+   with the tunnel disabled and confirm the client rejects the connection
+   before sending the username or password. Also offer only TLSPlain and
+   confirm the client fails closed instead of falling back to unencrypted
+   authentication.
 2. Verify Tight fill, copy, palette, gradient, JPEG, and PNG updates, plus
    Raw, CopyRect, and ZRLE. Include resize and an empty framebuffer. Confirm
    Raw/Cursor pseudo-rectangles do not get treated as framebuffer pixels.
@@ -178,9 +186,10 @@ the viewer's **Send keys** menu.
 
 Tight fill, copy, palette, gradient, JPEG and PNG decoding have unit coverage;
 verify them against a live TigerVNC or x11vnc server before relying on every
-server-specific Tight variant. Username-based VNC authentication, rich
-clipboard, and direct VNC encryption are not currently implemented. Classic
-VNC over a direct connection is unencrypted.
+server-specific Tight variant. VeNCrypt username/password support currently
+requires Plain authentication inside SSH; VeNCrypt TLSPlain/X509Plain, rich
+clipboard, and direct VNC encryption are not implemented. Classic VNC over a
+direct connection is unencrypted.
 
 ## Session and security checks
 

@@ -31,6 +31,40 @@ impl Capture {
         let visible = canvas.intersect(clip);
         for event in events {
             match *event {
+                Event::Copy | Event::Cut | Event::Paste(_) if self.active => {
+                    let key = match event {
+                        Event::Copy => b'c',
+                        Event::Cut => b'x',
+                        Event::Paste(text) => {
+                            if text.len() <= super::vnc::CLIPBOARD_LIMIT {
+                                if let Some(bytes) = text
+                                    .chars()
+                                    .map(|ch| u8::try_from(u32::from(ch)).ok())
+                                    .collect()
+                                {
+                                    send(Input::ClipboardText(bytes));
+                                }
+                            }
+                            b'v'
+                        }
+                        _ => unreachable!(),
+                    };
+                    let previous = self.modifiers;
+                    self.sync_modifiers(
+                        Modifiers {
+                            ctrl: true,
+                            ..Modifiers::NONE
+                        },
+                        &mut send,
+                    );
+                    for pressed in [true, false] {
+                        send(Input::Key {
+                            keysym: u32::from(key),
+                            pressed,
+                        });
+                    }
+                    self.sync_modifiers(previous, &mut send);
+                }
                 Event::WindowFocused(false) => self.release(&mut send),
                 Event::PointerButton {
                     pos,

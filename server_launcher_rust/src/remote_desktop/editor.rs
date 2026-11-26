@@ -227,6 +227,7 @@ pub(crate) fn vnc(ui: &mut Ui, draft: &mut Option<VncProfile>, port_text: &mut S
         ui.checkbox(&mut profile.view_only, "View only");
         ui.checkbox(&mut profile.shared, "Shared session");
         clipboard(ui, &mut profile.clipboard);
+        ui.label("Classic VNC shares Latin-1 text. Click the remote desktop before pasting.");
         choice(
             ui,
             "Scaling",

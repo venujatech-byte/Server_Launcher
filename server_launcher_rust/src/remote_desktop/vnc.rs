@@ -1,7 +1,7 @@
 use super::{
     credentials::{self, DesktopProtocol},
     framebuffer::{Framebuffer, Region},
-    profile::Quality,
+    profile::{Clipboard, Quality},
     tunnel::{self, DesktopStream},
 };
 use crate::config::SshRemoteHost;
@@ -20,6 +20,8 @@ use std::{
 };
 use zeroize::Zeroizing;
 
+pub(crate) const CLIPBOARD_LIMIT: usize = 1024 * 1024;
+
 const RAW: i32 = 0;
 const COPY_RECT: i32 = 1;
 const DESKTOP_SIZE: i32 = -223;
@@ -28,16 +30,22 @@ const EXTENDED_DESKTOP_SIZE: i32 = -308;
 const TIMEOUT: Duration = Duration::from_secs(8);
 const TUNNEL_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Input {
     Key { keysym: u32, pressed: bool },
     Pointer { x: u16, y: u16, buttons: u8 },
+    ClipboardText(Vec<u8>),
     VncResize { size: [u16; 2], screen: [u8; 16] },
 }
 
 impl Input {
     fn write(self, stream: &mut impl Write) -> io::Result<()> {
         match self {
+            Self::ClipboardText(text) => {
+                let [a, b, c, d] = (text.len() as u32).to_be_bytes();
+                stream.write_all(&[6, 0, 0, 0, a, b, c, d])?;
+                stream.write_all(&text)
+            }
             Self::VncResize {
                 size: [width, height],
                 mut screen,
@@ -68,6 +76,7 @@ pub(crate) struct Connection {
     pub status: String,
     pub connected: bool,
     pub(crate) receiving_frame: bool,
+    pub(crate) clipboard_text: Option<String>,
     pub(crate) vnc_screen: Option<[u8; 16]>,
     pub(crate) resize_request: Option<[u32; 2]>,
     pub(crate) trust_prompt: Option<super::trust::Prompt>,
@@ -92,6 +101,7 @@ impl Connection {
             status: initial_status.into(),
             connected: false,
             receiving_frame: false,
+            clipboard_text: None,
             vnc_screen: None,
             resize_request: None,
             trust_prompt: None,
@@ -269,13 +279,19 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
                 let mut header = [0; 7];
                 stream.read_exact(&mut header)?;
                 let size = u32::from_be_bytes(header[3..7].try_into().unwrap());
-                if size > 1024 * 1024 {
+                if size as usize > CLIPBOARD_LIMIT {
                     return Err(error("The VNC clipboard message exceeds the viewer limit."));
                 }
-                io::copy(
-                    &mut Read::by_ref(&mut stream).take(u64::from(size)),
-                    &mut io::sink(),
-                )?;
+                let mut text = vec![0; size as usize];
+                stream.read_exact(&mut text)?;
+                if matches!(
+                    profile.clipboard,
+                    Clipboard::Both | Clipboard::RemoteToLocal
+                ) {
+                    state.lock().unwrap().clipboard_text =
+                        Some(text.into_iter().map(char::from).collect());
+                    ctx.request_repaint();
+                }
             }
             _ => return Err(error("The VNC server sent an unsupported message.")),
         }
@@ -542,6 +558,15 @@ mod tests {
         let mut pixels = [0x00, 0xf8, 0xe0, 0x07, 0x1f, 0x00, 0, 0, 0, 0, 0, 0];
         expand_rgb565(&mut pixels);
         assert_eq!(pixels, [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn writes_classic_clipboard_message() {
+        let mut wire = Vec::new();
+        Input::ClipboardText(vec![b'a', 0xe9])
+            .write(&mut wire)
+            .unwrap();
+        assert_eq!(wire, [6, 0, 0, 0, 0, 0, 0, 2, b'a', 0xe9]);
     }
 
     struct Transcript {

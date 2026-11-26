@@ -2,7 +2,7 @@ use super::{
     credentials::DesktopProtocol,
     framebuffer::{Framebuffer, Region},
     input::Capture,
-    profile::{Resolution, Scaling},
+    profile::{Clipboard, Resolution, Scaling},
     vnc::{Connection, Input},
 };
 use crate::{config::ConfigFile, theme::ThemeMode};
@@ -47,6 +47,16 @@ pub(crate) fn run(
             .as_ref()
             .and_then(|host| host.rdp.as_ref())
             .is_some_and(|profile| profile.resolution == Resolution::FitWindow);
+    let send_clipboard = protocol == DesktopProtocol::Vnc
+        && viewer_host
+            .as_ref()
+            .and_then(|host| host.vnc.as_ref())
+            .is_some_and(|profile| {
+                matches!(
+                    profile.clipboard,
+                    Clipboard::Both | Clipboard::LocalToRemote
+                )
+            });
     let config_path = path.to_owned();
     let palette = ThemeMode::from_id_str(theme).palette();
     let options = eframe::NativeOptions {
@@ -102,6 +112,7 @@ pub(crate) fn run(
                 last_window_size: None,
                 test_pattern,
                 view_only,
+                send_clipboard,
                 capture: Capture::default(),
                 host_name,
                 protocol,
@@ -127,6 +138,7 @@ struct Viewer {
     dynamic_resize: bool,
     last_window_size: Option<[u32; 2]>,
     view_only: bool,
+    send_clipboard: bool,
     capture: Capture,
     host_name: String,
     protocol: DesktopProtocol,
@@ -259,7 +271,11 @@ impl Viewer {
                 clip,
                 size,
                 input.pointer.hover_pos(),
-                |event| connection.send_input(event),
+                |event| {
+                    if self.send_clipboard || !matches!(event, Input::ClipboardText(_)) {
+                        connection.send_input(event);
+                    }
+                },
             );
         });
     }
@@ -311,6 +327,9 @@ impl eframe::App for Viewer {
         }
         let (update, status, connected) = if let Some(connection) = &self.connection {
             let mut connection = connection.lock().unwrap();
+            if let Some(text) = connection.clipboard_text.take() {
+                ctx.copy_text(text);
+            }
             (
                 if connection.receiving_frame {
                     None

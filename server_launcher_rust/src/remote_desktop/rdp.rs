@@ -228,6 +228,7 @@ fn run(
     } else {
         None
     };
+    let avc_enabled = h264_decoder.is_some();
     let password = match session_password {
         Some(password) => password,
         None => credentials::load(host, DesktopProtocol::Rdp)
@@ -330,6 +331,7 @@ fn run(
         drdynvc = drdynvc.with_dynamic_channel(GraphicsPipelineClient::new(
             Box::new(EgfxHandler {
                 color_profile: profile.color_profile.unwrap_or_default(),
+                avc_enabled,
             }),
             h264_decoder,
         ));
@@ -1242,11 +1244,58 @@ fn prepare_damage(
 
 struct EgfxHandler {
     color_profile: RdpColorProfile,
+    avc_enabled: bool,
 }
 
 impl GraphicsPipelineHandler for EgfxHandler {
     fn capabilities(&self) -> Vec<ironrdp_egfx::pdu::CapabilitySet> {
         use ironrdp_egfx::pdu::{CapabilitiesV107Flags, CapabilitiesV8Flags, CapabilitySet as Cap};
+        if !self.avc_enabled {
+            match self.color_profile {
+                RdpColorProfile::GfxRfx => {
+                    return vec![Cap::V8 {
+                        flags: CapabilitiesV8Flags::SMALL_CACHE,
+                    }];
+                }
+                RdpColorProfile::GfxRfxProgressive => {
+                    return vec![Cap::V10_7 {
+                        flags: CapabilitiesV107Flags::AVC_DISABLED
+                            | CapabilitiesV107Flags::SMALL_CACHE,
+                    }];
+                }
+                _ => {}
+            }
+            use ironrdp_egfx::pdu::{
+                CapabilitiesV10Flags, CapabilitiesV103Flags, CapabilitiesV104Flags,
+                CapabilitiesV81Flags,
+            };
+            let no_avc = CapabilitiesV104Flags::AVC_DISABLED | CapabilitiesV104Flags::SMALL_CACHE;
+            return vec![
+                Cap::V10_7 {
+                    flags: CapabilitiesV107Flags::AVC_DISABLED | CapabilitiesV107Flags::SMALL_CACHE,
+                },
+                Cap::V10_6 { flags: no_avc },
+                Cap::V10_5 { flags: no_avc },
+                Cap::V10_4 { flags: no_avc },
+                Cap::V10_3 {
+                    flags: CapabilitiesV103Flags::AVC_DISABLED,
+                },
+                Cap::V10_2 {
+                    flags: CapabilitiesV10Flags::AVC_DISABLED
+                        | CapabilitiesV10Flags::SMALL_CACHE,
+                },
+                Cap::V10 {
+                    flags: CapabilitiesV10Flags::AVC_DISABLED
+                        | CapabilitiesV10Flags::SMALL_CACHE,
+                },
+                Cap::V8_1 {
+                    flags: CapabilitiesV81Flags::SMALL_CACHE,
+                },
+                Cap::V8 {
+                    flags: CapabilitiesV8Flags::SMALL_CACHE,
+                },
+            ];
+        }
         match self.color_profile {
             RdpColorProfile::GfxRfx => vec![Cap::V8 {
                 flags: CapabilitiesV8Flags::SMALL_CACHE,
@@ -1554,6 +1603,58 @@ mod tests {
     use super::*;
 
     #[test]
+    fn graphics_capabilities_never_advertise_avc_without_a_decoder() {
+        use ironrdp_egfx::pdu::{
+            CapabilitiesV107Flags, CapabilitiesV10Flags, CapabilitiesV103Flags,
+            CapabilitiesV104Flags, CapabilitiesV81Flags, CapabilitySet,
+        };
+
+        let capabilities = EgfxHandler {
+            color_profile: RdpColorProfile::Automatic,
+            avc_enabled: false,
+        }
+        .capabilities();
+        assert!(capabilities.iter().all(|capability| match capability {
+            CapabilitySet::V8_1 { flags } => {
+                !flags.contains(CapabilitiesV81Flags::AVC420_ENABLED)
+            }
+            CapabilitySet::V10 { flags } | CapabilitySet::V10_2 { flags } => {
+                flags.contains(CapabilitiesV10Flags::AVC_DISABLED)
+            }
+            CapabilitySet::V10_3 { flags } => {
+                flags.contains(CapabilitiesV103Flags::AVC_DISABLED)
+            }
+            CapabilitySet::V10_4 { flags }
+            | CapabilitySet::V10_5 { flags }
+            | CapabilitySet::V10_6 { flags }
+            | CapabilitySet::V10_6Err { flags } => {
+                flags.contains(CapabilitiesV104Flags::AVC_DISABLED)
+            }
+            CapabilitySet::V10_7 { flags } => {
+                flags.contains(CapabilitiesV107Flags::AVC_DISABLED)
+            }
+            CapabilitySet::V8 { .. } => true,
+            CapabilitySet::V10_1 => false,
+        }));
+    }
+
+    #[test]
+    fn graphics_capabilities_advertise_avc_when_a_decoder_is_loaded() {
+        use ironrdp_egfx::pdu::{CapabilitiesV81Flags, CapabilitySet};
+
+        let capabilities = EgfxHandler {
+            color_profile: RdpColorProfile::GfxAvc420,
+            avc_enabled: true,
+        }
+        .capabilities();
+        assert!(capabilities.iter().any(|capability| matches!(
+            capability,
+            CapabilitySet::V8_1 { flags }
+                if flags.contains(CapabilitiesV81Flags::AVC420_ENABLED)
+        )));
+    }
+
+    #[test]
     fn prepares_damage_pixels_outside_the_shared_framebuffer() {
         let data = [
             255, 0, 0, 0, 0, 255, 0, 0, 91, 91, 91, 91, 0, 0, 255, 0, 255, 255, 255, 0,
@@ -1705,6 +1806,7 @@ mod tests {
     fn gfx_profile_limits_advertised_capabilities() {
         let rfx = EgfxHandler {
             color_profile: RdpColorProfile::GfxRfx,
+            avc_enabled: false,
         }
         .capabilities();
         assert!(matches!(
@@ -1714,6 +1816,7 @@ mod tests {
 
         let progressive = EgfxHandler {
             color_profile: RdpColorProfile::GfxRfxProgressive,
+            avc_enabled: false,
         }
         .capabilities();
         assert!(matches!(

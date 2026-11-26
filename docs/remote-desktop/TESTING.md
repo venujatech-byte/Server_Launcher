@@ -134,7 +134,9 @@ The checked app revision was `8ec3a0d`.
 
 The renderer accepts legacy bitmap updates and EGFX updates. AVC decoding is
 available only when a supported Cisco OpenH264 library is configured. Without
-one, confirm the server negotiates a supported ClearCodec/RFX path. Audio,
+one, verify the client advertises AVC disabled and the server negotiates its
+ClearCodec/RFX fallback; the desktop should continue repainting instead of
+showing stale or black regions. Audio,
 microphone, drive redirection, committed IME input, and multi-monitor behavior
 have not been verified against real servers; do not mark them complete based on
 UI controls or compile checks alone. RD Gateway, including trusted-certificate

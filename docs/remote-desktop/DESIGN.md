@@ -90,8 +90,10 @@ RDP profiles expose Automatic, GFX RFX, GFX RFX Progressive, GFX AVC420,
 GFX AVC444, legacy RemoteFX, 32/24-bit true color, 16/15-bit high color, and
 256-color (8 bpp) bitmap mode. AVC profiles use the optional OpenH264 decoder
 loaded from Settings → Remote Desktop. The app does not bundle this library;
-the loader accepts supported Cisco release hashes. If no path is configured,
-IronRDP does not advertise AVC and the server can use another supported codec.
+the loader accepts supported Cisco release hashes. Without a loaded decoder,
+the client marks AVC disabled in every EGFX capability set and omits the
+reserved 10.1 capability that implies AVC support. The server can then use its
+RFX fallback instead of sending frames the client cannot decode.
 The 8 bpp profile disables EGFX so the server uses the palette-aware legacy
 bitmap path. The EGFX path supports
 IronRDP's ClearCodec and RFX decoders. Explicit GFX RFX profile choices limit

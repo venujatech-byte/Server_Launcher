@@ -858,7 +858,8 @@ pub(crate) fn open_gateway(
         .enable_all()
         .build()
         .map_err(|_| error("Could not start the RD Gateway transport."))?;
-    let result = runtime.block_on(tokio::time::timeout(
+    let result = block_on_timeout(
+        &runtime,
         CONNECT_TIMEOUT,
         ironrdp_mstsgu::GwClient::connect_with_port_and_certificate_validation(
             &target,
@@ -867,7 +868,7 @@ pub(crate) fn open_gateway(
             ironrdp_tls::CertificateValidation::Strict,
             None,
         ),
-    ));
+    );
     let (stream, local_addr) = result
         .map_err(|_| error("The RD Gateway connection timed out."))?
         .map_err(|_| error("Could not connect to the RD Gateway. Check its address, certificate, and credentials."))?;
@@ -885,6 +886,14 @@ pub(crate) fn open_gateway(
         }),
         local_addr,
     ))
+}
+
+fn block_on_timeout<T>(
+    runtime: &tokio::runtime::Runtime,
+    duration: Duration,
+    future: impl std::future::Future<Output = T>,
+) -> Result<T, tokio::time::error::Elapsed> {
+    runtime.block_on(async move { tokio::time::timeout(duration, future).await })
 }
 
 pub(crate) fn gateway_endpoint(endpoint: &str) -> io::Result<String> {
@@ -938,7 +947,8 @@ pub(crate) fn gateway_endpoint(endpoint: &str) -> io::Result<String> {
 
 #[cfg(test)]
 mod gateway_tests {
-    use super::gateway_endpoint;
+    use super::{block_on_timeout, gateway_endpoint};
+    use std::time::Duration;
 
     #[test]
     fn normalizes_gateway_hosts_and_checks_explicit_ports() {
@@ -960,6 +970,22 @@ mod gateway_tests {
         );
         assert!(gateway_endpoint("rdg.example.test:0").is_err());
         assert!(gateway_endpoint("https://rdg.example.test").is_err());
+    }
+
+    #[test]
+    fn gateway_timeout_is_created_inside_the_worker_runtime() {
+        std::thread::spawn(|| {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            assert_eq!(
+                block_on_timeout(&runtime, Duration::from_secs(1), async { 7 }).unwrap(),
+                7
+            );
+        })
+        .join()
+        .unwrap();
     }
 }
 

@@ -177,7 +177,6 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
         encodings.extend_from_slice(&encoding.to_be_bytes());
     }
     stream.write_all(&encodings)?;
-    request(&mut stream, size, false)?;
     let writer = Arc::new(Mutex::new(stream.input_socket()?));
     if !profile.view_only {
         let (pending, overflow) = state.lock().unwrap().open_input();
@@ -193,6 +192,7 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
         });
     }
     ctx.request_repaint();
+    request(&mut *writer.lock().unwrap(), size, false)?;
 
     let mut pixels = Vec::new();
     loop {
@@ -219,9 +219,14 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
                 }
                 let mut resized = false;
                 for index in 0..count {
-                    if let Some(new_size) =
-                        read_rectangle(&mut stream, size, state, &mut pixels, index + 1 == count)?
-                    {
+                    if let Some(new_size) = read_rectangle(
+                        &mut stream,
+                        size,
+                        state,
+                        &mut pixels,
+                        index + 1 == count,
+                        ctx,
+                    )? {
                         size = new_size;
                         resized = true;
                     }
@@ -280,6 +285,7 @@ fn open_direct(host: &SshRemoteHost, port: u16) -> io::Result<TcpStream> {
             };
             error(&format!("Could not reach VNC on TCP port {port}. {hint}"))
         })?;
+    stream.set_nodelay(true)?;
     stream.set_read_timeout(Some(TIMEOUT))?;
     stream.set_write_timeout(Some(TIMEOUT))?;
     Ok(stream)
@@ -384,6 +390,7 @@ fn read_rectangle(
     state: &Mutex<Connection>,
     pixels: &mut Vec<u8>,
     last: bool,
+    ctx: &egui::Context,
 ) -> io::Result<Option<[usize; 2]>> {
     let mut rect = [0; 12];
     stream.read_exact(&mut rect)?;
@@ -411,14 +418,25 @@ fn read_rectangle(
     };
     match encoding {
         RAW => {
-            pixels.resize(w * h * 4, 0);
-            stream.read_exact(pixels)?;
-            state
-                .lock()
-                .unwrap()
-                .framebuffer
-                .write_rgba(region, pixels)
-                .map_err(error)?;
+            // Publish complete row groups while the rest of a large update is in transit.
+            for row in (0..h).step_by(64) {
+                let rows = (h - row).min(64);
+                pixels.resize(w * rows * 4, 0);
+                stream.read_exact(pixels)?;
+                state
+                    .lock()
+                    .unwrap()
+                    .framebuffer
+                    .write_rgba(
+                        Region {
+                            origin: [x, y + row],
+                            size: [w, rows],
+                        },
+                        pixels,
+                    )
+                    .map_err(error)?;
+                ctx.request_repaint();
+            }
         }
         COPY_RECT => {
             let mut origin = [0; 4];

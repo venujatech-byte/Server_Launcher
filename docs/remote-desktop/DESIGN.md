@@ -171,6 +171,8 @@ IronRDP and its blocking adapter are available under MIT or Apache-2.0.
 
 The optional live FPS value counts received display-update batches per second
 from the RDP/VNC workers. It is not the remote compositor's native capture rate.
+The viewer Stats menu also shows the most recent one-second protocol receive
+rate separately from the session-wide average.
 
 RDP keyboard and pointer events use IronRDP fast-path input on the worker that
 owns the TLS connection. The worker drains a bounded queue between reads.

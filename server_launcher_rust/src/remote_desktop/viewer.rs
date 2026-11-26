@@ -172,6 +172,8 @@ pub(crate) fn run(
                 show_fps,
                 fps_sample: None,
                 fps: 0.0,
+                receive_sample: None,
+                receive_kbps: 0.0,
             }))
         }),
     )
@@ -242,6 +244,8 @@ struct Viewer {
     show_fps: bool,
     fps_sample: Option<(Instant, u64)>,
     fps: f64,
+    receive_sample: Option<(Instant, u64)>,
+    receive_kbps: f64,
 }
 
 impl Viewer {
@@ -758,6 +762,20 @@ impl eframe::App for Viewer {
                                 let kbps = received_bytes as f64 * 8.0 / elapsed / 1000.0;
                                 ui.label(format!("Average protocol receive rate  {kbps:.1} kbps"));
                             }
+                            let now = Instant::now();
+                            if self.receive_sample.map_or(true, |(sampled_at, _)| {
+                                sampled_at.elapsed() >= Duration::from_secs(1)
+                            }) {
+                                if let Some((sampled_at, previous_bytes)) = self.receive_sample {
+                                    self.receive_kbps = receive_kilobits_per_second(
+                                        previous_bytes,
+                                        received_bytes,
+                                        sampled_at.elapsed(),
+                                    );
+                                }
+                                self.receive_sample = Some((now, received_bytes));
+                            }
+                            ui.label(format!("Live receive rate  {:.1} kbps", self.receive_kbps));
                             ctx.request_repaint_after(Duration::from_secs(1));
                         }
                         if self.show_fps {
@@ -1178,6 +1196,14 @@ fn updates_per_second(previous: u64, current: u64, elapsed: Duration) -> f64 {
     }
 }
 
+fn receive_kilobits_per_second(previous: u64, current: u64, elapsed: Duration) -> f64 {
+    if elapsed.is_zero() {
+        0.0
+    } else {
+        current.saturating_sub(previous) as f64 * 8.0 / elapsed.as_secs_f64() / 1000.0
+    }
+}
+
 fn paint_full_frame(framebuffer: &Framebuffer, updates: &mut Vec<Update>) {
     if updates.is_empty() {
         return;
@@ -1224,6 +1250,20 @@ fn live_fps_uses_received_display_updates() {
     assert_eq!(updates_per_second(10, 16, Duration::from_secs(2)), 3.0);
     assert_eq!(updates_per_second(16, 2, Duration::from_secs(1)), 0.0);
     assert_eq!(updates_per_second(1, 2, Duration::ZERO), 0.0);
+}
+
+#[cfg(test)]
+#[test]
+fn live_receive_rate_uses_the_latest_interval() {
+    assert_eq!(
+        receive_kilobits_per_second(1_000, 2_000, Duration::from_secs(2)),
+        4.0
+    );
+    assert_eq!(
+        receive_kilobits_per_second(2_000, 1_000, Duration::from_secs(1)),
+        0.0
+    );
+    assert_eq!(receive_kilobits_per_second(0, 1, Duration::ZERO), 0.0);
 }
 
 fn write_test_pattern(framebuffer: &mut Framebuffer) -> Result<(), &'static str> {

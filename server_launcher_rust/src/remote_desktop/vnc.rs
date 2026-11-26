@@ -186,11 +186,10 @@ impl Connection {
         let reconnect = host
             .vnc
             .as_ref()
-            .is_some_and(|profile| profile.auto_reconnect)
-            && session_password.is_none();
+            .is_some_and(|profile| profile.auto_reconnect);
         let session_password = Arc::new(Mutex::new(session_password));
         Self::start_worker("Connecting to VNC…", reconnect, ctx, move |state, ctx| {
-            let password = session_password.lock().unwrap().take();
+            let password = session_password.lock().unwrap().clone();
             run(&host, password, state, ctx)
         })
     }

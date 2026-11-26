@@ -155,11 +155,10 @@ pub(crate) fn start(
     let reconnect = host
         .rdp
         .as_ref()
-        .is_some_and(|profile| profile.auto_reconnect)
-        && session_password.is_none();
+        .is_some_and(|profile| profile.auto_reconnect);
     let session_password = Arc::new(Mutex::new(session_password));
     Connection::start_worker("Connecting to RDP…", reconnect, ctx, move |state, ctx| {
-        let password = session_password.lock().unwrap().take();
+        let password = session_password.lock().unwrap().clone();
         run(&host, &config_path, monitor_size, password, state, ctx)
     })
 }

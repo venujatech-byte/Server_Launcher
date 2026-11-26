@@ -998,20 +998,48 @@ impl eframe::App for Viewer {
                 .show(ctx, |ui| {
                     ui.set_max_width((screen.width() - 24.0).min(460.0));
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
-                        ui.horizontal_wrapped(|ui| {
+                        ui.vertical(|ui| {
                             if let Some(upload) = &self.upload {
-                                ui.spinner();
-                                ui.label(&upload.progress);
-                                if ui.button("Cancel upload").clicked() {
-                                    upload.cancel();
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.spinner();
+                                    ui.label(&upload.progress);
+                                    if ui.button("Cancel upload").clicked() {
+                                        upload.cancel();
+                                    }
+                                });
+                                if let Some(fraction) = upload.fraction {
+                                    ui.add(
+                                        egui::ProgressBar::new(fraction)
+                                            .desired_width(ui.available_width())
+                                            .show_percentage(),
+                                    );
                                 }
+                                ui.horizontal_wrapped(|ui| {
+                                    if let Some(speed) = upload.speed {
+                                        ui.label(format!(
+                                            "{} /s",
+                                            crate::sensors::format_bytes(speed)
+                                        ));
+                                    } else {
+                                        ui.label("Measuring speed…");
+                                    }
+                                    if let Some(next) = &upload.next {
+                                        ui.separator();
+                                        ui.label(format!("Next: {next}"));
+                                    }
+                                });
                             }
                             if let Some(result) = &self.upload_result {
                                 let message = match result {
-                                    Ok(message) | Err(message) => message,
+                                    Ok(message) | Err(message) => message.clone(),
                                 };
-                                ui.label(message);
-                                if ui.button("Dismiss").clicked() {
+                                if ui
+                                    .horizontal_wrapped(|ui| {
+                                        ui.label(message);
+                                        ui.button("Dismiss").clicked()
+                                    })
+                                    .inner
+                                {
                                     self.upload_result = None;
                                 }
                             }

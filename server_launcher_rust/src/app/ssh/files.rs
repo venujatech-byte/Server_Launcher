@@ -162,6 +162,9 @@ impl LauncherApp {
 pub(crate) struct DesktopUpload {
     worker: Worker,
     pub(crate) progress: String,
+    pub(crate) fraction: Option<f32>,
+    pub(crate) speed: Option<u64>,
+    pub(crate) next: Option<String>,
 }
 
 impl DesktopUpload {
@@ -169,6 +172,9 @@ impl DesktopUpload {
         Self {
             worker: backend::start(host, Job::DesktopUpload(paths), ctx),
             progress: "Preparing upload…".into(),
+            fraction: None,
+            speed: None,
+            next: None,
         }
     }
 
@@ -179,12 +185,22 @@ impl DesktopUpload {
             match events.try_recv() {
                 Ok(Event::Progress(progress)) => {
                     self.progress = format!(
-                        "Uploading {} ({}/{}) · {}",
+                        "Uploading {} · item {} of {} · {} / {}",
                         progress.name,
                         progress.completed + 1,
                         progress.count,
                         crate::sensors::format_bytes(progress.bytes),
+                        progress.total_bytes.map_or_else(
+                            || "size unknown".into(),
+                            crate::sensors::format_bytes,
+                        ),
                     );
+                    self.fraction = progress
+                        .total_bytes
+                        .filter(|total| *total > 0)
+                        .map(|total| (progress.bytes as f32 / total as f32).clamp(0.0, 1.0));
+                    self.speed = progress.speed;
+                    self.next = progress.next;
                 }
                 Ok(Event::Finished(result)) => return Some(result.and_then(|outcome| match outcome {
                     Outcome::Changed { message, .. } => Ok(message),

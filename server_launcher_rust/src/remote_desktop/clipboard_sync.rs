@@ -26,21 +26,28 @@ impl ClipboardSync {
         let worker_pending_local = pending_local.clone();
 
         thread::spawn(move || {
-            let Ok(mut clipboard) = arboard::Clipboard::new() else {
-                return;
-            };
+            let mut clipboard = None;
             let mut last_seen = None;
             while !worker_stopped.load(Ordering::Acquire) {
+                if clipboard.is_none() {
+                    clipboard = arboard::Clipboard::new().ok();
+                    if clipboard.is_none() {
+                        thread::sleep(Duration::from_secs(1));
+                        continue;
+                    }
+                }
                 if worker_focus.load(Ordering::Acquire) {
-                    if let Ok(text) = clipboard.get_text() {
-                        let forward = should_forward(
-                            &text,
-                            &mut last_seen,
-                            &mut worker_remote_text.lock().unwrap(),
-                        );
-                        if forward {
-                            *worker_pending_local.lock().unwrap() = Some(text);
-                            ctx.request_repaint();
+                    if let Some(clipboard) = clipboard.as_mut() {
+                        if let Ok(text) = clipboard.get_text() {
+                            let forward = should_forward(
+                                &text,
+                                &mut last_seen,
+                                &mut worker_remote_text.lock().unwrap(),
+                            );
+                            if forward {
+                                *worker_pending_local.lock().unwrap() = Some(text);
+                                ctx.request_repaint();
+                            }
                         }
                     }
                 }
@@ -103,7 +110,11 @@ mod tests {
 
         remote_text = Some("remote".into());
         assert!(!should_forward("remote", &mut last_seen, &mut remote_text));
-        assert!(should_forward("new local", &mut last_seen, &mut remote_text));
+        assert!(should_forward(
+            "new local",
+            &mut last_seen,
+            &mut remote_text
+        ));
     }
 
     #[test]

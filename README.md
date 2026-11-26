@@ -129,10 +129,11 @@ need the ALSA development package
 (`libasound2-dev` on Ubuntu/Debian, `alsa-lib-devel` on Fedora/RHEL) for local
 RDP audio playback. RDP dual-display layout is best-effort: the server must
 support two monitors, and the viewer presents their combined desktop in one
-window. VNC
-username-based authentication is not implemented. VNC cursor
-shapes can be toggled in the VNC profile; they are enabled by default and need
-server support for RichCursor or XCursor shapes and PointerPos. SSH desktop tunnels support Unix
+window. VNC username/password authentication supports VeNCrypt Plain only
+through an SSH tunnel; direct VNC connections do not send username/password
+credentials. VeNCrypt TLS subtypes are not supported. VNC cursor shapes can be
+toggled in the VNC profile; they are enabled by default and need server support
+for RichCursor or XCursor shapes and PointerPos. SSH desktop tunnels support Unix
 and Windows key/agent credentials. Windows password-only SSH tunnels use the
 OS credential store through OpenSSH askpass and still need runtime validation.
 Protocol interoperation and performance still

@@ -20,7 +20,7 @@ use ironrdp::{
         client::DisplayControlClient,
         pdu::{DisplayControlMonitorLayout, DisplayControlPdu, MonitorLayoutEntry},
     },
-    dvc::DrdynvcClient,
+    dvc::{DrdynvcClient, DvcChannelListener, DvcClientProcessor, DvcMessage, DynamicChannelId},
     graphics::image_processing::PixelFormat,
     pdu::{
         gcc::KeyboardType,
@@ -40,6 +40,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
+        mpsc::{self, SyncSender},
         Arc, Mutex,
     },
     time::{Duration, Instant},
@@ -48,6 +49,30 @@ use x509_cert::der::Decode;
 
 const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const AUDIO_INPUT_QUEUE: usize = 64;
+
+struct AudioInputListener {
+    sender: SyncSender<(DynamicChannelId, Vec<DvcMessage>)>,
+}
+
+impl DvcChannelListener for AudioInputListener {
+    fn channel_name(&self) -> &str {
+        ironrdp_rdpeai::CHANNEL_NAME
+    }
+
+    fn create(&mut self, _: DynamicChannelId) -> Option<Box<dyn DvcClientProcessor>> {
+        let sender = self.sender.clone();
+        Some(Box::new(ironrdp_rdpeai::client::RdpeaiClient::new(
+            Box::new(ironrdp_rdpsnd_native::capture::RdpeaiCaptureBackend::new()),
+            Box::new(move |channel_id, messages| {
+                sender.try_send((channel_id, messages)).map_err(|_| {
+                    ironrdp::pdu::pdu_other_err!("RDP microphone send queue is full")
+                })?;
+                Ok(())
+            }),
+        )))
+    }
+}
 
 pub(crate) fn start(
     host: SshRemoteHost,
@@ -158,6 +183,12 @@ fn run(
     let multi_monitor = profile.multi_monitor;
     let [desktop_width, desktop_height] = initial_dimensions(profile, monitor_size).map(u32::from);
     let mut drdynvc = DrdynvcClient::new();
+    let (audio_input_tx, audio_input_rx) = mpsc::sync_channel(AUDIO_INPUT_QUEUE);
+    if profile.mic {
+        drdynvc = drdynvc.with_listener(AudioInputListener {
+            sender: audio_input_tx,
+        });
+    }
     if use_egfx {
         drdynvc = drdynvc.with_dynamic_channel(GraphicsPipelineClient::new(
             Box::new(EgfxHandler {
@@ -295,6 +326,14 @@ fn run(
     let mut proposed_resize = None;
     let received_bytes = state.lock().unwrap().received_bytes.clone();
     loop {
+        for (channel_id, messages) in audio_input_rx.try_iter().take(8) {
+            let batch = ironrdp::dvc::DvcMessageBatch::try_new(channel_id, messages)
+                .map_err(|_| error("Could not validate RDP microphone data."))?;
+            let packet = stage
+                .encode_dvc_messages(batch.into_messages())
+                .map_err(|_| error("Could not encode RDP microphone data."))?;
+            framed.write_all(&packet)?;
+        }
         if overflow.load(Ordering::Acquire) {
             return Err(error(
                 "The RDP input queue is full. The session was closed to release held inputs.",

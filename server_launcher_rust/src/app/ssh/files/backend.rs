@@ -18,6 +18,7 @@ pub(super) enum Job {
     Compress(Vec<String>, String),
     Extract(String, String, bool),
     Transfer(transfers::Transfer),
+    DesktopUpload(Vec<std::path::PathBuf>),
 }
 
 #[derive(Debug)]
@@ -51,6 +52,39 @@ pub(super) fn start(host: &SshRemoteHost, job: Job, ctx: egui::Context) -> Worke
                     message,
                     moved: false,
                 }),
+            Job::DesktopUpload(paths) => (|| {
+                let mut host = host;
+                if let Some(reference) = &host.credential_ref {
+                    host.password = crate::ssh_credentials::load(
+                        reference,
+                        &crate::ssh_credentials::binding(&host),
+                    )?;
+                }
+                let configured = std::mem::take(&mut host.remote_cwd);
+                let command = if configured.is_empty() {
+                    "pwd -P".into()
+                } else {
+                    format!("cd -- {} && pwd -P", shell_quote(&configured))
+                };
+                let output = execute(&host, &command, 15)?;
+                let directory =
+                    String::from_utf8(output).map_err(|_| "Invalid remote upload directory.")?;
+                let directory = directory.strip_suffix('\n').unwrap_or(&directory);
+                if !directory.starts_with('/') || directory.contains(['\r', '\n', '\0']) {
+                    return Err("Invalid remote upload directory.".into());
+                }
+                transfers::run(
+                    &host,
+                    transfers::Transfer::Dropped(directory.to_owned(), paths),
+                    &tx,
+                    &ctx,
+                    &worker_cancel,
+                )
+                .map(|message| Outcome::Changed {
+                    message,
+                    moved: false,
+                })
+            })(),
             job => run(&host, job),
         };
         let _ = tx.send(Event::Finished(outcome));
@@ -311,6 +345,7 @@ done"#,
         | Job::Micro(_, _)
         | Job::RunPython(_)
         | Job::RunShell(_, _)
-        | Job::Transfer(_) => unreachable!(),
+        | Job::Transfer(_)
+        | Job::DesktopUpload(_) => unreachable!(),
     })
 }

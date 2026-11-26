@@ -8,6 +8,7 @@ mod commands;
 mod systemd;
 mod settings;
 mod ssh;
+pub(crate) use ssh::DesktopUpload;
 mod sensors;
 
 use crate::config::{ConfigFile, CustomScript, SavedCommand, ServerConfig, SshRemoteHost};

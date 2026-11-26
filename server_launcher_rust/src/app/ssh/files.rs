@@ -158,3 +158,51 @@ impl LauncherApp {
         ui.ctx().data_mut(|data| data.insert_temp(id, files));
     }
 }
+
+pub(crate) struct DesktopUpload {
+    worker: Worker,
+    pub(crate) progress: String,
+}
+
+impl DesktopUpload {
+    pub(crate) fn start(host: &crate::config::SshRemoteHost, paths: Vec<std::path::PathBuf>, ctx: Context) -> Self {
+        Self {
+            worker: backend::start(host, Job::DesktopUpload(paths), ctx),
+            progress: "Preparing upload…".into(),
+        }
+    }
+
+    pub(crate) fn poll(&mut self) -> Option<Result<String, String>> {
+        use std::sync::mpsc::TryRecvError;
+        let events = self.worker.events.lock().unwrap();
+        loop {
+            match events.try_recv() {
+                Ok(Event::Progress(progress)) => {
+                    self.progress = format!(
+                        "Uploading {} ({}/{}) · {}",
+                        progress.name,
+                        progress.completed + 1,
+                        progress.count,
+                        crate::sensors::format_bytes(progress.bytes),
+                    );
+                }
+                Ok(Event::Finished(result)) => return Some(result.and_then(|outcome| match outcome {
+                    Outcome::Changed { message, .. } => Ok(message),
+                    _ => Err("Unexpected upload result.".into()),
+                })),
+                Err(TryRecvError::Empty) => return None,
+                Err(TryRecvError::Disconnected) => return Some(Err("Upload worker stopped.".into())),
+            }
+        }
+    }
+
+    pub(crate) fn cancel(&self) {
+        self.worker.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl Drop for DesktopUpload {
+    fn drop(&mut self) {
+        self.cancel();
+    }
+}

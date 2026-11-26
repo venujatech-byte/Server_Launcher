@@ -2,6 +2,7 @@ use super::*;
 
 mod listeners;
 mod files;
+pub(crate) use files::DesktopUpload;
 mod terminal;
 mod connection;
 

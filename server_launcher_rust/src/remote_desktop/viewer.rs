@@ -98,6 +98,8 @@ pub(crate) fn run(
                 framebuffer,
                 connection: None,
                 session_host: viewer_host,
+                upload: None,
+                upload_result: None,
                 config_path,
                 texture: None,
                 scaling,
@@ -155,6 +157,8 @@ struct Viewer {
     framebuffer: Framebuffer,
     connection: Option<Arc<Mutex<Connection>>>,
     session_host: Option<crate::config::SshRemoteHost>,
+    upload: Option<crate::app::DesktopUpload>,
+    upload_result: Option<Result<String, String>>,
     config_path: PathBuf,
     texture: Option<egui::TextureHandle>,
     scaling: Scaling,
@@ -721,6 +725,52 @@ impl eframe::App for Viewer {
             } else {
                 self.clipboard_notice = None;
             }
+        }
+        let dropped = ctx.input(|input| {
+            input
+                .raw
+                .dropped_files
+                .iter()
+                .filter_map(|file| file.path.clone())
+                .collect::<Vec<_>>()
+        });
+        if let Some(result) = self
+            .upload
+            .as_mut()
+            .and_then(crate::app::DesktopUpload::poll)
+        {
+            self.upload = None;
+            self.upload_result = Some(result);
+        }
+        if connected && !self.view_only && !dropped.is_empty() {
+            if self.upload.is_some() {
+                self.upload_result = Some(Err("An upload is already running.".into()));
+            } else if let Some(host) = &self.session_host {
+                self.upload = Some(crate::app::DesktopUpload::start(host, dropped, ctx.clone()));
+                self.upload_result = None;
+            }
+        }
+        if self.upload.is_some() || self.upload_result.is_some() {
+            egui::TopBottomPanel::bottom("viewer_upload").show(ctx, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    if let Some(upload) = &self.upload {
+                        ui.spinner();
+                        ui.label(&upload.progress);
+                        if ui.button("Cancel upload").clicked() {
+                            upload.cancel();
+                        }
+                    }
+                    if let Some(result) = &self.upload_result {
+                        let message = match result {
+                            Ok(message) | Err(message) => message,
+                        };
+                        ui.label(message);
+                        if ui.button("Dismiss").clicked() {
+                            self.upload_result = None;
+                        }
+                    }
+                });
+            });
         }
         self.screenshot_notification(ctx);
         egui::CentralPanel::default().show(ctx, |ui| {

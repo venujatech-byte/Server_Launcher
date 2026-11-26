@@ -13,6 +13,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc, Arc, Mutex,
     },
+    time::{Duration, Instant},
 };
 
 pub(crate) fn run(
@@ -106,6 +107,9 @@ pub(crate) fn run(
                 protocol,
                 screenshot: None,
                 screenshot_result: None,
+                show_fps: false,
+                fps_sample: None,
+                fps: 0.0,
             }))
         }),
     )
@@ -129,6 +133,9 @@ struct Viewer {
     screenshot: Option<mpsc::Receiver<Result<PathBuf, String>>>,
     screenshot_result: Option<Result<PathBuf, String>>,
     test_pattern: bool,
+    show_fps: bool,
+    fps_sample: Option<(Instant, u32)>,
+    fps: f64,
 }
 
 impl Viewer {
@@ -305,13 +312,33 @@ impl eframe::App for Viewer {
         let (update, status, connected) = if let Some(connection) = &self.connection {
             let mut connection = connection.lock().unwrap();
             (
-                connection.framebuffer.take_update(),
+                if connection.receiving_frame {
+                    None
+                } else {
+                    connection.framebuffer.take_update()
+                },
                 connection.status.clone(),
                 connection.connected,
             )
         } else {
             (self.framebuffer.take_update(), self.message.into(), false)
         };
+        if connected && self.show_fps {
+            let (since, frames) = self.fps_sample.get_or_insert_with(|| (Instant::now(), 0));
+            *frames += u32::from(update.is_some());
+            let elapsed = since.elapsed();
+            let interval = Duration::from_secs(1);
+            if elapsed >= interval {
+                self.fps = f64::from(*frames) / elapsed.as_secs_f64();
+                self.fps_sample = Some((Instant::now(), 0));
+                ctx.request_repaint_after(interval);
+            } else {
+                ctx.request_repaint_after(interval - elapsed);
+            }
+        } else {
+            self.fps_sample = None;
+            self.fps = 0.0;
+        }
         if let Some(update) = update {
             match self.texture.as_mut() {
                 Some(texture) if !update.resized => {
@@ -347,6 +374,14 @@ impl eframe::App for Viewer {
                             ui.selectable_value(&mut self.scaling, scale, scale_label(scale));
                         }
                     });
+                if self.protocol == DesktopProtocol::Vnc {
+                    if ui.checkbox(&mut self.show_fps, "Show live FPS").changed() {
+                        ctx.request_repaint();
+                    }
+                    if self.show_fps && connected {
+                        ui.label(format!("{:.1} FPS", self.fps));
+                    }
+                }
                 if self.protocol == DesktopProtocol::Vnc {
                     if let Some(connection) = &self.connection {
                         let connection = connection.lock().unwrap();

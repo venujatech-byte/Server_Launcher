@@ -67,6 +67,7 @@ pub(crate) struct Connection {
     pub framebuffer: Framebuffer,
     pub status: String,
     pub connected: bool,
+    pub(crate) receiving_frame: bool,
     pub(crate) vnc_screen: Option<[u8; 16]>,
     pub(crate) resize_request: Option<[u32; 2]>,
     pub(crate) trust_prompt: Option<super::trust::Prompt>,
@@ -90,6 +91,7 @@ impl Connection {
             framebuffer: Framebuffer::default(),
             status: initial_status.into(),
             connected: false,
+            receiving_frame: false,
             vnc_screen: None,
             resize_request: None,
             trust_prompt: None,
@@ -243,6 +245,7 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
                 if count > 4096 {
                     return Err(error("The VNC update contains too many rectangles."));
                 }
+                state.lock().unwrap().receiving_frame = true;
                 let mut resized = false;
                 for index in 0..count {
                     if let Some(new_size) = read_rectangle(
@@ -251,13 +254,13 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
                         state,
                         &mut pixels,
                         index + 1 == count,
-                        ctx,
                         compact_pixels,
                     )? {
                         size = new_size;
                         resized = true;
                     }
                 }
+                state.lock().unwrap().receiving_frame = false;
                 ctx.request_repaint();
                 request(&mut *writer.lock().unwrap(), size, !resized)?;
             }
@@ -417,7 +420,6 @@ fn read_rectangle(
     state: &Mutex<Connection>,
     pixels: &mut Vec<u8>,
     last: bool,
-    ctx: &egui::Context,
     compact_pixels: bool,
 ) -> io::Result<Option<[usize; 2]>> {
     let mut rect = [0; 12];
@@ -468,7 +470,7 @@ fn read_rectangle(
     };
     match encoding {
         RAW => {
-            // Publish complete row groups while the rest of a large update is in transit.
+            // Decode in row groups to bound the temporary pixel buffer.
             for row in (0..h).step_by(64) {
                 let rows = (h - row).min(64);
                 pixels.resize(w * rows * 4, 0);
@@ -490,7 +492,6 @@ fn read_rectangle(
                         pixels,
                     )
                     .map_err(error)?;
-                ctx.request_repaint();
             }
         }
         COPY_RECT => {

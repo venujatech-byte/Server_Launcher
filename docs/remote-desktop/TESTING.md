@@ -59,11 +59,13 @@ network or the host's configured SSH tunnel.
 5. Compare Incremental and Full-frame repaint. They should show the same remote
    frame; Full-frame repaint may use more client CPU and does not change server
    capture FPS, codec negotiation, or network latency.
-6. Test clipboard directions separately with Unicode text and an image under
+6. Connect with the 256 colors (8 bpp) profile and confirm a palette update
+   renders correctly. Confirm other profiles continue to negotiate EGFX.
+7. Test clipboard directions separately with Unicode text and an image under
    the configured size cap. Confirm received content is not echoed back.
-7. Test TLS-only explicitly against a server configured for TLS. Auto must not
+8. Test TLS-only explicitly against a server configured for TLS. Auto must not
    silently downgrade from NLA to legacy unencrypted RDP.
-8. Test network loss, server disconnect, retry, and close while input keys are
+9. Test network loss, server disconnect, retry, and close while input keys are
    held. Confirm all remote keys/buttons are released on focus loss and close.
 
 The renderer accepts legacy bitmap updates and EGFX updates. EGFX AVC/H.264

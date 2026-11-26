@@ -128,38 +128,39 @@ fn run(
     let resize_state = state.clone();
     let resize_ctx = ctx.clone();
     let multi_monitor = profile.multi_monitor;
+    let use_egfx = bitmap_quality(profile).0 != 8;
     let [desktop_width, desktop_height] = initial_dimensions(profile, monitor_size).map(u32::from);
-    connector.attach_static_channel(
-        DrdynvcClient::new()
-            .with_dynamic_channel(GraphicsPipelineClient::new(
-                Box::new(EgfxHandler {
-                    color_profile: profile.color_profile.unwrap_or_default(),
-                }),
-                None,
-            ))
-            .with_dynamic_channel(DisplayControlClient::new(move |capabilities| {
-                let limit = capabilities.max_monitor_area();
-                server_limit.store(limit, Ordering::Release);
-                resize_state.lock().unwrap().rdp_resize_supported = limit != 0;
-                resize_ctx.request_repaint();
-                let layout = if multi_monitor {
-                    dual_monitor_layout(desktop_width, desktop_height, limit)
-                } else {
-                    None
-                };
-                if multi_monitor && layout.is_none() {
-                    resize_state.lock().unwrap().status =
-                        "The RDP server did not report enough display area for two monitors."
-                            .into();
-                }
-                Ok(layout
-                    .map(|layout| {
-                        let pdu: DisplayControlPdu = layout.into();
-                        vec![Box::new(pdu) as ironrdp::dvc::DvcMessage]
-                    })
-                    .unwrap_or_default())
-            })),
-    );
+    let mut drdynvc = DrdynvcClient::new();
+    if use_egfx {
+        drdynvc = drdynvc.with_dynamic_channel(GraphicsPipelineClient::new(
+            Box::new(EgfxHandler {
+                color_profile: profile.color_profile.unwrap_or_default(),
+            }),
+            None,
+        ));
+    }
+    drdynvc = drdynvc.with_dynamic_channel(DisplayControlClient::new(move |capabilities| {
+        let limit = capabilities.max_monitor_area();
+        server_limit.store(limit, Ordering::Release);
+        resize_state.lock().unwrap().rdp_resize_supported = limit != 0;
+        resize_ctx.request_repaint();
+        let layout = if multi_monitor {
+            dual_monitor_layout(desktop_width, desktop_height, limit)
+        } else {
+            None
+        };
+        if multi_monitor && layout.is_none() {
+            resize_state.lock().unwrap().status =
+                "The RDP server did not report enough display area for two monitors.".into();
+        }
+        Ok(layout
+            .map(|layout| {
+                let pdu: DisplayControlPdu = layout.into();
+                vec![Box::new(pdu) as ironrdp::dvc::DvcMessage]
+            })
+            .unwrap_or_default())
+    }));
+    connector.attach_static_channel(drdynvc);
     drop(password);
     let upgrade = ironrdp_blocking::connect_begin(&mut framed, &mut connector).map_err(|_| {
         error("RDP security negotiation failed. Check the server's NLA and TLS settings.")
@@ -755,7 +756,7 @@ fn config(
         compression_type: Some(CompressionType::Rdp61),
         pointer_software_rendering: true,
         multitransport_flags: None,
-        support_dyn_vc_gfx_protocol: true,
+        support_dyn_vc_gfx_protocol: color_depth != 8,
         rdp_version: ironrdp::pdu::gcc::RdpVersion::V5_PLUS,
         performance_flags: performance,
         desktop_scale_factor: 0,
@@ -786,6 +787,7 @@ fn bitmap_quality(profile: &RdpProfile) -> (u32, bool) {
             RdpColorProfile::TrueColor24 => (24, false),
             RdpColorProfile::HighColor16 => (16, false),
             RdpColorProfile::HighColor15 => (15, false),
+            RdpColorProfile::Color256 => (8, false),
         };
     }
     match profile.quality {
@@ -819,6 +821,8 @@ fn rdp_quality_presets_set_bitmap_depth_and_adaptive_color() {
     assert_eq!(bitmap_quality(&profile), (15, false));
     profile.color_profile = Some(RdpColorProfile::TrueColor24);
     assert_eq!(bitmap_quality(&profile), (24, false));
+    profile.color_profile = Some(RdpColorProfile::Color256);
+    assert_eq!(bitmap_quality(&profile), (8, false));
 }
 
 #[cfg(test)]

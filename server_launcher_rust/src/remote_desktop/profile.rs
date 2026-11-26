@@ -39,7 +39,8 @@ choices!(RdpColorProfile {
     TrueColor32,
     TrueColor24,
     HighColor16,
-    HighColor15
+    HighColor15,
+    Color256
 });
 choices!(Audio { Local, Off });
 choices!(Clipboard {

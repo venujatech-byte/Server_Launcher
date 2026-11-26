@@ -74,7 +74,9 @@ been completed. Record results here only after a runnable viewer is measured.
 ## Display profiles and input controls
 
 RDP profiles expose Automatic, GFX RFX, GFX RFX Progressive, legacy RemoteFX,
-32/24-bit true color, and 16/15-bit high color. The EGFX path supports
+32/24-bit true color, 16/15-bit high color, and 256-color (8 bpp) bitmap mode.
+The 8 bpp profile disables EGFX so the server uses the palette-aware legacy
+bitmap path. The EGFX path supports
 IronRDP's ClearCodec and RFX decoders. Explicit GFX RFX profile choices limit
 the advertised capability version, while Automatic lets the server choose
 among supported paths. AVC/H.264 remains disabled because the app has no H.264

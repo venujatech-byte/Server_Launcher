@@ -218,6 +218,8 @@ pub struct RemoteDesktopSettings {
     pub screenshot_folder: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recording_folder: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ffmpeg_path: Option<PathBuf>,
     pub recording_fps: u32,
     pub recording_format: RemoteRecordingFormat,
     pub copy_screenshots_to_clipboard: bool,
@@ -231,6 +233,7 @@ impl Default for RemoteDesktopSettings {
             h264_library_path: None,
             screenshot_folder: None,
             recording_folder: None,
+            ffmpeg_path: None,
             recording_fps: 30,
             recording_format: RemoteRecordingFormat::Mp4,
             copy_screenshots_to_clipboard: false,
@@ -534,6 +537,7 @@ mod tests {
         assert!(config.remote_desktop.warn_unencrypted_vnc);
         assert!(config.remote_desktop.screenshot_folder.is_none());
         assert!(config.remote_desktop.recording_folder.is_none());
+        assert!(config.remote_desktop.ffmpeg_path.is_none());
         assert_eq!(config.remote_desktop.recording_fps, 30);
         assert_eq!(config.remote_desktop.recording_format, RemoteRecordingFormat::Mp4);
         assert!(!config.remote_desktop.copy_screenshots_to_clipboard);

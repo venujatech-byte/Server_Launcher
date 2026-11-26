@@ -25,6 +25,7 @@ impl Recording {
         connection: Arc<Mutex<Connection>>,
         ctx: egui::Context,
         folder: Option<PathBuf>,
+        ffmpeg_path: Option<PathBuf>,
         fps: u32,
         format: crate::config::RemoteRecordingFormat,
     ) -> Self {
@@ -45,6 +46,7 @@ impl Recording {
                 &progress,
                 &worker_bytes,
                 folder,
+                ffmpeg_path,
                 fps,
                 format,
             ));
@@ -97,6 +99,7 @@ fn record(
     progress: &AtomicU64,
     output_bytes: &AtomicU64,
     folder: Option<PathBuf>,
+    ffmpeg_path: Option<PathBuf>,
     fps: u32,
     format: crate::config::RemoteRecordingFormat,
 ) -> Result<PathBuf, String> {
@@ -149,7 +152,11 @@ fn record(
         .map_err(|error| error.to_string())?
         .into_temp_path();
     let resolution = format!("{}x{}", size[0], size[1]);
-    let mut command = Command::new("ffmpeg");
+    let mut command = Command::new(
+        ffmpeg_path
+            .as_deref()
+            .unwrap_or_else(|| Path::new("ffmpeg")),
+    );
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

@@ -29,6 +29,7 @@ pub(crate) fn run(
     let show_fps = config.remote_desktop.show_live_fps;
     let screenshot_folder = config.remote_desktop.screenshot_folder.clone();
     let recording_folder = config.remote_desktop.recording_folder.clone();
+    let ffmpeg_path = config.remote_desktop.ffmpeg_path.clone();
     let recording_fps = config.remote_desktop.recording_fps;
     let recording_format = config.remote_desktop.recording_format;
     let copy_screenshots_to_clipboard = config.remote_desktop.copy_screenshots_to_clipboard;
@@ -166,6 +167,7 @@ pub(crate) fn run(
                 config_path,
                 screenshot_folder,
                 recording_folder,
+                ffmpeg_path,
                 recording_fps,
                 recording_format,
                 texture: None,
@@ -269,6 +271,7 @@ struct Viewer {
     config_path: PathBuf,
     screenshot_folder: Option<PathBuf>,
     recording_folder: Option<PathBuf>,
+    ffmpeg_path: Option<PathBuf>,
     recording_fps: u32,
     recording_format: crate::config::RemoteRecordingFormat,
     texture: Option<egui::TextureHandle>,
@@ -1011,6 +1014,7 @@ impl eframe::App for Viewer {
                             connection.clone(),
                             ctx.clone(),
                             self.recording_folder.clone(),
+                            self.ffmpeg_path.clone(),
                             self.recording_fps,
                             self.recording_format,
                         ));

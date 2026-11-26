@@ -820,6 +820,34 @@ impl LauncherApp {
                                                     );
                                                 });
                                         });
+                                        ui.horizontal(|ui| {
+                                            if ui.button("Choose FFmpeg executable…").clicked() {
+                                                if let Some(path) =
+                                                    rfd::FileDialog::new().pick_file()
+                                                {
+                                                    self.remote_desktop_settings.ffmpeg_path = Some(path);
+                                                }
+                                            }
+                                            if self.remote_desktop_settings.ffmpeg_path.is_some()
+                                                && ui.button("Use PATH").clicked()
+                                            {
+                                                self.remote_desktop_settings.ffmpeg_path = None;
+                                            }
+                                        });
+                                        ui.label(
+                                            RichText::new(
+                                                self.remote_desktop_settings
+                                                    .ffmpeg_path
+                                                    .as_ref()
+                                                    .map_or_else(
+                                                        || "Default: ffmpeg from PATH".to_owned(),
+                                                        |path| path.display().to_string(),
+                                                    ),
+                                            )
+                                            .size(10.5)
+                                            .monospace()
+                                            .color(palette.text_muted),
+                                        );
                                         ui.add_space(12.0);
                                         ui.label(RichText::new("Trusted RDP certificates").size(13.0).strong().color(palette.text_primary));
                                         match &saved_pins {

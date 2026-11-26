@@ -206,6 +206,8 @@ pub struct RemoteDesktopSettings {
     pub warn_unencrypted_vnc: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub screenshot_folder: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recording_folder: Option<PathBuf>,
 }
 
 impl Default for RemoteDesktopSettings {
@@ -214,6 +216,7 @@ impl Default for RemoteDesktopSettings {
             show_live_fps: false,
             warn_unencrypted_vnc: true,
             screenshot_folder: None,
+            recording_folder: None,
         }
     }
 }
@@ -513,6 +516,7 @@ mod tests {
         assert!(!config.remote_desktop.show_live_fps);
         assert!(config.remote_desktop.warn_unencrypted_vnc);
         assert!(config.remote_desktop.screenshot_folder.is_none());
+        assert!(config.remote_desktop.recording_folder.is_none());
     }
 
     #[test]

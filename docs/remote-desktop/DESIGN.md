@@ -180,11 +180,17 @@ prompt again.
 
 The Screenshot button copies the latest remote framebuffer and writes it as
 an opaque RGB PNG on a worker thread. Fit and Fill change the display only.
-Files are saved to the system Pictures folder under `ServerLauncher`.
+By default files are saved to the system Pictures folder under `ServerLauncher`.
 The writer publishes a completed PNG without overwriting an existing file.
 The viewer reports the result with open-file and show-folder actions.
-Custom capture folders, clipboard copies, and host-key shortcuts remain
-pending.
+The user can choose a screenshot folder in Remote Desktop settings; leaving it
+unset uses Pictures/ServerLauncher. Screenshot clipboard copies and host-key
+shortcuts remain pending.
+
+Recordings use FFmpeg H.264 at 30 fps when available and fall back to a PNG
+sequence when FFmpeg is missing. The recording destination is configurable in
+Remote Desktop settings, with Pictures/ServerLauncher as the default. Recording
+fps and format selection remain pending.
 
 
 In Fit Window mode, RDP sends a single-monitor display request after the

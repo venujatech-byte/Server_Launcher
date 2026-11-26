@@ -21,7 +21,11 @@ pub(super) struct Recording {
 }
 
 impl Recording {
-    pub(super) fn start(connection: Arc<Mutex<Connection>>, ctx: egui::Context) -> Self {
+    pub(super) fn start(
+        connection: Arc<Mutex<Connection>>,
+        ctx: egui::Context,
+        folder: Option<PathBuf>,
+    ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let cancelled = stop.clone();
         let paused = Arc::new(AtomicBool::new(false));
@@ -38,6 +42,7 @@ impl Recording {
                 &worker_paused,
                 &progress,
                 &worker_bytes,
+                folder,
             ));
             ctx.request_repaint();
         });
@@ -87,6 +92,7 @@ fn record(
     paused: &AtomicBool,
     progress: &AtomicU64,
     output_bytes: &AtomicU64,
+    folder: Option<PathBuf>,
 ) -> Result<PathBuf, String> {
     let deadline = Instant::now() + Duration::from_secs(8);
     let first_frame = loop {
@@ -110,7 +116,7 @@ fn record(
         thread::sleep(Duration::from_millis(16));
     };
     let size = first_frame.0.size;
-    let folder = super::screenshot::pictures()?.join("ServerLauncher");
+    let folder = recording_folder(folder)?;
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
     let prefix = format!("remote-{}-", chrono::Local::now().format("%Y%m%d-%H%M%S"));
     let output = tempfile::Builder::new()
@@ -240,6 +246,13 @@ fn record(
     output.keep().map_err(|error| error.to_string())
 }
 
+fn recording_folder(folder: Option<PathBuf>) -> Result<PathBuf, String> {
+    match folder {
+        Some(folder) => Ok(folder),
+        None => super::screenshot::pictures().map(|path| path.join("ServerLauncher")),
+    }
+}
+
 fn sample_frames(
     connection: &Mutex<Connection>,
     stop: &AtomicBool,
@@ -327,5 +340,14 @@ mod tests {
                 [Color32::BLACK, Color32::RED, Color32::RED, Color32::BLACK]
             );
         }
+    }
+
+    #[test]
+    fn selected_folder_is_used_for_recordings() {
+        let folder = tempfile::tempdir().unwrap();
+        assert_eq!(
+            recording_folder(Some(folder.path().to_owned())).unwrap(),
+            folder.path()
+        );
     }
 }

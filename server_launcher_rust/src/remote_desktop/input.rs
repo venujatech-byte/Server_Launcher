@@ -5,7 +5,7 @@ use std::collections::HashMap;
 #[derive(Default)]
 pub(crate) struct Capture {
     active: bool,
-    held: HashMap<Key, u32>,
+    held: HashMap<Key, (u32, Option<Key>)>,
     modifiers: Modifiers,
     buttons: u8,
     extra_buttons: u8,
@@ -50,6 +50,7 @@ impl Capture {
                     for pressed in [true, false] {
                         send(Input::Key {
                             keysym: u32::from(key),
+                            physical_key: None,
                             pressed,
                         });
                     }
@@ -101,6 +102,7 @@ impl Capture {
                 }
                 Event::Key {
                     key,
+                    physical_key,
                     pressed,
                     repeat,
                     modifiers,
@@ -109,16 +111,18 @@ impl Capture {
                     self.sync_modifiers(modifiers, &mut send);
                     if pressed && !repeat {
                         if let Some(keysym) = keysym(key) {
-                            self.held.insert(key, keysym);
+                            self.held.insert(key, (keysym, physical_key));
                             send(Input::Key {
                                 keysym,
+                                physical_key,
                                 pressed: true,
                             });
                         }
                     } else if !pressed {
-                        if let Some(keysym) = self.held.remove(&key) {
+                        if let Some((keysym, physical_key)) = self.held.remove(&key) {
                             send(Input::Key {
                                 keysym,
+                                physical_key,
                                 pressed: false,
                             });
                         }
@@ -154,9 +158,10 @@ impl Capture {
 
     pub(crate) fn release(&mut self, mut send: impl FnMut(Input)) {
         self.active = false;
-        for (_, keysym) in self.held.drain() {
+        for (_, (keysym, physical_key)) in self.held.drain() {
             send(Input::Key {
                 keysym,
+                physical_key,
                 pressed: false,
             });
         }
@@ -188,7 +193,11 @@ impl Capture {
             (0xffeb, previous.mac_cmd, next.mac_cmd),
         ] {
             if old != pressed {
-                send(Input::Key { keysym, pressed });
+                send(Input::Key {
+                    keysym,
+                    physical_key: None,
+                    pressed,
+                });
             }
         }
         self.modifiers = next;
@@ -273,10 +282,12 @@ mod tests {
                 },
                 Input::Key {
                     keysym: 0xffe3,
+                    physical_key: None,
                     pressed: true
                 },
                 Input::Key {
                     keysym: 0xffe3,
+                    physical_key: None,
                     pressed: false
                 },
                 Input::Pointer {

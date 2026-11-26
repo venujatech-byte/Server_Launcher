@@ -37,8 +37,16 @@ impl Encoder {
                     y_position: y,
                 }));
             }
-            Input::Key { keysym, pressed } => {
-                if let Some((code, extended)) = scancode(keysym) {
+            Input::Key {
+                keysym,
+                physical_key,
+                pressed,
+            } => {
+                let scan_code = physical_key
+                    .and_then(super::keymap::keysym)
+                    .and_then(scancode)
+                    .or_else(|| scancode(keysym));
+                if let Some((code, extended)) = scan_code {
                     let mut flags = KeyboardFlags::empty();
                     flags.set(KeyboardFlags::RELEASE, !pressed);
                     flags.set(KeyboardFlags::EXTENDED, extended);
@@ -152,6 +160,7 @@ mod tests {
         encoder.encode(
             Input::Key {
                 keysym: 0xff51,
+                physical_key: None,
                 pressed: false,
             },
             &mut out,
@@ -164,6 +173,22 @@ mod tests {
             )]
         );
         assert_eq!(scancode(b'A'.into()), Some((0x1e, false)));
+        out.clear();
+        encoder.encode(
+            Input::Key {
+                keysym: b'a'.into(),
+                physical_key: Some(egui::Key::Q),
+                pressed: true,
+            },
+            &mut out,
+        );
+        assert_eq!(
+            out,
+            [FastPathInputEvent::KeyboardEvent(
+                KeyboardFlags::empty(),
+                0x10
+            )]
+        );
         out.clear();
         encoder.encode(
             Input::Pointer {

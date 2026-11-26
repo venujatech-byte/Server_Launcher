@@ -347,7 +347,11 @@ impl Viewer {
         }
         self.capture.release(|event| connection.send_input(event));
         for (keysym, pressed) in key_sequence(keys) {
-            connection.send_input(Input::Key { keysym, pressed });
+            connection.send_input(Input::Key {
+                keysym,
+                physical_key: None,
+                pressed,
+            });
         }
     }
 

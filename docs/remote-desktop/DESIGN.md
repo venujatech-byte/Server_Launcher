@@ -171,8 +171,9 @@ RDP keyboard and pointer events use IronRDP fast-path input on the worker that
 owns the TLS connection. The worker drains a bounded queue between reads.
 A 10 ms read timeout lets input reach an otherwise quiet connection without
 periodic UI repaint requests. The current mapping covers the common PC
-scancodes, five RDP pointer buttons, and both scroll axes. Physical keyboard
-layout mapping, IME, and a full interactive RDP server test remain pending.
+scancodes, five RDP pointer buttons, and both scroll axes. RDP scancode mapping
+uses egui's physical key when available, while VNC keeps logical keysyms. IME
+and a full interactive RDP server test remain pending.
 
 Unknown-issuer RDP certificates can now be explicitly trusted from the
 viewer after comparing the SHA-256 fingerprint. Validity dates and TLS

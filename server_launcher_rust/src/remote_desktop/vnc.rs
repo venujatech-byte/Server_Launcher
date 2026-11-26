@@ -37,6 +37,7 @@ const TUNNEL_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 pub(crate) enum Input {
     Key {
         keysym: u32,
+        physical_key: Option<egui::Key>,
         pressed: bool,
     },
     Pointer {
@@ -86,7 +87,9 @@ impl Input {
                 message[8..].copy_from_slice(&screen);
                 stream.write_all(&message).map(|()| false)
             }
-            Self::Key { keysym, pressed } => {
+            Self::Key {
+                keysym, pressed, ..
+            } => {
                 let [a, b, c, d] = keysym.to_be_bytes();
                 stream
                     .write_all(&[4, u8::from(pressed), 0, 0, a, b, c, d])

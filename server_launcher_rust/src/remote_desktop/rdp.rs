@@ -149,6 +149,7 @@ pub(crate) fn start(
     host: SshRemoteHost,
     config_path: PathBuf,
     monitor_size: Option<[u32; 2]>,
+    fit_window_size: Option<[u32; 2]>,
     session_password: Option<Zeroizing<String>>,
     ctx: egui::Context,
 ) -> Arc<Mutex<Connection>> {
@@ -159,7 +160,15 @@ pub(crate) fn start(
     let session_password = Arc::new(Mutex::new(session_password));
     Connection::start_worker("Connecting to RDP…", reconnect, ctx, move |state, ctx| {
         let password = session_password.lock().unwrap().clone();
-        run(&host, &config_path, monitor_size, password, state, ctx)
+        run(
+            &host,
+            &config_path,
+            monitor_size,
+            fit_window_size,
+            password,
+            state,
+            ctx,
+        )
     })
 }
 
@@ -186,6 +195,7 @@ fn run(
     host: &SshRemoteHost,
     config_path: &Path,
     monitor_size: Option<[u32; 2]>,
+    fit_window_size: Option<[u32; 2]>,
     session_password: Option<Zeroizing<String>>,
     state: &Arc<Mutex<Connection>>,
     ctx: &egui::Context,
@@ -260,7 +270,10 @@ fn run(
         };
     let mut framed = Framed::new(socket);
     let mut connector =
-        connector::ClientConnector::new(config(host, profile, &password, monitor_size), local_addr);
+        connector::ClientConnector::new(
+            config(host, profile, &password, monitor_size, fit_window_size),
+            local_addr,
+        );
     if let Some(cluster_data) = administrative_cluster_data(profile.admin_session) {
         connector = connector.with_cluster_data(cluster_data);
     }
@@ -294,7 +307,8 @@ fn run(
     let resize_state = state.clone();
     let resize_ctx = ctx.clone();
     let multi_monitor = profile.multi_monitor;
-    let [desktop_width, desktop_height] = initial_dimensions(profile, monitor_size).map(u32::from);
+    let [desktop_width, desktop_height] =
+        initial_dimensions(profile, monitor_size, fit_window_size).map(u32::from);
     let mut drdynvc = DrdynvcClient::new();
     if let Some(playback) = playback {
         let state = RdpsndDvcState::new(Box::new(playback))
@@ -1236,11 +1250,17 @@ fn open_direct(hostname: &str, port: u16) -> io::Result<TcpStream> {
     Ok(socket)
 }
 
-fn initial_dimensions(profile: &RdpProfile, monitor_size: Option<[u32; 2]>) -> [u16; 2] {
+fn initial_dimensions(
+    profile: &RdpProfile,
+    monitor_size: Option<[u32; 2]>,
+    fit_window_size: Option<[u32; 2]>,
+) -> [u16; 2] {
     match profile.resolution {
         Resolution::Fixed => [profile.width.clamp(1, 4096), profile.height.clamp(1, 4096)],
         Resolution::MatchLocalScreen => monitor_size.unwrap_or([1280, 720]).map(|size| size as u16),
-        Resolution::FitWindow => [1280, 720],
+        Resolution::FitWindow => fit_window_size
+            .unwrap_or([1280, 720])
+            .map(|size| size.clamp(200, 4096) as u16),
     }
 }
 
@@ -1282,6 +1302,7 @@ fn config(
     profile: &RdpProfile,
     password: &str,
     monitor_size: Option<[u32; 2]>,
+    fit_window_size: Option<[u32; 2]>,
 ) -> connector::Config {
     let username = if profile.same_username_as_ssh {
         &host.user
@@ -1293,7 +1314,7 @@ fn config(
         RdpSecurity::Nla => (false, true),
         RdpSecurity::Tls => (true, false),
     };
-    let [width, height] = initial_dimensions(profile, monitor_size);
+    let [width, height] = initial_dimensions(profile, monitor_size, fit_window_size);
     let (color_depth, lossy_compression) = bitmap_quality(profile);
     let mut performance = PerformanceFlags::default();
     performance.set(PerformanceFlags::DISABLE_WALLPAPER, !profile.wallpaper);
@@ -1476,7 +1497,7 @@ mod tests {
                 security,
                 ..Default::default()
             };
-            let config = config(&host, &profile, "test-password", None);
+            let config = config(&host, &profile, "test-password", None, None);
             assert_eq!((config.enable_tls, config.enable_credssp), (tls, credssp));
             assert!(!config.enable_standard_rdp_security);
             assert!(config.enable_audio_playback);
@@ -1486,13 +1507,13 @@ mod tests {
             audio: Audio::Off,
             ..Default::default()
         };
-        assert!(!config(&host, &profile, "test-password", None).enable_audio_playback);
-        assert!(!config(&host, &profile, "test-password", None).enable_audio_capture);
+        assert!(!config(&host, &profile, "test-password", None, None).enable_audio_playback);
+        assert!(!config(&host, &profile, "test-password", None, None).enable_audio_capture);
         let profile = RdpProfile {
             mic: true,
             ..Default::default()
         };
-        assert!(config(&host, &profile, "test-password", None).enable_audio_capture);
+        assert!(config(&host, &profile, "test-password", None, None).enable_audio_capture);
     }
 
     #[test]
@@ -1502,10 +1523,19 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            initial_dimensions(&profile, Some([2560, 1440])),
+            initial_dimensions(&profile, Some([2560, 1440]), None),
             [2560, 1440]
         );
-        assert_eq!(initial_dimensions(&profile, None), [1280, 720]);
+        assert_eq!(initial_dimensions(&profile, None, None), [1280, 720]);
+    }
+
+    #[test]
+    fn fit_window_uses_measured_canvas_dimensions_for_initial_session() {
+        let profile = RdpProfile::default();
+        assert_eq!(
+            initial_dimensions(&profile, Some([2560, 1440]), Some([1350, 666])),
+            [1350, 666]
+        );
     }
 
     #[test]

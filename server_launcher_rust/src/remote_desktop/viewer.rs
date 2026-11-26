@@ -272,6 +272,7 @@ fn start_connection(
     host: crate::config::SshRemoteHost,
     config_path: &Path,
     protocol: DesktopProtocol,
+    fit_window_size: Option<[u32; 2]>,
     session_password: Option<Zeroizing<String>>,
     ctx: &egui::Context,
 ) -> Arc<Mutex<Connection>> {
@@ -289,6 +290,7 @@ fn start_connection(
                 host,
                 config_path.to_owned(),
                 monitor_size,
+                fit_window_size,
                 session_password,
                 ctx.clone(),
             )
@@ -737,12 +739,19 @@ impl eframe::App for Viewer {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
-        if self.connection.is_none() && !self.confirm_unencrypted_vnc {
+        if self.dynamic_resize && self.last_window_size.is_none() {
+            ctx.request_repaint();
+        } else if self.connection.is_none() && !self.confirm_unencrypted_vnc {
             if let Some(host) = &self.session_host {
                 self.connection = Some(start_connection(
                     host.clone(),
                     &self.config_path,
                     self.protocol,
+                    if self.dynamic_resize {
+                        self.last_window_size
+                    } else {
+                        None
+                    },
                     None,
                     ctx,
                 ));
@@ -986,7 +995,6 @@ impl eframe::App for Viewer {
         }
         if !connected {
             self.capture = Capture::new(self.left_handed_mouse, self.disable_smooth_scrolling);
-            self.last_window_size = None;
         }
         if connected && self.show_fps {
             let (since, frames) = self
@@ -1103,6 +1111,11 @@ impl eframe::App for Viewer {
                                 host.clone(),
                                 &self.config_path,
                                 self.protocol,
+                                if self.dynamic_resize {
+                                    self.last_window_size
+                                } else {
+                                    None
+                                },
                                 None,
                                 ctx,
                             ));
@@ -1593,15 +1606,19 @@ impl eframe::App for Viewer {
         }
         self.screenshot_notification(ctx);
         egui::CentralPanel::default().show(ctx, |ui| {
-            if self.dynamic_resize && connected {
+            if self.dynamic_resize {
                 let size = ui.available_size() * ctx.pixels_per_point();
                 let dimensions = super::rdp::display_dimensions(size.x as u32, size.y as u32);
                 if self.last_window_size != Some(dimensions) {
                     self.last_window_size = Some(dimensions);
-                    if let Some(connection) = &self.connection {
-                        let mut connection = connection.lock().unwrap();
-                        connection.rdp_resize_enabled = true;
-                        connection.resize_request = Some(dimensions);
+                    if connected {
+                        if let Some(connection) = &self.connection {
+                            let mut connection = connection.lock().unwrap();
+                            connection.rdp_resize_enabled = true;
+                            connection.resize_request = Some(dimensions);
+                        }
+                    } else if self.connection.is_none() {
+                        ctx.request_repaint();
                     }
                 }
             }
@@ -1646,6 +1663,11 @@ impl eframe::App for Viewer {
                                 host.clone(),
                                 &self.config_path,
                                 self.protocol,
+                                if self.dynamic_resize {
+                                    self.last_window_size
+                                } else {
+                                    None
+                                },
                                 Some(password),
                                 ctx,
                             ));

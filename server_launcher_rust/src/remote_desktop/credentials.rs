@@ -138,6 +138,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn preserves_both_desktop_references_in_saved_host() {
+        let host: SshRemoteHost = serde_json::from_str(
+            r#"{"id":"test","name":"Test","host":"example.invalid","rdp":{"credential_ref":"one"},"vnc":{"credential_ref":"two"}}"#,
+        )
+        .unwrap();
+        let saved = serde_json::to_value(&host).unwrap();
+        let restored: SshRemoteHost = serde_json::from_value(saved).unwrap();
+        assert_eq!(references(&restored).collect::<Vec<_>>(), ["one", "two"]);
+    }
+
+    #[test]
     fn separates_protocols_and_clears_only_the_changed_target() {
         let original: SshRemoteHost = serde_json::from_str(
             r#"{"id":"test","name":"Test","host":"example.invalid","rdp":{"credential_ref":"one"},"vnc":{"credential_ref":"two"}}"#,

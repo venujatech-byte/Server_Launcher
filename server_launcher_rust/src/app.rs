@@ -3585,6 +3585,7 @@ impl eframe::App for LauncherApp {
                 }
                 if self.try_persist_config() {
                     staged.keep();
+                    self.ssh_host_modal.clear_desktop_passwords();
                     if let Some(old) = &old_id {
                         if changed {
                             self.cancel_remote_commands(old);

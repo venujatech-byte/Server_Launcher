@@ -283,12 +283,16 @@ impl PasswordDraft {
             if ui.small_button(toggle).clicked() {
                 self.reveal = !self.reveal;
             }
-            if reference.is_some() && ui.small_button("Forget saved password").clicked() {
-                *reference = None;
+            if reference.is_some() {
+                ui.label("Saved in system credential store");
+                if ui.small_button("Forget saved password").clicked() {
+                    *reference = None;
+                    self.value = Default::default();
+                }
             }
         });
         let hint = if reference.is_some() {
-            "Leave blank to keep saved password"
+            "Enter a replacement password"
         } else {
             "Enter password"
         };

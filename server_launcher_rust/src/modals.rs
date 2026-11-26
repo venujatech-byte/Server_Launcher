@@ -1557,7 +1557,7 @@ type RemotePcSaveResult = Result<
 >;
 
 impl SshHostModalState {
-    fn clear_desktop_passwords(&mut self) {
+    pub(crate) fn clear_desktop_passwords(&mut self) {
         self.pending_save = None;
         self.rdp_password = Default::default();
         self.vnc_password = Default::default();
@@ -1565,22 +1565,18 @@ impl SshHostModalState {
 
     fn save_desktop_passwords(&mut self, mut host: crate::config::SshRemoteHost, ctx: &Context) {
         use crate::remote_desktop::credentials::{DesktopProtocol, StagedCredentials};
-        let rdp = std::mem::take(&mut self.rdp_password.value);
-        let vnc = std::mem::take(&mut self.vnc_password.value);
+        let rdp = self.rdp_password.value.clone();
+        let vnc = self.vnc_password.value.clone();
         let (sender, receiver) = std::sync::mpsc::channel();
         self.pending_save = Some(receiver);
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             let mut staged = StagedCredentials::default();
             let result = (|| {
-                if host.rdp.as_ref().is_some_and(|profile| profile.enabled) {
-                    staged.stage(&mut host, DesktopProtocol::Rdp, rdp)
-                        .map_err(|error| format!("RDP password: {error}"))?;
-                }
-                if host.vnc.as_ref().is_some_and(|profile| profile.enabled) {
-                    staged.stage(&mut host, DesktopProtocol::Vnc, vnc)
-                        .map_err(|error| format!("VNC password: {error}"))?;
-                }
+                staged.stage(&mut host, DesktopProtocol::Rdp, rdp)
+                    .map_err(|error| format!("RDP password: {error}"))?;
+                staged.stage(&mut host, DesktopProtocol::Vnc, vnc)
+                    .map_err(|error| format!("VNC password: {error}"))?;
                 Ok((host, staged))
             })();
             let _ = sender.send(result);
@@ -1682,7 +1678,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
         match receiver.try_recv() {
             Ok(Ok((host, staged))) => {
                 state.open = false;
-                state.clear_desktop_passwords();
+                state.pending_save = None;
                 return ModalAction::SaveSshHost(host, state.editing_id.clone(), staged);
             }
             Ok(Err(error)) => {

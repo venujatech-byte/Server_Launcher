@@ -130,7 +130,7 @@ fn format_detection_report(report: &str) -> String {
         })
         .collect::<Vec<_>>();
     if matches.is_empty() {
-        "No listener found on RDP 3389 or VNC 5900–5910. On Linux, install and start xrdp or a VNC server; a desktop session is required. The scan did not change the host.".into()
+        "No listener found on RDP 3389 or VNC 5900–5910. Linux setup examples (run on the remote host):\nFedora RDP: sudo dnf install xrdp && sudo systemctl enable --now xrdp\nUbuntu/Debian RDP: sudo apt install xrdp && sudo systemctl enable --now xrdp\nVNC: install TigerVNC, set its password, then start a display (for example: vncserver :1).\nA graphical desktop session is required. This scan did not change the host.".into()
     } else {
         format!("Detected remote desktop services:\n{}", matches.join("\n"))
     }
@@ -441,7 +441,11 @@ mod tests {
         assert!(!report.contains("8080"));
         assert!(!report.contains("nginx"));
         assert!(!contains_port("*:59010", 5901));
-        assert!(format_detection_report("ss is unavailable").contains("No listener found"));
+        let missing = format_detection_report("ss is unavailable");
+        assert!(missing.contains("No listener found"));
+        assert!(missing.contains("sudo dnf install xrdp"));
+        assert!(missing.contains("sudo apt install xrdp"));
+        assert!(missing.contains("vncserver :1"));
     }
 
     struct Peer {

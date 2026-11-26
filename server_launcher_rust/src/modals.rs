@@ -1529,6 +1529,7 @@ pub struct SshHostModalState {
     vnc_port_text: String,
     rdp_probe: crate::remote_desktop::probe::ProbeControl,
     vnc_probe: crate::remote_desktop::probe::ProbeControl,
+    server_detection: crate::remote_desktop::probe::ServerDetection,
     rdp_password: crate::remote_desktop::editor::PasswordDraft,
     vnc_password: crate::remote_desktop::editor::PasswordDraft,
     pending_save: Option<std::sync::mpsc::Receiver<RemotePcSaveResult>>,
@@ -1557,6 +1558,24 @@ type RemotePcSaveResult = Result<
 >;
 
 impl SshHostModalState {
+    fn remote_detection_host(&self) -> crate::config::SshRemoteHost {
+        crate::config::SshRemoteHost {
+            id: self.editing_id.clone().unwrap_or_else(|| "remote-probe".into()),
+            name: self.name.clone(),
+            host: self.host.clone(),
+            port: self.port_str.parse().unwrap_or(22),
+            user: self.user.clone(),
+            key_path: self.key_path.clone(),
+            password: self.password.clone(),
+            credential_ref: None,
+            remote_cwd: self.remote_cwd.clone(),
+            use_agent: self.use_agent,
+            strict_host_key: self.strict_host_key,
+            rdp: self.rdp.clone(),
+            vnc: self.vnc.clone(),
+        }
+    }
+
     pub(crate) fn clear_desktop_passwords(&mut self) {
         self.pending_save = None;
         self.rdp_password = Default::default();
@@ -1588,6 +1607,7 @@ impl SshHostModalState {
         self.tab = RemotePcTab::General;
         self.rdp_probe = Default::default();
         self.vnc_probe = Default::default();
+        self.server_detection = Default::default();
         self.clear_desktop_passwords();
         self.open = true;
         self.is_edit = false;
@@ -1626,6 +1646,7 @@ impl SshHostModalState {
         self.tab = RemotePcTab::General;
         self.rdp_probe = Default::default();
         self.vnc_probe = Default::default();
+        self.server_detection = Default::default();
         self.clear_desktop_passwords();
         self.open = true;
         self.is_edit = true;
@@ -1904,6 +1925,11 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                         }
                         RemotePcTab::Rdp => {
                             crate::remote_desktop::editor::rdp(ui, &mut state.rdp);
+                            state.server_detection.show(
+                                ui,
+                                &state.remote_detection_host(),
+                                std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))),
+                            );
                             if let Some(profile) = state.rdp.as_mut().filter(|profile| profile.enabled) {
                                 state.rdp_password.show(ui, &mut profile.credential_ref);
                                 let direct = !profile.tunnel_via_ssh && profile.gateway.trim().is_empty();
@@ -1920,6 +1946,11 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                         }
                         RemotePcTab::Vnc => {
                             crate::remote_desktop::editor::vnc(ui, &mut state.vnc, &mut state.vnc_port_text, &state.host);
+                            state.server_detection.show(
+                                ui,
+                                &state.remote_detection_host(),
+                                std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))),
+                            );
                             if let Some(profile) = state.vnc.as_mut().filter(|profile| profile.enabled) {
                                 state.vnc_password.show(ui, &mut profile.credential_ref);
                                 ui.label("Classic VNC uses only the first eight bytes of the password.");

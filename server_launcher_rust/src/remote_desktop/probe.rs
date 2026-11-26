@@ -5,6 +5,146 @@ use std::{
     time::{Duration, Instant},
 };
 
+type DetectionResult = Result<String, String>;
+
+#[derive(Default)]
+pub(crate) struct ServerDetection {
+    pending: Option<(String, std::sync::mpsc::Receiver<DetectionResult>)>,
+    last: Option<(String, DetectionResult)>,
+}
+
+impl ServerDetection {
+    pub(crate) fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        host: &crate::config::SshRemoteHost,
+        timeout: Duration,
+    ) {
+        let key = format!("{}:{}@{}", host.user, host.port, host.host);
+        if let Some((_, receiver)) = &self.pending {
+            use std::sync::mpsc::TryRecvError;
+            match receiver.try_recv() {
+                Ok(result) => {
+                    self.last = self.pending.take().map(|(key, _)| (key, result));
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.last = self
+                        .pending
+                        .take()
+                        .map(|(key, _)| (key, Err("The server scan stopped unexpectedly.".into())));
+                }
+                Err(TryRecvError::Empty) => {}
+            }
+        }
+
+        let can_scan = !host.host.trim().is_empty() && !host.user.trim().is_empty();
+        let should_scan = can_scan
+            && self.pending.is_none()
+            && self
+                .last
+                .as_ref()
+                .map_or(true, |(tested, _)| tested != &key);
+        if should_scan {
+            self.start(host.clone(), key.clone(), timeout, ui.ctx().clone());
+        }
+
+        ui.horizontal(|ui| {
+            ui.strong("Remote desktop server detection");
+            if self.pending.is_some() {
+                ui.spinner();
+                ui.label("Checking over SSH…");
+            }
+            if ui
+                .add_enabled(
+                    can_scan && self.pending.is_none(),
+                    egui::Button::new("Scan again"),
+                )
+                .clicked()
+            {
+                self.start(host.clone(), key.clone(), timeout, ui.ctx().clone());
+            }
+        });
+        if let Some((_, result)) = self.last.as_ref().filter(|(tested, _)| tested == &key) {
+            match result {
+                Ok(report) => {
+                    ui.label(report);
+                }
+                Err(error) => {
+                    ui.colored_label(ui.visuals().error_fg_color, error);
+                }
+            }
+        } else if !can_scan {
+            ui.label("Enter the SSH host and username to scan.");
+        }
+    }
+
+    fn start(
+        &mut self,
+        host: crate::config::SshRemoteHost,
+        key: String,
+        timeout: Duration,
+        ctx: egui::Context,
+    ) {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.pending = Some((key, receiver));
+        std::thread::spawn(move || {
+            let _ = sender.send(detect_servers(&host, timeout));
+            ctx.request_repaint();
+        });
+    }
+}
+
+fn detect_servers(host: &crate::config::SshRemoteHost, timeout: Duration) -> DetectionResult {
+    let command = crate::remote::build_ssh_command(
+        host,
+        "if command -v ss >/dev/null 2>&1; then ss -ltnp 2>/dev/null | awk 'NR == 1 || /:3389([^0-9]|$)|:590[0-9]([^0-9]|$)|:5910([^0-9]|$)/'; else echo 'ss is unavailable'; fi; ps -eo comm= 2>/dev/null | grep -E '^(xrdp|Xvnc|x11vnc|Xtigervnc|vncserver)$' || true",
+    );
+    let output = crate::remote::ssh_probe_output(command, timeout)
+        .map_err(|error| format!("SSH scan failed: {error}"))?;
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if error.is_empty() {
+            format!("SSH scan exited with status {:?}.", output.status.code())
+        } else {
+            format!("SSH scan failed: {error}")
+        });
+    }
+    Ok(format_detection_report(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+
+fn format_detection_report(report: &str) -> String {
+    let matches = report
+        .lines()
+        .filter(|line| {
+            [
+                3389, 5900, 5901, 5902, 5903, 5904, 5905, 5906, 5907, 5908, 5909, 5910,
+            ]
+            .into_iter()
+            .any(|port| contains_port(line, port))
+                || matches!(
+                    line.trim(),
+                    "xrdp" | "Xvnc" | "x11vnc" | "Xtigervnc" | "vncserver"
+                )
+        })
+        .collect::<Vec<_>>();
+    if matches.is_empty() {
+        "No listener found on RDP 3389 or VNC 5900–5910. On Linux, install and start xrdp or a VNC server; a desktop session is required. The scan did not change the host.".into()
+    } else {
+        format!("Detected remote desktop services:\n{}", matches.join("\n"))
+    }
+}
+
+fn contains_port(line: &str, port: u16) -> bool {
+    let needle = format!(":{port}");
+    line.match_indices(&needle).any(|(start, _)| {
+        line.as_bytes()
+            .get(start + needle.len())
+            .map_or(true, |byte| !byte.is_ascii_digit())
+    })
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ProbeRequest {
     pub host: String,
@@ -289,6 +429,20 @@ impl ProbeControl {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_detection_reports_only_rdp_vnc_ports_and_processes() {
+        let report = format_detection_report(
+            "State Local Address:Port\nLISTEN 0 128 0.0.0.0:3389 0.0.0.0:*\nLISTEN 0 64 *:5901 *:*\nLISTEN 0 64 *:8080 *:*\nxrdp\nnginx\n",
+        );
+        assert!(report.contains(":3389"));
+        assert!(report.contains(":5901"));
+        assert!(report.contains("xrdp"));
+        assert!(!report.contains("8080"));
+        assert!(!report.contains("nginx"));
+        assert!(!contains_port("*:59010", 5901));
+        assert!(format_detection_report("ss is unavailable").contains("No listener found"));
+    }
 
     struct Peer {
         response: io::Cursor<Vec<u8>>,

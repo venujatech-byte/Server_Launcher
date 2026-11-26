@@ -113,6 +113,7 @@ pub(crate) fn run(
                 capture: Capture::default(),
                 host_name,
                 protocol,
+                clipboard_notice: None,
                 screenshot: None,
                 screenshot_result: None,
                 show_fps: false,
@@ -166,6 +167,7 @@ struct Viewer {
     capture: Capture,
     host_name: String,
     protocol: DesktopProtocol,
+    clipboard_notice: Option<(Instant, &'static str)>,
     screenshot: Option<mpsc::Receiver<Result<PathBuf, String>>>,
     screenshot_result: Option<Result<PathBuf, String>>,
     test_pattern: bool,
@@ -362,7 +364,11 @@ impl eframe::App for Viewer {
         let (update, status, connected, reconnect_at, finished, connected_since, received_bytes) =
             if let Some(connection) = &self.connection {
                 let mut connection = connection.lock().unwrap();
+                if connection.clipboard_sent.swap(false, Ordering::Relaxed) {
+                    self.clipboard_notice = Some((Instant::now(), "Clipboard sent"));
+                }
                 if let Some(text) = connection.clipboard_text.take() {
+                    self.clipboard_notice = Some((Instant::now(), "Clipboard received"));
                     ctx.copy_text(text);
                 }
                 (
@@ -670,6 +676,21 @@ impl eframe::App for Viewer {
                 })
                 .response
                 .rect;
+        }
+        if let Some((shown, label)) = self.clipboard_notice {
+            let remaining = Duration::from_secs(2).saturating_sub(shown.elapsed());
+            if connected && !remaining.is_zero() {
+                egui::Area::new(egui::Id::new("clipboard_activity"))
+                    .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-12.0, -12.0))
+                    .order(egui::Order::Foreground)
+                    .interactable(false)
+                    .show(ctx, |ui| {
+                        egui::Frame::popup(ui.style()).show(ui, |ui| ui.label(label));
+                    });
+                ctx.request_repaint_after(remaining);
+            } else {
+                self.clipboard_notice = None;
+            }
         }
         self.screenshot_notification(ctx);
         egui::CentralPanel::default().show(ctx, |ui| {

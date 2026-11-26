@@ -40,7 +40,7 @@ pub(crate) enum Input {
 }
 
 impl Input {
-    fn write(self, stream: &mut impl Write) -> io::Result<()> {
+    fn write(self, stream: &mut impl Write) -> io::Result<bool> {
         match self {
             Self::ClipboardText(text) => {
                 let Some(text): Option<Vec<u8>> = text
@@ -48,11 +48,11 @@ impl Input {
                     .map(|ch| u8::try_from(u32::from(ch)).ok())
                     .collect()
                 else {
-                    return Ok(());
+                    return Ok(false);
                 };
                 let [a, b, c, d] = (text.len() as u32).to_be_bytes();
                 stream.write_all(&[6, 0, 0, 0, a, b, c, d])?;
-                stream.write_all(&text)
+                stream.write_all(&text).map(|()| true)
             }
             Self::VncResize {
                 size: [width, height],
@@ -64,16 +64,18 @@ impl Input {
                 let mut message = [0; 24];
                 message[..8].copy_from_slice(&[251, 0, w0, w1, h0, h1, 1, 0]);
                 message[8..].copy_from_slice(&screen);
-                stream.write_all(&message)
+                stream.write_all(&message).map(|()| false)
             }
             Self::Key { keysym, pressed } => {
                 let [a, b, c, d] = keysym.to_be_bytes();
-                stream.write_all(&[4, u8::from(pressed), 0, 0, a, b, c, d])
+                stream
+                    .write_all(&[4, u8::from(pressed), 0, 0, a, b, c, d])
+                    .map(|()| false)
             }
             Self::Pointer { x, y, buttons } => {
                 let [a, b] = x.to_be_bytes();
                 let [c, d] = y.to_be_bytes();
-                stream.write_all(&[5, buttons, a, b, c, d])
+                stream.write_all(&[5, buttons, a, b, c, d]).map(|()| false)
             }
         }
     }
@@ -88,6 +90,7 @@ pub(crate) struct Connection {
     pub(crate) finished: bool,
     pub(crate) reconnect_at: Option<Instant>,
     pub(crate) receiving_frame: bool,
+    pub(crate) clipboard_sent: Arc<AtomicBool>,
     pub(crate) clipboard_text: Option<String>,
     pub(crate) vnc_screen: Option<[u8; 16]>,
     pub(crate) rdp_resize_supported: bool,
@@ -124,6 +127,7 @@ impl Connection {
             finished: false,
             reconnect_at: None,
             receiving_frame: false,
+            clipboard_sent: Arc::new(AtomicBool::new(false)),
             clipboard_text: None,
             vnc_screen: None,
             rdp_resize_supported: false,
@@ -151,6 +155,7 @@ impl Connection {
                     auto_reconnect && (state.connected || retries > 0) && retries < 5;
                 state.connected = false;
                 state.input = None;
+                state.clipboard_sent = Arc::new(AtomicBool::new(false));
                 state.clipboard_text = None;
                 state.vnc_screen = None;
                 state.resize_request = None;
@@ -289,12 +294,25 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
     if !profile.view_only {
         let (pending, overflow) = state.lock().unwrap().open_input();
         let writer = writer.clone();
+        let clipboard_sent = state.lock().unwrap().clipboard_sent.clone();
+        let ctx = ctx.clone();
         std::thread::spawn(move || {
             while let Ok(event) = pending.recv() {
                 let mut writer = writer.lock().unwrap();
-                if overflow.load(Ordering::Acquire) || event.write(&mut *writer).is_err() {
+                if overflow.load(Ordering::Acquire) {
                     writer.disconnect();
                     break;
+                }
+                match event.write(&mut *writer) {
+                    Ok(true) => {
+                        clipboard_sent.store(true, Ordering::Relaxed);
+                        ctx.request_repaint();
+                    }
+                    Ok(false) => {}
+                    Err(_) => {
+                        writer.disconnect();
+                        break;
+                    }
                 }
             }
         });
@@ -656,7 +674,7 @@ mod tests {
     #[test]
     fn writes_classic_clipboard_message() {
         let mut wire = Vec::new();
-        Input::ClipboardText("aé".into()).write(&mut wire).unwrap();
+        assert!(Input::ClipboardText("aé".into()).write(&mut wire).unwrap());
         assert_eq!(wire, [6, 0, 0, 0, 0, 0, 0, 2, b'a', 0xe9]);
     }
 

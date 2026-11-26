@@ -323,6 +323,7 @@ fn run(
                     ctx.request_repaint();
                 }
                 let reply = clipboard.reply.take();
+                let sent_text = reply.as_ref().is_some_and(|reply| !reply.is_error());
                 let request_text = clipboard.request_text();
                 let response = reply
                     .map(|reply| channel.submit_format_data(reply))
@@ -337,6 +338,14 @@ fn run(
                         .process_svc_processor_messages(message)
                         .map_err(|_| error("Could not encode the clipboard message."))?;
                     framed.write_all(&packet)?;
+                }
+                if sent_text {
+                    state
+                        .lock()
+                        .unwrap()
+                        .clipboard_sent
+                        .store(true, Ordering::Relaxed);
+                    ctx.request_repaint();
                 }
             }
         }

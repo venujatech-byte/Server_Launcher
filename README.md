@@ -80,8 +80,9 @@ store; protocol passwords are not saved in `servers.json`.
   advertised and the server can use another supported codec. The 256-color
   (8 bpp) profile uses legacy bitmap updates. The server negotiates the codec;
   these options do not guarantee a specific frame rate or speedup.
-- VNC supports classic password authentication, Raw, CopyRect, and ZRLE framebuffer
-  updates, keyboard and mouse input, text clipboard sync, screenshots,
+- VNC supports classic password authentication, Tight (fill, copy, palette,
+  gradient, JPEG, and PNG), Raw, CopyRect, and ZRLE framebuffer updates,
+  keyboard and mouse input, text clipboard sync, screenshots,
   recording, and server-supported resolution changes. Its TCP user timeout setting
   applies only to direct Linux connections; zero uses the OS default, and SSH tunnels
   ignore it. The profile can close the viewer after connection retries fail.

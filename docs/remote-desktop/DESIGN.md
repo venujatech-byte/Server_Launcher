@@ -173,6 +173,18 @@ username profile values for compatibility, but presents those controls as
 unsupported and read-only until their protocol support is implemented.
 IronRDP and its blocking adapter are available under MIT or Apache-2.0.
 
+The RDP renderer currently consumes the legacy bitmap update path. The pinned
+connector does not advertise `SUPPORT_DYN_VC_GFX_PROTOCOL`, and the session
+does not attach an EGFX decoder/compositor. Smooth/Fast filtering and
+incremental/full-frame painting affect only local rendering; they cannot enable
+modern codec negotiation or remove network/decode latency. Direct RDP and the
+Windows tunnel socket already enable TCP_NODELAY, so Nagle buffering is not the
+current cause. Matching a modern client's smoothness requires wiring an EGFX
+dynamic channel, advertising only codecs that are actually decoded, and
+compositing its surface updates into the framebuffer. Upstream tracks that
+integration in [IronRDP issue #1464](https://github.com/Devolutions/IronRDP/issues/1464).
+Do not describe local full-frame repaint as equivalent to EGFX.
+
 The optional live FPS value counts received display-update batches per second
 from the RDP/VNC workers. It is not the remote compositor's native capture rate.
 The viewer Stats menu also shows the most recent one-second protocol receive

@@ -258,6 +258,14 @@ fn reconnect_delay(attempt: u32, entropy: u64) -> Duration {
     Duration::from_millis(base_ms + entropy % (base_ms / 4 + 1))
 }
 
+fn use_rgb565(quality: Quality, color_depth: u8) -> bool {
+    match quality {
+        Quality::Fast => true,
+        Quality::Auto => color_depth <= 16,
+        Quality::Best | Quality::Good => false,
+    }
+}
+
 #[cfg(test)]
 mod warning_tests {
     use super::needs_unencrypted_warning;
@@ -341,7 +349,7 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
         state.connected = true;
         state.connected_since = Some(Instant::now());
     }
-    let compact_pixels = matches!(profile.quality, Quality::Auto | Quality::Fast);
+    let compact_pixels = use_rgb565(profile.quality, profile.color_depth);
     // RGB565 halves the raw payload. Good and Best retain full color.
     let pixel_format = if compact_pixels {
         [16, 16, 0, 1, 0, 31, 0, 63, 0, 31, 11, 5, 0, 0, 0, 0]
@@ -1020,6 +1028,16 @@ mod tests {
         let mut pixels = [0x00, 0xf8, 0xe0, 0x07, 0x1f, 0x00, 0, 0, 0, 0, 0, 0];
         expand_rgb565(&mut pixels);
         assert_eq!(pixels, [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn automatic_vnc_quality_honors_manual_pixel_depth() {
+        assert!(use_rgb565(Quality::Auto, 16));
+        assert!(!use_rgb565(Quality::Auto, 24));
+        assert!(!use_rgb565(Quality::Auto, 32));
+        assert!(use_rgb565(Quality::Fast, 32));
+        assert!(!use_rgb565(Quality::Good, 16));
+        assert!(!use_rgb565(Quality::Best, 16));
     }
 
     #[test]

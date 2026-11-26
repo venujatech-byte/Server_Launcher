@@ -56,9 +56,10 @@ the final versions.
   session mode with those identifiers only. Use a bounded control channel,
   send Close on parent exit, and treat EOF as teardown. Prove tunnel lifetime
   after unexpected viewer termination before enabling forwarding.
-- Coalesce damage into bounded, validated framebuffer regions. Retain the
-  latest state even when intermediate notifications drop. A worker wakes the
-  UI on frame and control changes. Never poll at a fixed refresh rate when
+- Keep at most 32 validated framebuffer damage regions per update, merging
+  overlaps and falling back to one full-frame upload at the cap. This avoids
+  uploading large empty areas between distant screen changes. A worker wakes
+  the UI on frame and control changes. Never poll at a fixed refresh rate when
   nothing changes. Keep recording work outside the viewer update path.
 - Gate VNC transport, RDP certificate trust and redirection before sending
   credentials or local data. Use the configured SSH identity for loopback

@@ -2,6 +2,7 @@ use egui::{Color32, ColorImage};
 
 const MAX_PIXELS: usize = 16 * 1024 * 1024;
 const MAX_SIDE: usize = 8192;
+const MAX_DIRTY_REGIONS: usize = 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Region {
@@ -31,13 +32,22 @@ impl Region {
             size: [end[0] - origin[0], end[1] - origin[1]],
         }
     }
+
+    fn intersects(self, other: Self) -> bool {
+        let [right_a, bottom_a] = self.end().unwrap();
+        let [right_b, bottom_b] = other.end().unwrap();
+        self.origin[0] < right_b
+            && other.origin[0] < right_a
+            && self.origin[1] < bottom_b
+            && other.origin[1] < bottom_a
+    }
 }
 
 #[derive(Default)]
 pub(crate) struct Framebuffer {
     size: [usize; 2],
     pixels: Vec<Color32>,
-    dirty: Option<Region>,
+    dirty: Vec<Region>,
     pub(super) revision: u64,
     resized: bool,
 }
@@ -58,7 +68,8 @@ impl Framebuffer {
             self.size = size;
             self.pixels = vec![Color32::BLACK; w * h];
             self.revision = self.revision.wrapping_add(1);
-            self.dirty = Some(Region {
+            self.dirty.clear();
+            self.dirty.push(Region {
                 origin: [0, 0],
                 size,
             });
@@ -114,7 +125,7 @@ impl Framebuffer {
             }
         }
         self.revision = self.revision.wrapping_add(1);
-        self.dirty = Some(self.dirty.map_or(region, |dirty| dirty.union(region)));
+        self.mark_dirty(region);
         Ok(())
     }
 
@@ -145,10 +156,7 @@ impl Framebuffer {
             self.pixels.copy_within(from..from + w, to);
         }
         self.revision = self.revision.wrapping_add(1);
-        self.dirty = Some(
-            self.dirty
-                .map_or(destination, |dirty| dirty.union(destination)),
-        );
+        self.mark_dirty(destination);
         Ok(())
     }
 
@@ -159,23 +167,50 @@ impl Framebuffer {
         })
     }
 
-    pub(crate) fn take_update(&mut self) -> Option<Update> {
-        let region = self.dirty.take()?;
-        let [x, y] = region.origin;
-        let [w, h] = region.size;
-        let mut pixels = Vec::with_capacity(w * h);
-        for row in y..y + h {
-            let start = row * self.size[0] + x;
-            pixels.extend_from_slice(&self.pixels[start..start + w]);
+    fn mark_dirty(&mut self, mut region: Region) {
+        let mut index = 0;
+        while index < self.dirty.len() {
+            if region.intersects(self.dirty[index]) {
+                region = region.union(self.dirty.swap_remove(index));
+                index = 0;
+            } else {
+                index += 1;
+            }
         }
-        Some(Update {
-            origin: region.origin,
-            image: ColorImage {
-                size: region.size,
-                pixels,
-            },
-            resized: std::mem::take(&mut self.resized),
-        })
+        if self.dirty.len() == MAX_DIRTY_REGIONS {
+            self.dirty.clear();
+            self.dirty.push(Region {
+                origin: [0, 0],
+                size: self.size,
+            });
+        } else {
+            self.dirty.push(region);
+        }
+    }
+
+    pub(crate) fn take_updates(&mut self) -> Vec<Update> {
+        let regions = std::mem::take(&mut self.dirty);
+        regions
+            .into_iter()
+            .enumerate()
+            .map(|(index, region)| {
+                let [x, y] = region.origin;
+                let [w, h] = region.size;
+                let mut pixels = Vec::with_capacity(w * h);
+                for row in y..y + h {
+                    let start = row * self.size[0] + x;
+                    pixels.extend_from_slice(&self.pixels[start..start + w]);
+                }
+                Update {
+                    origin: region.origin,
+                    image: ColorImage {
+                        size: region.size,
+                        pixels,
+                    },
+                    resized: index == 0 && std::mem::take(&mut self.resized),
+                }
+            })
+            .collect()
     }
 }
 
@@ -188,7 +223,7 @@ mod tests {
         let mut framebuffer = Framebuffer::default();
         framebuffer.resize([1, 1]).unwrap();
         let revision = framebuffer.revision;
-        framebuffer.take_update().unwrap();
+        framebuffer.take_updates().pop().unwrap();
         assert_eq!(framebuffer.revision, revision);
         framebuffer
             .write_rgba(
@@ -228,13 +263,13 @@ mod tests {
             &pixels,
         )
         .unwrap();
-        fb.take_update();
+        fb.take_updates();
         let destination = Region {
             origin: [1, 1],
             size: [2, 2],
         };
         fb.copy_rect([0, 0], destination).unwrap();
-        let update = fb.take_update().unwrap();
+        let update = fb.take_updates().pop().unwrap();
         assert_eq!(update.origin, [1, 1]);
         assert_eq!(
             update
@@ -246,14 +281,14 @@ mod tests {
             [0, 1, 3, 4]
         );
         assert!(fb.copy_rect([usize::MAX, 0], destination).is_err());
-        assert!(fb.take_update().is_none());
+        assert!(fb.take_updates().is_empty());
     }
 
     #[test]
-    fn coalesces_damage_and_keeps_the_latest_pixels() {
+    fn merges_overlapping_damage_but_keeps_distant_regions() {
         let mut fb = Framebuffer::default();
         fb.resize([4, 4]).unwrap();
-        assert!(fb.take_update().unwrap().resized);
+        assert!(fb.take_updates().pop().unwrap().resized);
         let a = Region {
             origin: [1, 1],
             size: [1, 1],
@@ -265,20 +300,36 @@ mod tests {
         fb.write_rgba(a, &[255, 0, 0, 0]).unwrap();
         fb.write_rgba(b, &[0, 255, 0, 0]).unwrap();
         fb.write_rgba(a, &[0, 0, 255, 0]).unwrap();
-        let update = fb.take_update().unwrap();
-        assert_eq!(update.origin, [1, 1]);
-        assert_eq!(update.image.size, [2, 2]);
-        assert_eq!(
-            update.image.pixels,
-            [
-                Color32::BLUE,
-                Color32::BLACK,
-                Color32::BLACK,
-                Color32::GREEN
-            ]
-        );
-        assert!(!update.resized);
-        assert!(fb.take_update().is_none());
+        let mut updates = fb.take_updates();
+        updates.sort_by_key(|update| update.origin);
+        assert_eq!(updates.len(), 2);
+        assert_eq!(updates[0].origin, [1, 1]);
+        assert_eq!(updates[0].image.pixels, [Color32::BLUE]);
+        assert_eq!(updates[1].origin, [2, 2]);
+        assert_eq!(updates[1].image.pixels, [Color32::GREEN]);
+        assert!(updates.iter().all(|update| !update.resized));
+        assert!(fb.take_updates().is_empty());
+    }
+
+    #[test]
+    fn caps_damage_region_count_with_a_full_frame_update() {
+        let mut fb = Framebuffer::default();
+        fb.resize([MAX_DIRTY_REGIONS + 1, 1]).unwrap();
+        fb.take_updates();
+        for x in 0..=MAX_DIRTY_REGIONS {
+            fb.write_rgba(
+                Region {
+                    origin: [x, 0],
+                    size: [1, 1],
+                },
+                &[0, 0, 0, 255],
+            )
+            .unwrap();
+        }
+        let updates = fb.take_updates();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].origin, [0, 0]);
+        assert_eq!(updates[0].image.size, [MAX_DIRTY_REGIONS + 1, 1]);
     }
 
     #[test]
@@ -286,7 +337,7 @@ mod tests {
         let mut fb = Framebuffer::default();
         assert!(fb.resize([8192, 8192]).is_err());
         fb.resize([2, 2]).unwrap();
-        fb.take_update();
+        fb.take_updates();
         assert!(fb
             .write_rgba(
                 Region {
@@ -305,6 +356,6 @@ mod tests {
                 &[0; 4]
             )
             .is_err());
-        assert!(fb.take_update().is_none());
+        assert!(fb.take_updates().is_empty());
     }
 }

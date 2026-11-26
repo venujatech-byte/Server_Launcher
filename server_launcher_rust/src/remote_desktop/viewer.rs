@@ -482,7 +482,7 @@ impl eframe::App for Viewer {
             }
             return;
         }
-        let (update, status, connected, reconnect_at, finished, connected_since, received_bytes) =
+        let (updates, status, connected, reconnect_at, finished, connected_since, received_bytes) =
             if let Some(connection) = &self.connection {
                 let mut connection = connection.lock().unwrap();
                 if connection.clipboard_sent.swap(false, Ordering::Relaxed) {
@@ -501,9 +501,9 @@ impl eframe::App for Viewer {
                 }
                 (
                     if connection.receiving_frame {
-                        None
+                        Vec::new()
                     } else {
-                        connection.framebuffer.take_update()
+                        connection.framebuffer.take_updates()
                     },
                     connection.status.clone(),
                     connection.connected,
@@ -514,7 +514,7 @@ impl eframe::App for Viewer {
                 )
             } else {
                 (
-                    self.framebuffer.take_update(),
+                    self.framebuffer.take_updates(),
                     self.message.into(),
                     false,
                     None,
@@ -551,7 +551,7 @@ impl eframe::App for Viewer {
         }
         if connected && self.show_fps {
             let (since, frames) = self.fps_sample.get_or_insert_with(|| (Instant::now(), 0));
-            *frames += u32::from(update.is_some());
+            *frames += u32::from(!updates.is_empty());
             let elapsed = since.elapsed();
             let interval = Duration::from_secs(1);
             if elapsed >= interval {
@@ -565,7 +565,7 @@ impl eframe::App for Viewer {
             self.fps_sample = None;
             self.fps = 0.0;
         }
-        if let Some(update) = update {
+        for update in updates {
             match self.texture.as_mut() {
                 Some(texture) if !update.resized => {
                     texture.set_partial(update.origin, update.image, egui::TextureOptions::LINEAR);

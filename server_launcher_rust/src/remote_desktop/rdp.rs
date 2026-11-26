@@ -233,6 +233,7 @@ fn run(
         .set_read_timeout(INPUT_POLL_INTERVAL)?;
     let mut encoder = super::rdp_input::Encoder::default();
     let mut events = Vec::with_capacity(64);
+    let mut dirty_regions = Vec::with_capacity(8);
     let mut proposed_resize = None;
     let received_bytes = state.lock().unwrap().received_bytes.clone();
     loop {
@@ -391,20 +392,13 @@ fn run(
                         origin: [x, y],
                         size: [right - x + 1, bottom - y + 1],
                     };
-                    let stride = image.stride();
-                    let offset = y * stride + x * 4;
-                    state
-                        .lock()
-                        .unwrap()
-                        .framebuffer
-                        .write_strided_rgba(region, &image.data()[offset..], stride)
-                        .map_err(error)?;
-                    ctx.request_repaint();
+                    dirty_regions.push(region);
                 }
                 ActiveStageOutput::Terminate(_) => {
                     return Err(error("The RDP server ended the session."))
                 }
                 ActiveStageOutput::DeactivateAll => {
+                    publish_damage(&mut dirty_regions, &image, width, height, state, ctx)?;
                     let mut activation = activation_factory.create();
                     framed
                         .get_inner()
@@ -472,7 +466,47 @@ fn run(
                 _ => {}
             }
         }
+        publish_damage(&mut dirty_regions, &image, width, height, state, ctx)?;
     }
+}
+
+fn publish_damage(
+    regions: &mut Vec<Region>,
+    image: &DecodedImage,
+    width: u16,
+    height: u16,
+    state: &Arc<Mutex<Connection>>,
+    ctx: &egui::Context,
+) -> io::Result<()> {
+    if regions.is_empty() {
+        return Ok(());
+    }
+    for region in regions.iter() {
+        let [x, y] = region.origin;
+        let [right, bottom] = [
+            x.checked_add(region.size[0]),
+            y.checked_add(region.size[1]),
+        ];
+        if right.is_none_or(|right| right > usize::from(width))
+            || bottom.is_none_or(|bottom| bottom > usize::from(height))
+        {
+            return Err(error("The RDP server reported invalid framebuffer damage."));
+        }
+    }
+
+    let stride = image.stride();
+    let data = image.data();
+    let mut shared = state.lock().unwrap();
+    for region in regions.drain(..) {
+        let offset = region.origin[1] * stride + region.origin[0] * 4;
+        shared
+            .framebuffer
+            .write_strided_rgba(region, &data[offset..], stride)
+            .map_err(error)?;
+    }
+    drop(shared);
+    ctx.request_repaint();
+    Ok(())
 }
 
 fn bulk_decompressor(

@@ -27,6 +27,10 @@ impl ClipboardBackend {
         }
     }
 
+    pub(super) fn cancel_request(&mut self) {
+        self.pending = false;
+    }
+
     pub(super) fn request_text(&mut self) -> bool {
         if self.pending || !std::mem::take(&mut self.offered) {
             return false;
@@ -81,6 +85,17 @@ impl CliprdrBackend for ClipboardBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_request_can_be_followed_by_a_new_offer() {
+        let mut backend = ClipboardBackend::new(true);
+        let formats = [ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT)];
+        backend.on_remote_copy(&formats);
+        assert!(backend.request_text());
+        backend.cancel_request();
+        backend.on_remote_copy(&formats);
+        assert!(backend.request_text());
+    }
 
     #[test]
     fn newer_offer_invalidates_in_flight_clipboard_text() {

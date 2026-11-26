@@ -291,11 +291,9 @@ fn run(
                             if let Ok(offer) = channel.initiate_copy(&[ClipboardFormat::new(
                                 ClipboardFormatId::CF_UNICODETEXT,
                             )]) {
-                                let packet =
-                                    stage.process_svc_processor_messages(offer).map_err(|_| {
-                                        error("Could not encode the local clipboard offer.")
-                                    })?;
-                                framed.write_all(&packet)?;
+                                if let Ok(packet) = stage.process_svc_processor_messages(offer) {
+                                    framed.write_all(&packet)?;
+                                }
                             }
                         }
                     }
@@ -325,27 +323,40 @@ fn run(
                 let reply = clipboard.reply.take();
                 let sent_text = reply.as_ref().is_some_and(|reply| !reply.is_error());
                 let request_text = clipboard.request_text();
-                let response = reply
-                    .map(|reply| channel.submit_format_data(reply))
-                    .transpose()
-                    .map_err(|_| error("Could not prepare local clipboard text."))?;
+                let response = reply.and_then(|reply| channel.submit_format_data(reply).ok());
                 let request = request_text
-                    .then(|| channel.initiate_paste(ClipboardFormatId::CF_UNICODETEXT))
-                    .transpose()
-                    .map_err(|_| error("Could not request remote clipboard text."))?;
-                for message in response.into_iter().chain(request) {
-                    let packet = stage
-                        .process_svc_processor_messages(message)
-                        .map_err(|_| error("Could not encode the clipboard message."))?;
+                    .then(|| {
+                        channel
+                            .initiate_paste(ClipboardFormatId::CF_UNICODETEXT)
+                            .ok()
+                    })
+                    .flatten();
+                if let Some(packet) =
+                    response.and_then(|message| stage.process_svc_processor_messages(message).ok())
+                {
                     framed.write_all(&packet)?;
+                    if sent_text {
+                        state
+                            .lock()
+                            .unwrap()
+                            .clipboard_sent
+                            .store(true, Ordering::Relaxed);
+                        ctx.request_repaint();
+                    }
                 }
-                if sent_text {
-                    state
-                        .lock()
-                        .unwrap()
-                        .clipboard_sent
-                        .store(true, Ordering::Relaxed);
-                    ctx.request_repaint();
+                if request_text {
+                    if let Some(packet) = request
+                        .and_then(|message| stage.process_svc_processor_messages(message).ok())
+                    {
+                        framed.write_all(&packet)?;
+                    } else if let Some(clipboard) = stage
+                        .get_svc_processor_mut::<CliprdrClient>()
+                        .and_then(|channel| {
+                            channel.downcast_backend_mut::<super::rdp_clipboard::ClipboardBackend>()
+                        })
+                    {
+                        clipboard.cancel_request();
+                    }
                 }
             }
         }

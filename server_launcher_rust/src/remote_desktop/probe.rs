@@ -67,7 +67,7 @@ impl ServerDetection {
         if let Some((_, result)) = self.last.as_ref().filter(|(tested, _)| tested == &key) {
             match result {
                 Ok(report) => {
-                    ui.label(report);
+                    ui.add(egui::Label::new(report.as_str()).selectable(true).wrap());
                 }
                 Err(error) => {
                     ui.colored_label(ui.visuals().error_fg_color, error);

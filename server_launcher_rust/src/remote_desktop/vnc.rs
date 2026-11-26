@@ -319,6 +319,7 @@ mod warning_tests {
         assert!(needs_unencrypted_warning("203.0.113.10"));
         assert!(needs_unencrypted_warning("vnc.example.test"));
         assert!(!needs_unencrypted_warning("192.168.1.12"));
+        assert!(!needs_unencrypted_warning("100.94.20.30"));
     }
 }
 
@@ -328,7 +329,13 @@ fn error(message: &str) -> io::Error {
 
 fn private(address: IpAddr) -> bool {
     match address {
-        IpAddr::V4(ip) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+        IpAddr::V4(ip) => {
+            let octets = ip.octets();
+            ip.is_loopback()
+                || ip.is_private()
+                || ip.is_link_local()
+                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+        }
         IpAddr::V6(ip) => ip.to_ipv4_mapped().map_or_else(
             || ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local(),
             |ip| private(IpAddr::V4(ip)),

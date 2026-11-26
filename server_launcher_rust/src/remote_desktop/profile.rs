@@ -165,6 +165,7 @@ pub(crate) struct VncProfile {
     pub scaling: Scaling,
     pub tunnel_via_ssh: bool,
     pub auto_reconnect: bool,
+    pub close_on_failure: bool,
 }
 
 impl Default for VncProfile {
@@ -191,6 +192,7 @@ impl Default for VncProfile {
             scaling: Scaling::Fit,
             tunnel_via_ssh: true,
             auto_reconnect: true,
+            close_on_failure: false,
         }
     }
 }
@@ -237,6 +239,7 @@ mod tests {
         assert_eq!(vnc.port, 5900);
         assert!(vnc.show_remote_cursor);
         assert!(vnc.tunnel_via_ssh);
+        assert!(!vnc.close_on_failure);
         assert!(!serde_json::to_string(&host)
             .unwrap()
             .contains("must-not-save"));

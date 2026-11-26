@@ -84,6 +84,10 @@ pub(crate) fn run(
         .as_ref()
         .and_then(|host| host.vnc.as_ref())
         .is_some_and(|profile| protocol == DesktopProtocol::Vnc && profile.view_only);
+    let close_on_failure = viewer_host
+        .as_ref()
+        .and_then(|host| host.vnc.as_ref())
+        .is_some_and(|profile| protocol == DesktopProtocol::Vnc && profile.close_on_failure);
     let dynamic_resize = protocol == DesktopProtocol::Rdp
         && viewer_host
             .as_ref()
@@ -175,6 +179,7 @@ pub(crate) fn run(
                 last_window_size: None,
                 test_pattern,
                 view_only,
+                close_on_failure,
                 send_clipboard,
                 capture: Capture::new(left_handed_mouse, disable_smooth_scrolling),
                 left_handed_mouse,
@@ -251,6 +256,7 @@ struct Viewer {
     dynamic_resize: bool,
     last_window_size: Option<[u32; 2]>,
     view_only: bool,
+    close_on_failure: bool,
     send_clipboard: bool,
     capture: Capture,
     left_handed_mouse: bool,
@@ -617,6 +623,10 @@ impl eframe::App for Viewer {
                     None,
                 )
             };
+        if should_close_after_failure(self.close_on_failure, finished, connected) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
         if self.show_vnc_cursor {
             if let Some((image, _, _, revision)) = &remote_cursor {
                 if self.vnc_cursor_revision != *revision {
@@ -1243,6 +1253,10 @@ fn key_sequence(keys: &[u32]) -> impl Iterator<Item = (u32, bool)> + '_ {
         .chain(keys.iter().rev().map(|&key| (key, false)))
 }
 
+fn should_close_after_failure(close_on_failure: bool, finished: bool, connected: bool) -> bool {
+    close_on_failure && finished && !connected
+}
+
 #[cfg(test)]
 #[test]
 fn shortcut_releases_keys_in_reverse_order() {
@@ -1255,6 +1269,15 @@ fn shortcut_releases_keys_in_reverse_order() {
             (0xffe3, false)
         ]
     );
+}
+
+#[cfg(test)]
+#[test]
+fn close_on_failure_waits_until_retries_finish() {
+    assert!(!should_close_after_failure(true, false, false));
+    assert!(!should_close_after_failure(true, true, true));
+    assert!(should_close_after_failure(true, true, false));
+    assert!(!should_close_after_failure(false, true, false));
 }
 
 fn scale_label(scale: Scaling) -> &'static str {

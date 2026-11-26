@@ -92,7 +92,9 @@ than passing them based on UI controls alone.
    data above the limit. Classic RFB does not support image clipboard here.
 6. Test direct public-address confirmation and SSH tunneling. Verify closing or
    crashing the viewer cleans up the tunnel process.
-7. Request a supported and unsupported remote resolution; confirm rejection
+7. Enable Close on connection failure and verify an exhausted retry sequence
+   closes the viewer. With the option disabled, the final error stays visible.
+8. Request a supported and unsupported remote resolution; confirm rejection
    leaves the prior framebuffer usable.
 
 Tight encoding, username-based VNC authentication, rich clipboard, and direct

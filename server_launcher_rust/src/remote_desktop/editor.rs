@@ -324,6 +324,7 @@ pub(crate) fn vnc(ui: &mut Ui, draft: &mut Option<VncProfile>, port_text: &mut S
         #[cfg(not(target_os = "linux"))]
         ui.label("TCP user timeout is available for direct Linux connections only.");
         ui.checkbox(&mut profile.auto_reconnect, "Auto-reconnect");
+        ui.checkbox(&mut profile.close_on_failure, "Close on connection failure");
     });
     if draft.is_some() || profile.enabled {
         *draft = Some(profile);

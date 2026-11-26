@@ -164,6 +164,9 @@ Input and display control are wired separately from graphics. Audio, microphone,
 drive redirection, and RD Gateway remain unsupported.
 IronRDP and its blocking adapter are available under MIT or Apache-2.0.
 
+The optional live FPS value counts received display-update batches per second
+from the RDP/VNC workers. It is not the remote compositor's native capture rate.
+
 RDP keyboard and pointer events use IronRDP fast-path input on the worker that
 owns the TLS connection. The worker drains a bounded queue between reads.
 A 10 ms read timeout lets input reach an otherwise quiet connection without

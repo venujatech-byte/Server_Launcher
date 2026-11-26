@@ -108,6 +108,7 @@ pub(crate) struct Connection {
     pub framebuffer: Framebuffer,
     pub status: String,
     pub connected: bool,
+    pub(crate) display_updates: u64,
     pub(crate) received_bytes: Arc<AtomicU64>,
     pub(crate) connected_since: Option<Instant>,
     pub(crate) finished: bool,
@@ -147,6 +148,7 @@ impl Connection {
             framebuffer: Framebuffer::default(),
             status: initial_status.into(),
             connected: false,
+            display_updates: 0,
             received_bytes: Arc::new(AtomicU64::new(0)),
             connected_since: None,
             finished: false,
@@ -429,7 +431,11 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
                 if count > 4096 {
                     return Err(error("The VNC update contains too many rectangles."));
                 }
-                state.lock().unwrap().receiving_frame = true;
+                let revision = {
+                    let mut state = state.lock().unwrap();
+                    state.receiving_frame = true;
+                    state.framebuffer.revision
+                };
                 let mut resized = false;
                 for index in 0..count {
                     if let Some(new_size) = read_rectangle(
@@ -445,7 +451,12 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
                         resized = true;
                     }
                 }
-                state.lock().unwrap().receiving_frame = false;
+                let mut state = state.lock().unwrap();
+                state.receiving_frame = false;
+                if state.framebuffer.revision != revision {
+                    state.display_updates = state.display_updates.wrapping_add(1);
+                }
+                drop(state);
                 ctx.request_repaint();
                 request(&mut *writer.lock().unwrap(), size, !resized)?;
             }

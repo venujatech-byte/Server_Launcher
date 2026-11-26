@@ -230,7 +230,7 @@ struct Viewer {
     screenshot_result: Option<Result<PathBuf, String>>,
     test_pattern: bool,
     show_fps: bool,
-    fps_sample: Option<(Instant, u32)>,
+    fps_sample: Option<(Instant, u64)>,
     fps: f64,
 }
 
@@ -498,7 +498,16 @@ impl eframe::App for Viewer {
             }
             return;
         }
-        let (updates, status, connected, reconnect_at, finished, connected_since, received_bytes) =
+        let (
+            updates,
+            status,
+            connected,
+            reconnect_at,
+            finished,
+            connected_since,
+            received_bytes,
+            display_updates,
+        ) =
             if let Some(connection) = &self.connection {
                 let mut connection = connection.lock().unwrap();
                 if connection.clipboard_sent.swap(false, Ordering::Relaxed) {
@@ -534,6 +543,7 @@ impl eframe::App for Viewer {
                     connection.finished,
                     connection.connected_since,
                     connection.received_bytes.load(Ordering::Relaxed),
+                    connection.display_updates,
                 )
             } else {
                 (
@@ -543,6 +553,7 @@ impl eframe::App for Viewer {
                     None,
                     false,
                     None,
+                    0,
                     0,
                 )
             };
@@ -579,13 +590,14 @@ impl eframe::App for Viewer {
             self.last_window_size = None;
         }
         if connected && self.show_fps {
-            let (since, frames) = self.fps_sample.get_or_insert_with(|| (Instant::now(), 0));
-            *frames += u32::from(!updates.is_empty());
+            let (since, frames) = self
+                .fps_sample
+                .get_or_insert_with(|| (Instant::now(), display_updates));
             let elapsed = since.elapsed();
             let interval = Duration::from_secs(1);
             if elapsed >= interval {
-                self.fps = f64::from(*frames) / elapsed.as_secs_f64();
-                self.fps_sample = Some((Instant::now(), 0));
+                self.fps = updates_per_second(*frames, display_updates, elapsed);
+                self.fps_sample = Some((Instant::now(), display_updates));
                 ctx.request_repaint_after(interval);
             } else {
                 ctx.request_repaint_after(interval - elapsed);
@@ -703,7 +715,7 @@ impl eframe::App for Viewer {
                     ctx.request_repaint();
                 }
                 if self.show_fps && connected {
-                    ui.label(format!("{:.1} FPS", self.fps));
+                    ui.label(format!("Remote FPS  {:.1}", self.fps));
                 }
                 ui.add_enabled_ui(connected, |ui| {
                     ui.menu_button("Stats", |ui| {
@@ -728,7 +740,7 @@ impl eframe::App for Viewer {
                             ctx.request_repaint_after(Duration::from_secs(1));
                         }
                         if self.show_fps {
-                            ui.label(format!("Displayed updates  {:.1} FPS", self.fps));
+                            ui.label(format!("Remote display updates  {:.1} FPS", self.fps));
                         }
                     });
                 });
@@ -1107,6 +1119,22 @@ fn scale_label(scale: Scaling) -> &'static str {
         Scaling::Native => "100%",
         Scaling::Fill => "Fill",
     }
+}
+
+fn updates_per_second(previous: u64, current: u64, elapsed: Duration) -> f64 {
+    if elapsed.is_zero() {
+        0.0
+    } else {
+        current.saturating_sub(previous) as f64 / elapsed.as_secs_f64()
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn live_fps_uses_received_display_updates() {
+    assert_eq!(updates_per_second(10, 16, Duration::from_secs(2)), 3.0);
+    assert_eq!(updates_per_second(16, 2, Duration::from_secs(1)), 0.0);
+    assert_eq!(updates_per_second(1, 2, Duration::ZERO), 0.0);
 }
 
 fn write_test_pattern(framebuffer: &mut Framebuffer) -> Result<(), &'static str> {

@@ -524,6 +524,7 @@ fn publish_damage(
             .write_strided_rgba(region, &data[offset..], stride)
             .map_err(error)?;
     }
+    shared.display_updates = shared.display_updates.wrapping_add(1);
     drop(shared);
     ctx.request_repaint();
     Ok(())

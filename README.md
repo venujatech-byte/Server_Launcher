@@ -74,7 +74,7 @@ store; protocol passwords are not saved in `servers.json`.
   composites the remote pointer into the displayed framebuffer. Display controls include
   smooth/fast texture filtering, incremental/full-frame repainting, Automatic and RemoteFX
   profiles, 32/24-bit true color, 16/15-bit high color, left-handed mouse mapping, and an
-  option to disable smooth scrolling. GFX AVC/RFX Progressive and 8-bit color profiles are
+  option to disable smooth scrolling. GFX AVC and 8-bit color profiles are
   unavailable in the current renderer. The server negotiates the codec; these options do not
   guarantee a specific frame rate or speedup.
 - VNC supports classic password authentication, Raw, CopyRect, and ZRLE framebuffer

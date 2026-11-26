@@ -101,6 +101,12 @@ route only when explicitly configured. Tunnel and gateway checks require their
 respective transport implementations. The system DNS resolver runs on the
 probe worker and controls resolution time independently of the socket deadline.
 
+Opening either protocol tab also starts a bounded, read-only SSH scan for
+listeners on TCP 3389 and 5900–5910 and common Linux RDP/VNC server processes.
+It reuses the host's SSH key, agent, host-key policy, and saved SSH password
+path. The scan reports setup guidance when no service is found; it never
+installs packages or changes the remote machine.
+
 ## VNC transport and current limits
 
 The live RFB implementation validates display dimensions and rectangle lengths

@@ -43,23 +43,27 @@ network or the host's configured SSH tunnel.
 
 ## RDP checks
 
-1. Connect with security set to Auto/NLA and verify the certificate and host
+1. Open the RDP and VNC editor tabs and confirm the SSH-side server scan finds
+   listeners on TCP 3389 and 5900–5910, reports common server processes, and
+   gives read-only setup guidance when none are found. Confirm it does not
+   install packages or alter remote services.
+2. Connect with security set to Auto/NLA and verify the certificate and host
    name before credentials are sent. Verify that invalid credentials produce a
    readable failure and no credential data in logs.
-2. Verify full desktop rendering and local pointer shape, then type text and
+3. Verify full desktop rendering and local pointer shape, then type text and
    test left/right/middle plus side mouse buttons and both wheel axes.
    Confirm that a continuously changing desktop stays live over EGFX, and
    check that the viewer's FPS counter changes with received display updates.
-3. Resize the viewer with dynamic resolution enabled. Check for correct aspect
+4. Resize the viewer with dynamic resolution enabled. Check for correct aspect
    ratio and no stale pixels after the server changes resolution.
-4. Compare Incremental and Full-frame repaint. They should show the same remote
+5. Compare Incremental and Full-frame repaint. They should show the same remote
    frame; Full-frame repaint may use more client CPU and does not change server
    capture FPS, codec negotiation, or network latency.
-5. Test clipboard directions separately with Unicode text and an image under
+6. Test clipboard directions separately with Unicode text and an image under
    the configured size cap. Confirm received content is not echoed back.
-6. Test TLS-only explicitly against a server configured for TLS. Auto must not
+7. Test TLS-only explicitly against a server configured for TLS. Auto must not
    silently downgrade from NLA to legacy unencrypted RDP.
-7. Test network loss, server disconnect, retry, and close while input keys are
+8. Test network loss, server disconnect, retry, and close while input keys are
    held. Confirm all remote keys/buttons are released on focus loss and close.
 
 The renderer accepts legacy bitmap updates and EGFX updates. EGFX AVC/H.264

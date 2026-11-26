@@ -211,7 +211,8 @@ pub fn execute_local_script(
         script.shell.trim()
     };
 
-    let askpass_setup = if let Some(pwd) = sudo_password {
+    let askpass_setup: Option<(std::path::PathBuf, std::path::PathBuf)> =
+        if let Some(pwd) = sudo_password {
         if !pwd.is_empty() {
             #[cfg(unix)]
             {

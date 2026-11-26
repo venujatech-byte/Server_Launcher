@@ -354,6 +354,11 @@ fn validate_local_unit_path(path: &str, user_mode: bool) -> Result<(PathBuf, Pat
     Ok((target, root))
 }
 
+#[cfg(windows)]
+fn validate_local_unit_path(_path: &str, _user_mode: bool) -> Result<(PathBuf, PathBuf), String> {
+    Err("Local SystemD unit file management is not available on Windows.".into())
+}
+
 #[cfg(not(windows))]
 fn validate_local_unit_target(path: &str, user_mode: bool) -> Result<(PathBuf, PathBuf), String> {
     let (target, root) = validate_local_unit_path(path, user_mode)?;
@@ -365,6 +370,11 @@ fn validate_local_unit_target(path: &str, user_mode: bool) -> Result<(PathBuf, P
     }
     validate_regular_unit_file(&target)?;
     Ok((target, root))
+}
+
+#[cfg(windows)]
+fn validate_local_unit_target(_path: &str, _user_mode: bool) -> Result<(PathBuf, PathBuf), String> {
+    Err("Local SystemD unit file management is not available on Windows.".into())
 }
 
 fn validate_regular_unit_file(target: &std::path::Path) -> Result<(), String> {
@@ -382,6 +392,14 @@ fn validate_local_unit_parent(parent: &std::path::Path, root: &std::path::Path) 
     if parent.starts_with(root) { Ok(()) } else {
         Err("Unit file destination resolves outside the Systemd configuration directory.".into())
     }
+}
+
+#[cfg(windows)]
+fn validate_local_unit_parent(
+    _parent: &std::path::Path,
+    _root: &std::path::Path,
+) -> Result<(), String> {
+    Err("Local SystemD unit file management is not available on Windows.".into())
 }
 
 fn write_privileged_unit_content(path: &str, content: &str, user_mode: bool, password: Option<&str>) -> Result<(), String> {

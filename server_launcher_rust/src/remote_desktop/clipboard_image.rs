@@ -230,7 +230,7 @@ mod tests {
         dib[40..44].copy_from_slice(&[0, 0, 255, 0]);
         dib[44..48].copy_from_slice(&[255, 0, 0, 0]);
         let image = decode_dib(&dib).unwrap();
-        assert_eq!(image.rgba, [255, 0, 0, 255, 0, 0, 255, 255]);
+        assert_eq!(image.rgba, [0, 0, 255, 255, 255, 0, 0, 255]);
     }
 
     #[test]

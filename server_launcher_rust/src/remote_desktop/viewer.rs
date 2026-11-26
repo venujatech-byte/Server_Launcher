@@ -200,6 +200,8 @@ pub(crate) fn run(
                 capture: Capture::new(left_handed_mouse, disable_smooth_scrolling),
                 #[cfg(target_os = "linux")]
                 native_keyboard: None,
+                #[cfg(target_os = "linux")]
+                native_keyboard_attempted: false,
                 keyboard_capture_feedback: None,
                 left_handed_mouse,
                 disable_smooth_scrolling,
@@ -311,6 +313,8 @@ struct Viewer {
     capture: Capture,
     #[cfg(target_os = "linux")]
     native_keyboard: Option<super::x11_keyboard::NativeKeyboardCapture>,
+    #[cfg(target_os = "linux")]
+    native_keyboard_attempted: bool,
     keyboard_capture_feedback: Option<String>,
     left_handed_mouse: bool,
     disable_smooth_scrolling: bool,
@@ -480,7 +484,7 @@ impl Viewer {
             self.native_keyboard.take();
             return;
         }
-        ctx.input(|input| {
+        let _focused = ctx.input(|input| {
             self.capture.events(
                 &input.events,
                 input.modifiers,
@@ -497,12 +501,34 @@ impl Viewer {
                     }
                 },
             );
+            input.focused
         });
         drop(connection);
+        #[cfg(target_os = "linux")]
         if !self.capture.keyboard_capture() {
-            #[cfg(target_os = "linux")]
             self.native_keyboard.take();
+            self.native_keyboard_attempted = false;
             self.keyboard_capture_feedback = None;
+        } else if _focused && self.native_keyboard.is_none() && !self.native_keyboard_attempted {
+            self.native_keyboard_attempted = true;
+            if let Some(connection) = &self.connection {
+                self.native_keyboard = Some(super::x11_keyboard::NativeKeyboardCapture::start(
+                    connection.clone(),
+                    ctx.clone(),
+                    format!("{} - {}", self.host_name, self.protocol.label()),
+                ));
+            }
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(Err(error)) = self
+            .native_keyboard
+            .as_mut()
+            .and_then(|capture| capture.poll_ready())
+        {
+            self.native_keyboard.take();
+            self.keyboard_capture_feedback = Some(format!(
+                "System shortcuts may stay local; use Send keys if needed. {error}"
+            ));
         }
     }
 }
@@ -1065,9 +1091,7 @@ impl eframe::App for Viewer {
                         format!("{} Keyboard", crate::lucide::KEYBOARD),
                     );
                     if keyboard_button
-                        .on_hover_text(
-                            "Capture keyboard input for the remote while this viewer is focused, including system shortcuts when supported.",
-                        )
+                        .on_hover_text("Keyboard input goes to the remote while this viewer is focused. Turn off to type locally.")
                         .clicked()
                     {
                         if let Some(connection) = &self.connection {
@@ -1081,23 +1105,8 @@ impl eframe::App for Viewer {
                             #[cfg(target_os = "linux")]
                             {
                                 self.native_keyboard = None;
-                                self.keyboard_capture_feedback = if enable {
-                                    match super::x11_keyboard::NativeKeyboardCapture::start(
-                                        connection_handle,
-                                        ctx.clone(),
-                                        format!("{} - {}", self.host_name, self.protocol.label()),
-                                    ) {
-                                        Ok(capture) => {
-                                            self.native_keyboard = Some(capture);
-                                            None
-                                        }
-                                        Err(error) => {
-                                            Some(format!("System shortcuts stay local: {error}"))
-                                        }
-                                    }
-                                } else {
-                                    None
-                                };
+                                self.native_keyboard_attempted = false;
+                                self.keyboard_capture_feedback = None;
                             }
                             #[cfg(not(target_os = "linux"))]
                             {
@@ -1146,13 +1155,20 @@ impl eframe::App for Viewer {
                     connected,
                     egui::Checkbox::new(&mut self.view_only, "View only"),
                 );
-                if view_only_response.changed() && self.view_only {
+                if view_only_response.changed() {
                     #[cfg(target_os = "linux")]
-                    self.native_keyboard.take();
+                    {
+                        self.native_keyboard.take();
+                        self.native_keyboard_attempted = false;
+                    }
                     if let Some(connection) = &self.connection {
                         let connection = connection.lock().unwrap();
-                        self.capture
-                            .release(|event| connection.send_input(event));
+                        if self.view_only {
+                            self.capture
+                                .release(|event| connection.send_input(event));
+                        } else {
+                            self.capture.set_keyboard_capture(true, |_| {});
+                        }
                     }
                 }
                 if connected {

@@ -295,13 +295,14 @@ scancodes, five RDP pointer buttons, and both scroll axes. RDP scancode mapping
 uses egui's physical key when available, while VNC keeps logical keysyms. IME
 and a full interactive RDP server test remain pending.
 
-The viewer toolbar's Keyboard toggle routes key events while the viewer window
-is focused, without requiring a click inside the remote canvas. On Linux/X11 it
-also grabs keyboard input for that focused viewer, so system shortcuts such as
-Super and Alt+Tab can reach the remote. The grab is released while focus is
-away and resumes when the viewer regains focus; it also ends when capture is
-disabled or the session closes. Wayland and Windows use egui capture;
-system-reserved shortcuts may stay local there, and Send keys remains the fallback.
+Keyboard capture is enabled by default while the viewer window is focused, so
+typing does not require a click inside the remote canvas. On Linux/X11 it also
+grabs keyboard input for that focused viewer, so system shortcuts such as Super
+and Alt+Tab can reach the remote. The grab is released while focus is away and
+resumes when the viewer regains focus; it also ends when capture is disabled or
+the session closes. The toolbar Keyboard toggle opts out. Wayland and Windows
+use egui capture; system-reserved shortcuts may stay local there, and Send keys
+remains the fallback.
 
 Unknown-issuer RDP certificates can now be explicitly trusted from the
 viewer after comparing the SHA-256 fingerprint. Validity dates and TLS

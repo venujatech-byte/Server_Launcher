@@ -11,6 +11,7 @@ use x11_dl::xlib;
 
 pub(crate) struct NativeKeyboardCapture {
     stop: mpsc::Sender<()>,
+    ready: Option<mpsc::Receiver<Result<(), String>>>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -19,23 +20,28 @@ impl NativeKeyboardCapture {
         connection: Arc<Mutex<Connection>>,
         ctx: egui::Context,
         expected_title: String,
-    ) -> Result<Self, String> {
+    ) -> Self {
         let (stop, stopped) = mpsc::channel();
         let (ready, started) = mpsc::sync_channel(1);
         let worker = thread::spawn(move || run(connection, ctx, expected_title, stopped, ready));
-        match started.recv_timeout(Duration::from_secs(2)) {
-            Ok(Ok(())) => Ok(Self {
-                stop,
-                worker: Some(worker),
-            }),
-            Ok(Err(error)) => {
-                let _ = worker.join();
-                Err(error)
+        Self {
+            stop,
+            ready: Some(started),
+            worker: Some(worker),
+        }
+    }
+
+    pub(crate) fn poll_ready(&mut self) -> Option<Result<(), String>> {
+        let result = self.ready.as_ref()?.try_recv();
+        match result {
+            Ok(result) => {
+                self.ready = None;
+                Some(result)
             }
-            Err(error) => {
-                let _ = stop.send(());
-                let _ = worker.join();
-                Err(format!("Could not start X11 keyboard capture: {error}"))
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.ready = None;
+                Some(Err("X11 keyboard capture stopped unexpectedly.".into()))
             }
         }
     }

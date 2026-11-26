@@ -19,6 +19,7 @@ pub(crate) struct Capture {
 impl Capture {
     pub(crate) fn new(left_handed_mouse: bool, disable_smooth_scrolling: bool) -> Self {
         Self {
+            keyboard_capture: true,
             left_handed_mouse,
             disable_smooth_scrolling,
             ..Default::default()
@@ -369,6 +370,12 @@ mod tests {
                 pressed: false,
             })
         );
+    }
+
+    #[test]
+    fn keyboard_capture_is_enabled_by_default_for_remote_focus() {
+        let capture = Capture::new(false, false);
+        assert!(capture.keyboard_capture());
     }
 
     #[test]

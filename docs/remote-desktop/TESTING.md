@@ -64,10 +64,11 @@ The checked app revision was `8ec3a0d`.
    test left/right/middle plus side mouse buttons and both wheel axes.
    Confirm that a continuously changing desktop stays live over EGFX, and
    check that the viewer's FPS counter changes with received display updates.
-   Enable Keyboard in the viewer toolbar and type without clicking the remote
-   canvas first. On Linux/X11, confirm Super and Alt+Tab are captured by the
-   focused viewer and reach the remote. On Wayland or Windows, confirm the
-   toolbar explains that system shortcuts may stay local and use Send keys.
+   With Keyboard enabled by default, type while the viewer is focused without
+   clicking the remote canvas first. On Linux/X11, confirm Super and Alt+Tab
+   reach the remote. On Wayland or Windows, check whether the OS reserves those
+   shortcuts; use Send keys when it does. Turn Keyboard off and confirm input
+   stays local.
    Enable View only and confirm the display remains live while keyboard,
    pointer, and outgoing clipboard input are suppressed.
 4. Resize the viewer with dynamic resolution enabled. Check for correct aspect

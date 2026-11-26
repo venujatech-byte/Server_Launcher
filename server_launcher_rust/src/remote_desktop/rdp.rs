@@ -3,7 +3,7 @@
 use super::{
     credentials::{self, DesktopProtocol},
     framebuffer::Region,
-    profile::{Clipboard, RdpProfile, RdpSecurity, Resolution},
+    profile::{Clipboard, Quality, RdpProfile, RdpSecurity, Resolution},
     trust::Verifier,
     tunnel::{self, DesktopStream},
     vnc::{Connection, Input},
@@ -654,6 +654,7 @@ fn config(
     };
     let tls_only = profile.security == RdpSecurity::Tls;
     let [width, height] = initial_dimensions(profile, monitor_size);
+    let (color_depth, lossy_compression) = bitmap_quality(profile);
     let mut performance = PerformanceFlags::default();
     performance.set(PerformanceFlags::DISABLE_WALLPAPER, !profile.wallpaper);
     performance.set(
@@ -683,11 +684,8 @@ fn config(
         bitmap: ironrdp::pdu::rdp::capability_sets::client_codecs_capabilities(&[])
             .ok()
             .map(|codecs| connector::BitmapConfig {
-                color_depth: match profile.color_depth {
-                    16 | 24 => u32::from(profile.color_depth),
-                    _ => 32,
-                },
-                lossy_compression: false,
+                color_depth,
+                lossy_compression,
                 codecs,
             }),
         client_build: 0,
@@ -713,6 +711,36 @@ fn config(
         alternate_shell: String::new(),
         work_dir: String::new(),
     }
+}
+
+fn bitmap_quality(profile: &RdpProfile) -> (u32, bool) {
+    match profile.quality {
+        Quality::Auto => (
+            match profile.color_depth {
+                16 | 24 => u32::from(profile.color_depth),
+                _ => 32,
+            },
+            false,
+        ),
+        Quality::Best => (32, false),
+        Quality::Good => (24, true),
+        Quality::Fast => (16, true),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn rdp_quality_presets_set_bitmap_depth_and_adaptive_color() {
+    let mut profile = RdpProfile::default();
+    assert_eq!(bitmap_quality(&profile), (32, false));
+    profile.color_depth = 16;
+    assert_eq!(bitmap_quality(&profile), (16, false));
+    profile.quality = Quality::Best;
+    assert_eq!(bitmap_quality(&profile), (32, false));
+    profile.quality = Quality::Good;
+    assert_eq!(bitmap_quality(&profile), (24, true));
+    profile.quality = Quality::Fast;
+    assert_eq!(bitmap_quality(&profile), (16, true));
 }
 
 #[cfg(test)]

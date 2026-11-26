@@ -90,7 +90,22 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
         ui.label(
             "Full-frame painting redraws the whole image after each RDP update and may use more resources.",
         );
-        color_depth(ui, &mut profile.color_depth);
+        choice(
+            ui,
+            "Quality",
+            &mut profile.quality,
+            &[
+                (Quality::Auto, "Auto / manual settings"),
+                (Quality::Best, "Best · 32-bit lossless"),
+                (Quality::Good, "Good · 24-bit adaptive"),
+                (Quality::Fast, "Fast · 16-bit adaptive"),
+            ],
+        );
+        if profile.quality == Quality::Auto {
+            color_depth(ui, &mut profile.color_depth);
+        } else {
+            ui.label("Quality presets set color depth; adaptive presets allow server color subsampling.");
+        }
         choice(
             ui,
             "Resolution",

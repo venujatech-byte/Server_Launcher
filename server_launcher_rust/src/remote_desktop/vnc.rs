@@ -345,6 +345,9 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
             "The saved VNC password is empty. Update it in the VNC tab.",
         ));
     }
+    if password.as_ref().is_some_and(|value| value.len() > 8) {
+        return Err(error("Classic VNC passwords must be no longer than 8 bytes."));
+    }
     let mut stream: Box<dyn DesktopStream> = if profile.tunnel_via_ssh {
         tunnel::open(host, profile.port, TUNNEL_HANDSHAKE_TIMEOUT)?
     } else {
@@ -667,6 +670,12 @@ fn handshake(
     shared: bool,
     password: Option<&[u8]>,
 ) -> io::Result<[usize; 2]> {
+    if password.is_some_and(|password| password.is_empty()) {
+        return Err(error("The saved VNC password is empty. Update it in the VNC tab."));
+    }
+    if password.is_some_and(|password| password.len() > 8) {
+        return Err(error("Classic VNC passwords must be no longer than 8 bytes."));
+    }
     let mut version = [0; 12];
     stream.read_exact(&mut version)?;
     if !matches!(
@@ -1235,6 +1244,19 @@ mod tests {
         let image = read_cursor(&mut wire, 2, 1, false).unwrap();
         assert_eq!(image.pixels[0], egui::Color32::RED);
         assert_eq!(image.pixels[1].a(), 0);
+    }
+
+    #[test]
+    fn rejects_invalid_classic_password_lengths_before_reading_the_server() {
+        let mut stream = io::Cursor::new(Vec::<u8>::new());
+        assert!(handshake(&mut stream, true, Some(b"123456789"))
+            .unwrap_err()
+            .to_string()
+            .contains("8 bytes"));
+        assert!(handshake(&mut stream, true, Some(b""))
+            .unwrap_err()
+            .to_string()
+            .contains("empty"));
     }
 
     #[test]

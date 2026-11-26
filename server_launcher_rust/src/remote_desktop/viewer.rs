@@ -27,7 +27,7 @@ pub(crate) fn run(
 ) -> eframe::Result<()> {
     let config = ConfigFile::load_from_file(path);
     let show_fps = config.remote_desktop.show_live_fps;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let host_key_enabled = config.remote_desktop.host_key_enabled;
     let screenshot_folder = config.remote_desktop.screenshot_folder.clone();
     let recording_folder = config.remote_desktop.recording_folder.clone();
@@ -129,7 +129,7 @@ pub(crate) fn run(
         .is_some_and(|direction| direction != Clipboard::Off);
     let config_path = path.to_owned();
     let palette = ThemeMode::from_id_str(theme).palette();
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let (native_shortcut_tx, native_shortcut_rx) = mpsc::channel();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -219,11 +219,11 @@ pub(crate) fn run(
                 native_keyboard: None,
                 #[cfg(target_os = "windows")]
                 native_keyboard_attempted: false,
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "windows"))]
                 native_shortcut_tx,
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "windows"))]
                 native_shortcut_rx,
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "windows"))]
                 host_key_enabled,
                 show_send_keys: false,
                 keyboard_capture_feedback: None,
@@ -346,11 +346,11 @@ struct Viewer {
     native_keyboard: Option<super::windows_keyboard::NativeKeyboardCapture>,
     #[cfg(target_os = "windows")]
     native_keyboard_attempted: bool,
-    #[cfg(target_os = "linux")]
-    native_shortcut_tx: mpsc::Sender<super::x11_keyboard::HostShortcut>,
-    #[cfg(target_os = "linux")]
-    native_shortcut_rx: mpsc::Receiver<super::x11_keyboard::HostShortcut>,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    native_shortcut_tx: mpsc::Sender<super::input::HostShortcut>,
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    native_shortcut_rx: mpsc::Receiver<super::input::HostShortcut>,
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     host_key_enabled: bool,
     show_send_keys: bool,
     keyboard_capture_feedback: Option<String>,
@@ -536,20 +536,20 @@ impl Viewer {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn handle_native_shortcuts(&mut self, ctx: &egui::Context) {
         while let Ok(shortcut) = self.native_shortcut_rx.try_recv() {
             match shortcut {
-                super::x11_keyboard::HostShortcut::Fullscreen => {
+                super::input::HostShortcut::Fullscreen => {
                     self.fullscreen = !self.fullscreen;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
                 }
-                super::x11_keyboard::HostShortcut::Screenshot => self.take_screenshot(ctx),
-                super::x11_keyboard::HostShortcut::Recording => self.toggle_recording(ctx),
-                super::x11_keyboard::HostShortcut::Disconnect => {
+                super::input::HostShortcut::Screenshot => self.take_screenshot(ctx),
+                super::input::HostShortcut::Recording => self.toggle_recording(ctx),
+                super::input::HostShortcut::Disconnect => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
-                super::x11_keyboard::HostShortcut::SendKeys => self.show_send_keys = true,
+                super::input::HostShortcut::SendKeys => self.show_send_keys = true,
             }
         }
     }
@@ -699,6 +699,9 @@ impl Viewer {
                 self.native_keyboard = Some(super::windows_keyboard::NativeKeyboardCapture::start(
                     connection.clone(),
                     self.protocol,
+                    self.host_key_enabled,
+                    self.native_shortcut_tx.clone(),
+                    ctx.clone(),
                 ));
             }
         }
@@ -1733,7 +1736,7 @@ impl eframe::App for Viewer {
             }
             self.send_input(ctx, screen, clip, pixels);
         });
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         self.handle_native_shortcuts(ctx);
         self.send_keys_window(ctx);
     }

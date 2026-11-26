@@ -1,4 +1,7 @@
-use super::vnc::{Connection, Input};
+use super::{
+    input::{host_shortcut, HostShortcut},
+    vnc::{Connection, Input},
+};
 use std::{
     collections::{HashMap, HashSet},
     ffi::CStr,
@@ -26,15 +29,6 @@ pub(crate) fn prefer_x11_when_available() {
     unsafe { (xlib.XCloseDisplay)(display) };
     std::env::remove_var("WAYLAND_DISPLAY");
     std::env::remove_var("WAYLAND_SOCKET");
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum HostShortcut {
-    Fullscreen,
-    Screenshot,
-    Recording,
-    Disconnect,
-    SendKeys,
 }
 
 pub(crate) struct NativeKeyboardCapture {
@@ -317,32 +311,6 @@ enum HostKeyState {
     Pending,
     Forwarded,
     Shortcut,
-}
-
-fn host_shortcut(keysym: u32) -> Option<HostShortcut> {
-    match keysym {
-        0x46 | 0x66 => Some(HostShortcut::Fullscreen),
-        0x53 | 0x73 => Some(HostShortcut::Screenshot),
-        0x52 | 0x72 => Some(HostShortcut::Recording),
-        0x44 | 0x64 => Some(HostShortcut::Disconnect),
-        0x4b | 0x6b => Some(HostShortcut::SendKeys),
-        _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn right_control_host_shortcuts_ignore_letter_case() {
-        assert_eq!(host_shortcut(b'F' as u32), Some(HostShortcut::Fullscreen));
-        assert_eq!(host_shortcut(b's' as u32), Some(HostShortcut::Screenshot));
-        assert_eq!(host_shortcut(b'R' as u32), Some(HostShortcut::Recording));
-        assert_eq!(host_shortcut(b'd' as u32), Some(HostShortcut::Disconnect));
-        assert_eq!(host_shortcut(b'K' as u32), Some(HostShortcut::SendKeys));
-        assert_eq!(host_shortcut(b'x' as u32), None);
-    }
 }
 
 fn release_held(connection: &Arc<Mutex<Connection>>, held: &mut HashMap<u32, u32>) {

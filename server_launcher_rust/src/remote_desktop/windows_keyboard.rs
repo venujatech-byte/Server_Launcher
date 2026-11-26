@@ -1,9 +1,10 @@
 use super::{
+    input::{host_shortcut, HostShortcut},
     profile::DesktopProtocol,
     vnc::{Connection, Input, InputHandle},
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ptr,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -34,14 +35,32 @@ struct HookState {
     input: InputHandle,
     protocol: DesktopProtocol,
     process_id: u32,
+    host_key_enabled: bool,
+    shortcuts: mpsc::Sender<HostShortcut>,
+    ctx: egui::Context,
     held: HashMap<u32, Input>,
+    host_key: Option<(u32, HostKeyState)>,
+    suppressed: HashSet<u32>,
     focused: bool,
+}
+
+#[derive(Clone, Copy)]
+enum HostKeyState {
+    Pending,
+    Forwarded,
+    Shortcut,
 }
 
 static CAPTURE: OnceLock<Mutex<Option<Arc<Mutex<HookState>>>>> = OnceLock::new();
 
 impl NativeKeyboardCapture {
-    pub(crate) fn start(connection: Arc<Mutex<Connection>>, protocol: DesktopProtocol) -> Self {
+    pub(crate) fn start(
+        connection: Arc<Mutex<Connection>>,
+        protocol: DesktopProtocol,
+        host_key_enabled: bool,
+        shortcuts: mpsc::Sender<HostShortcut>,
+        ctx: egui::Context,
+    ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = stop.clone();
         let thread_id = Arc::new(std::sync::atomic::AtomicU32::new(0));
@@ -52,7 +71,12 @@ impl NativeKeyboardCapture {
                 input,
                 protocol,
                 process_id: unsafe { GetCurrentProcessId() },
+                host_key_enabled,
+                shortcuts,
+                ctx,
                 held: HashMap::new(),
+                host_key: None,
+                suppressed: HashSet::new(),
                 focused: true,
             }))
         });
@@ -214,37 +238,109 @@ unsafe extern "system" fn keyboard_proc(code: i32, message: WPARAM, data: LPARAM
     let extended = key.flags & LLKHF_EXTENDED != 0;
     let identity = (key.scanCode & 0xff) | if extended { 0x100 } else { 0 };
     if pressed {
-        let event = match state.protocol {
-            DesktopProtocol::Rdp if key.scanCode != 0 => Input::RdpKey {
-                scan_code: key.scanCode as u8,
-                extended,
-                pressed: true,
-            },
-            DesktopProtocol::Vnc => match virtual_key_keysym(key.vkCode, key.scanCode, extended) {
-                Some(keysym) => Input::Key {
-                    keysym,
-                    physical_key: None,
-                    pressed: true,
-                },
-                None => {
+        const RIGHT_CONTROL: u32 = 0x11d;
+        if state.suppressed.contains(&identity) {
+            drop(state);
+            return 1;
+        }
+        if state.host_key_enabled && identity == RIGHT_CONTROL && state.host_key.is_none() {
+            state.host_key = Some((identity, HostKeyState::Pending));
+            drop(state);
+            return 1;
+        }
+        if matches!(state.host_key, Some((host_identity, HostKeyState::Pending)) if host_identity == identity)
+        {
+            drop(state);
+            return 1;
+        }
+        if let Some((host_identity, HostKeyState::Pending)) = state.host_key {
+            if host_identity != identity {
+                if let Some(shortcut) = host_shortcut(key.vkCode) {
+                    let _ = state.shortcuts.send(shortcut);
+                    state.host_key = Some((host_identity, HostKeyState::Shortcut));
+                    state.suppressed.insert(identity);
+                    state.ctx.request_repaint();
                     drop(state);
-                    return CallNextHookEx(ptr::null_mut(), code, message, data);
+                    return 1;
                 }
-            },
-            _ => {
-                drop(state);
-                return CallNextHookEx(ptr::null_mut(), code, message, data);
+                if let Some(event) = remote_key(state.protocol, 0xa3, 0x1d, true, true) {
+                    state.input.send(event.clone());
+                    state.held.insert(host_identity, event);
+                }
+                state.host_key = Some((host_identity, HostKeyState::Forwarded));
             }
+        }
+        if matches!(state.host_key, Some((host_identity, HostKeyState::Shortcut)) if host_identity != identity)
+        {
+            state.suppressed.insert(identity);
+            drop(state);
+            return 1;
+        }
+        let Some(event) = remote_key(state.protocol, key.vkCode, key.scanCode, extended, true)
+        else {
+            drop(state);
+            return CallNextHookEx(ptr::null_mut(), code, message, data);
         };
         state.input.send(event.clone());
         state.held.insert(identity, event);
-    } else if let Some(event) = state.held.remove(&identity) {
-        state.input.send(released(event));
     } else {
-        drop(state);
-        return CallNextHookEx(ptr::null_mut(), code, message, data);
+        if state.suppressed.remove(&identity) {
+            drop(state);
+            return 1;
+        }
+        if let Some((host_identity, host_state)) = state.host_key {
+            if host_identity == identity {
+                match host_state {
+                    HostKeyState::Pending => {
+                        if let Some(event) = remote_key(state.protocol, 0xa3, 0x1d, true, true) {
+                            state.input.send(event.clone());
+                            state.input.send(released(event));
+                        }
+                    }
+                    HostKeyState::Forwarded => {
+                        if let Some(event) = state.held.remove(&host_identity) {
+                            state.input.send(released(event));
+                        }
+                    }
+                    HostKeyState::Shortcut => {}
+                }
+                state.host_key = None;
+                drop(state);
+                return 1;
+            }
+        }
+        if let Some(event) = state.held.remove(&identity) {
+            state.input.send(released(event));
+        } else {
+            drop(state);
+            return CallNextHookEx(ptr::null_mut(), code, message, data);
+        }
     }
     1
+}
+
+fn remote_key(
+    protocol: DesktopProtocol,
+    virtual_key: u32,
+    scan_code: u32,
+    extended: bool,
+    pressed: bool,
+) -> Option<Input> {
+    match protocol {
+        DesktopProtocol::Rdp if scan_code != 0 => Some(Input::RdpKey {
+            scan_code: scan_code as u8,
+            extended,
+            pressed,
+        }),
+        DesktopProtocol::Vnc => {
+            virtual_key_keysym(virtual_key, scan_code, extended).map(|keysym| Input::Key {
+                keysym,
+                physical_key: None,
+                pressed,
+            })
+        }
+        _ => None,
+    }
 }
 
 fn foreground_process_id() -> u32 {
@@ -261,6 +357,8 @@ fn release_held(state: &mut HookState) {
     for (_, event) in state.held.drain() {
         state.input.send(released(event));
     }
+    state.host_key = None;
+    state.suppressed.clear();
 }
 
 fn released(event: Input) -> Input {

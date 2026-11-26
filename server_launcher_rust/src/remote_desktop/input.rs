@@ -2,6 +2,26 @@ use super::{keymap::keysym, vnc::Input};
 use egui::{Event, Key, Modifiers, MouseWheelUnit, PointerButton, Pos2, Rect, Vec2};
 use std::collections::HashMap;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HostShortcut {
+    Fullscreen,
+    Screenshot,
+    Recording,
+    Disconnect,
+    SendKeys,
+}
+
+pub(crate) fn host_shortcut(key: u32) -> Option<HostShortcut> {
+    match u8::try_from(key).ok()?.to_ascii_uppercase() {
+        b'F' => Some(HostShortcut::Fullscreen),
+        b'S' => Some(HostShortcut::Screenshot),
+        b'R' => Some(HostShortcut::Recording),
+        b'D' => Some(HostShortcut::Disconnect),
+        b'K' => Some(HostShortcut::SendKeys),
+        _ => None,
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Capture {
     active: bool,
@@ -299,6 +319,16 @@ fn remote_position(pos: Pos2, canvas: Rect, [width, height]: [usize; 2]) -> [u16
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn maps_host_shortcuts_without_case_sensitivity() {
+        assert_eq!(host_shortcut(b'F' as u32), Some(HostShortcut::Fullscreen));
+        assert_eq!(host_shortcut(b's' as u32), Some(HostShortcut::Screenshot));
+        assert_eq!(host_shortcut(b'R' as u32), Some(HostShortcut::Recording));
+        assert_eq!(host_shortcut(b'd' as u32), Some(HostShortcut::Disconnect));
+        assert_eq!(host_shortcut(b'K' as u32), Some(HostShortcut::SendKeys));
+        assert_eq!(host_shortcut(b'x' as u32), None);
+    }
 
     #[test]
     fn left_handed_mode_swaps_primary_and_secondary_buttons() {

@@ -56,6 +56,8 @@ the final versions.
   session mode with those identifiers only. Use a bounded control channel,
   send Close on parent exit, and treat EOF as teardown. Prove tunnel lifetime
   after unexpected viewer termination before enabling forwarding.
+- Persist each viewer's native window geometry separately by host ID and
+  protocol so opening a different session cannot reuse another session's size.
 - Keep at most 32 validated framebuffer damage regions per update, merging
   overlaps and falling back to one full-frame upload at the cap. This avoids
   uploading large empty areas between distant screen changes. A worker wakes

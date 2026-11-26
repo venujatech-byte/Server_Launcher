@@ -6,6 +6,7 @@ use super::{
     vnc::{Connection, Input},
 };
 use crate::{config::ConfigFile, theme::ThemeMode};
+use sha2::{Digest, Sha256};
 use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -117,6 +118,8 @@ pub(crate) fn run(
             .with_title(&title)
             .with_inner_size([1024.0, 700.0])
             .with_min_inner_size([420.0, 260.0]),
+        persist_window: true,
+        persistence_path: Some(session_persistence_path(path, host_id, protocol)),
         ..Default::default()
     };
     eframe::run_native(
@@ -205,6 +208,23 @@ pub(crate) fn run(
             }))
         }),
     )
+}
+
+fn session_persistence_path(
+    config_path: &Path,
+    host_id: &str,
+    protocol: DesktopProtocol,
+) -> PathBuf {
+    let mut hash = Sha256::new();
+    hash.update(host_id.as_bytes());
+    hash.update([0]);
+    hash.update(protocol.label().as_bytes());
+    let digest = hash.finalize();
+    let filename = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    config_path.with_file_name(format!("remote-session-{filename}.ron"))
 }
 
 fn start_connection(
@@ -1359,6 +1379,32 @@ fn updates_per_second(previous: u64, current: u64, elapsed: Duration) -> f64 {
         0.0
     } else {
         current.saturating_sub(previous) as f64 / elapsed.as_secs_f64()
+    }
+}
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::session_persistence_path;
+    use crate::remote_desktop::credentials::DesktopProtocol;
+    use std::path::Path;
+
+    #[test]
+    fn window_state_is_stable_and_isolated_by_host_and_protocol() {
+        let config = Path::new("/tmp/servers.json");
+        let rdp = session_persistence_path(config, "host-a", DesktopProtocol::Rdp);
+        assert_eq!(
+            rdp,
+            session_persistence_path(config, "host-a", DesktopProtocol::Rdp)
+        );
+        assert_ne!(
+            rdp,
+            session_persistence_path(config, "host-b", DesktopProtocol::Rdp)
+        );
+        assert_ne!(
+            rdp,
+            session_persistence_path(config, "host-a", DesktopProtocol::Vnc)
+        );
+        assert_eq!(rdp.parent(), config.parent());
     }
 }
 

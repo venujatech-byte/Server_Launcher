@@ -140,6 +140,9 @@ VNC over a direct connection is unencrypted.
 
 - Open two sessions and verify host/protocol pairs do not collide or duplicate.
 - Relaunch the same host/protocol and verify the existing child is focused.
+- Resize and reposition an RDP or VNC viewer, close it normally, and confirm
+  that reopening the same host/protocol restores its geometry without affecting
+  the other protocol's window.
 - Close a viewer, terminate it unexpectedly, and close the launcher; verify
   children and SSH tunnels are cleaned up.
 - Verify passwords are only read from the OS credential store, never command

@@ -67,8 +67,8 @@ credentials and VNC passwords are stored in the operating system credential
 store; protocol passwords are not saved in `servers.json`.
 
 - RDP supports NLA by default, explicit TLS, certificate fingerprint prompts,
-  keyboard and mouse input, text clipboard sync, screenshots, recording, and
-  dynamic resize when the server supports Display Control. Saved certificate
+  keyboard and mouse input, text and bounded image clipboard sync, screenshots,
+  recording, and dynamic resize when the server supports Display Control. Saved certificate
   fingerprints can be reviewed or removed in Settings → Remote Desktop.
 - VNC supports classic password authentication, Raw, CopyRect, and ZRLE framebuffer
   updates, keyboard and mouse input, text clipboard sync, screenshots,
@@ -78,7 +78,7 @@ store; protocol passwords are not saved in `servers.json`.
 - Both viewers offer Fit, native-size, and Fill scaling, a live framebuffer
   update-rate display, and a statistics menu. Local clipboard text is read only
   while the connected viewer window is focused. Classic VNC text is limited to
-  Latin-1; clipboard images and file contents are not supported.
+  Latin-1; VNC clipboard images and file contents are not supported.
 - Screenshot and recording folders can be set separately under Settings →
   Remote Desktop. Recording supports MP4 (H.264) or PNG sequence, at 15, 24,
   30, or 60 FPS. Screenshot clipboard copying can be set as the viewer default.

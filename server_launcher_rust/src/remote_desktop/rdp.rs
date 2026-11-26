@@ -275,7 +275,7 @@ fn run(
         }
         events.clear();
         for event in input.try_iter().take(32) {
-            if let Input::ClipboardText(text) = event {
+            if let Input::ClipboardText(text) = &event {
                 if matches!(
                     profile.clipboard,
                     Clipboard::Both | Clipboard::LocalToRemote
@@ -286,12 +286,37 @@ fn run(
                         if let Some(clipboard) =
                             channel.downcast_backend_mut::<super::rdp_clipboard::ClipboardBackend>()
                         {
-                            clipboard.local_text = Some(text);
+                            clipboard.local_text = Some(text.clone());
+                            clipboard.local_image = None;
                             if let Ok(offer) = channel.initiate_copy(&[ClipboardFormat::new(
                                 ClipboardFormatId::CF_UNICODETEXT,
                             )]) {
                                 if let Ok(packet) = stage.process_svc_processor_messages(offer) {
                                     framed.write_all(&packet)?;
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if let Input::ClipboardImage(image) = &event {
+                if matches!(
+                    profile.clipboard,
+                    Clipboard::Both | Clipboard::LocalToRemote
+                ) {
+                    if let Ok(image) = super::clipboard_image::encode_dibv5(image) {
+                        if let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() {
+                            if let Some(clipboard) = channel
+                                .downcast_backend_mut::<super::rdp_clipboard::ClipboardBackend>()
+                            {
+                                clipboard.local_text = None;
+                                clipboard.local_image = Some(image);
+                                if let Ok(offer) = channel.initiate_copy(&[ClipboardFormat::new(
+                                    ClipboardFormatId::CF_DIBV5,
+                                )]) {
+                                    if let Ok(packet) = stage.process_svc_processor_messages(offer)
+                                    {
+                                        framed.write_all(&packet)?;
+                                    }
                                 }
                             }
                         }
@@ -319,22 +344,20 @@ fn run(
                     state.lock().unwrap().clipboard_text = Some(text);
                     ctx.request_repaint();
                 }
+                if let Some(image) = clipboard.received_image.take() {
+                    state.lock().unwrap().clipboard_image = Some(image);
+                    ctx.request_repaint();
+                }
                 let reply = clipboard.reply.take();
-                let sent_text = reply.as_ref().is_some_and(|reply| !reply.is_error());
-                let request_text = clipboard.request_text();
+                let sent_clipboard = reply.as_ref().is_some_and(|reply| !reply.is_error());
+                let request_format = clipboard.request_format();
                 let response = reply.and_then(|reply| channel.submit_format_data(reply).ok());
-                let request = request_text
-                    .then(|| {
-                        channel
-                            .initiate_paste(ClipboardFormatId::CF_UNICODETEXT)
-                            .ok()
-                    })
-                    .flatten();
+                let request = request_format.and_then(|format| channel.initiate_paste(format).ok());
                 if let Some(packet) =
                     response.and_then(|message| stage.process_svc_processor_messages(message).ok())
                 {
                     framed.write_all(&packet)?;
-                    if sent_text {
+                    if sent_clipboard {
                         state
                             .lock()
                             .unwrap()
@@ -343,7 +366,7 @@ fn run(
                         ctx.request_repaint();
                     }
                 }
-                if request_text {
+                if request_format.is_some() {
                     if let Some(packet) = request
                         .and_then(|message| stage.process_svc_processor_messages(message).ok())
                     {
@@ -483,10 +506,7 @@ fn publish_damage(
     }
     for region in regions.iter() {
         let [x, y] = region.origin;
-        let [right, bottom] = [
-            x.checked_add(region.size[0]),
-            y.checked_add(region.size[1]),
-        ];
+        let [right, bottom] = [x.checked_add(region.size[0]), y.checked_add(region.size[1])];
         if right.is_none_or(|right| right > usize::from(width))
             || bottom.is_none_or(|bottom| bottom > usize::from(height))
         {

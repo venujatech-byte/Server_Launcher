@@ -74,6 +74,13 @@ pub(crate) fn run(
             DesktopProtocol::Rdp => host.rdp.as_ref().map(|profile| profile.clipboard),
         })
         .is_some_and(|direction| matches!(direction, Clipboard::Both | Clipboard::LocalToRemote));
+    let clipboard_enabled = viewer_host
+        .as_ref()
+        .and_then(|host| match protocol {
+            DesktopProtocol::Vnc => host.vnc.as_ref().map(|profile| profile.clipboard),
+            DesktopProtocol::Rdp => host.rdp.as_ref().map(|profile| profile.clipboard),
+        })
+        .is_some_and(|direction| direction != Clipboard::Off);
     let config_path = path.to_owned();
     let palette = ThemeMode::from_id_str(theme).palette();
     let options = eframe::NativeOptions {
@@ -118,8 +125,9 @@ pub(crate) fn run(
                 message,
                 framebuffer,
                 connection: None,
-                clipboard_sync: send_clipboard
-                    .then(|| super::clipboard_sync::ClipboardSync::start(ctx.clone())),
+                clipboard_sync: clipboard_enabled.then(|| {
+                    super::clipboard_sync::ClipboardSync::start(ctx.clone(), send_clipboard)
+                }),
                 session_host: viewer_host,
                 upload: None,
                 upload_result: None,
@@ -372,7 +380,9 @@ impl Viewer {
                 size,
                 input.pointer.hover_pos(),
                 |event| {
-                    if self.send_clipboard || !matches!(event, Input::ClipboardText(_)) {
+                    if self.send_clipboard
+                        || !matches!(event, Input::ClipboardText(_) | Input::ClipboardImage(_))
+                    {
                         connection.send_input(event);
                     }
                 },
@@ -501,9 +511,16 @@ impl eframe::App for Viewer {
                 if let Some(text) = connection.clipboard_text.take() {
                     self.clipboard_notice = Some((Instant::now(), "Clipboard received"));
                     if let Some(clipboard) = &self.clipboard_sync {
-                        clipboard.set_remote_text(text.clone());
+                        clipboard.set_remote_text(text);
+                    } else {
+                        ctx.copy_text(text);
                     }
-                    ctx.copy_text(text);
+                }
+                if let Some(image) = connection.clipboard_image.take() {
+                    self.clipboard_notice = Some((Instant::now(), "Clipboard image received"));
+                    if let Some(clipboard) = &self.clipboard_sync {
+                        clipboard.set_remote_image(image);
+                    }
                 }
                 (
                     if connection.receiving_frame {
@@ -530,13 +547,19 @@ impl eframe::App for Viewer {
                 )
             };
         if let Some(clipboard) = &self.clipboard_sync {
-            clipboard.set_focused(
-                connected && !self.view_only && ctx.input(|input| input.focused),
-            );
-            if connected && !self.view_only {
+            clipboard.set_focused(connected && ctx.input(|input| input.focused));
+            if connected && self.send_clipboard {
                 if let Some(connection) = &self.connection {
-                    if let Some(text) = clipboard.take_pending() {
-                        connection.lock().unwrap().send_input(Input::ClipboardText(text));
+                    if let Some(pending) = clipboard.take_pending() {
+                        let event = match pending {
+                            super::clipboard_sync::PendingClipboard::Text(text) => {
+                                Input::ClipboardText(text)
+                            }
+                            super::clipboard_sync::PendingClipboard::Image(image) => {
+                                Input::ClipboardImage(image)
+                            }
+                        };
+                        connection.lock().unwrap().send_input(event);
                     }
                 }
             }
@@ -571,13 +594,12 @@ impl eframe::App for Viewer {
             self.fps_sample = None;
             self.fps = 0.0;
         }
-        let texture_options = if self.protocol == DesktopProtocol::Rdp
-            && self.rdp_painting == RdpPainting::Fast
-        {
-            egui::TextureOptions::NEAREST
-        } else {
-            egui::TextureOptions::LINEAR
-        };
+        let texture_options =
+            if self.protocol == DesktopProtocol::Rdp && self.rdp_painting == RdpPainting::Fast {
+                egui::TextureOptions::NEAREST
+            } else {
+                egui::TextureOptions::LINEAR
+            };
         for update in updates {
             match self.texture.as_mut() {
                 Some(texture) if !update.resized => {
@@ -585,11 +607,8 @@ impl eframe::App for Viewer {
                 }
                 Some(texture) => texture.set(update.image, texture_options),
                 None => {
-                    self.texture = Some(ctx.load_texture(
-                        "remote-frame",
-                        update.image,
-                        texture_options,
-                    ));
+                    self.texture =
+                        Some(ctx.load_texture("remote-frame", update.image, texture_options));
                 }
             }
         }

@@ -134,19 +134,17 @@ release were tested in-process. Synthetic desktop input did not reach the
 loopback peer in the X11 smoke test, so end-to-end input behavior remains
 unverified.
 
-## Clipboard text
+## Clipboard sync
 
-When the configured direction permits local-to-remote sharing, a worker checks
-the system clipboard every 200 ms only while the viewer is connected, focused,
-and not view-only. Changed text travels over the existing bounded input queue;
-the worker does not access the clipboard on the egui thread. Remote text is
-copied to the local clipboard and tagged to prevent sending it back. Text over
-1 MiB is skipped. Native clipboard initialization retries once per second if
-the OS clipboard is temporarily unavailable. RDP uses Unicode text; classic
-VNC is limited to Latin-1.
-Image and file clipboard formats are not implemented. End-to-end clipboard
-behavior still needs testing against real RDP and VNC servers and on Wayland,
-X11, and Windows.
+The clipboard worker reads local content only when the configured direction
+allows it and the connected viewer is focused. Clipboard access stays off the
+egui thread. Remote text and images are written to the local clipboard and
+fingerprinted to prevent sending them back. Text over 1 MiB and images over
+16 MiB are skipped. Native clipboard initialization retries once per second if
+the OS clipboard is temporarily unavailable. RDP supports Unicode text and
+bounded DIB images; classic VNC supports Latin-1 text only. File clipboard
+formats are not implemented. End-to-end clipboard behavior still needs testing
+against real RDP and VNC servers and on Wayland, X11, and Windows.
 
 ## Native RDP transport
 

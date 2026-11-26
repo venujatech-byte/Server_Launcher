@@ -51,6 +51,7 @@ pub(crate) enum Input {
         pressed: bool,
     },
     ClipboardText(String),
+    ClipboardImage(super::clipboard_image::ClipboardImage),
     VncResize {
         size: [u16; 2],
         screen: [u8; 16],
@@ -72,6 +73,7 @@ impl Input {
                 stream.write_all(&[6, 0, 0, 0, a, b, c, d])?;
                 stream.write_all(&text).map(|()| true)
             }
+            Self::ClipboardImage(_) => Ok(false),
             Self::VncResize {
                 size: [width, height],
                 mut screen,
@@ -114,6 +116,7 @@ pub(crate) struct Connection {
     pub(crate) clipboard_too_large: bool,
     pub(crate) clipboard_sent: Arc<AtomicBool>,
     pub(crate) clipboard_text: Option<String>,
+    pub(crate) clipboard_image: Option<super::clipboard_image::ClipboardImage>,
     pub(crate) vnc_screen: Option<[u8; 16]>,
     pub(crate) rdp_resize_supported: bool,
     pub(crate) rdp_resize_enabled: bool,
@@ -152,6 +155,7 @@ impl Connection {
             clipboard_too_large: false,
             clipboard_sent: Arc::new(AtomicBool::new(false)),
             clipboard_text: None,
+            clipboard_image: None,
             vnc_screen: None,
             rdp_resize_supported: false,
             rdp_resize_enabled: true,
@@ -180,6 +184,7 @@ impl Connection {
                 state.input = None;
                 state.clipboard_sent = Arc::new(AtomicBool::new(false));
                 state.clipboard_text = None;
+                state.clipboard_image = None;
                 state.clipboard_too_large = false;
                 state.vnc_screen = None;
                 state.resize_request = None;

@@ -1,5 +1,6 @@
-pub mod credentials;
+pub(crate) mod clipboard_image;
 pub(crate) mod clipboard_sync;
+pub mod credentials;
 pub(crate) mod editor;
 pub(crate) mod framebuffer;
 pub(crate) mod input;

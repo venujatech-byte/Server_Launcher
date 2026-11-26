@@ -2,13 +2,15 @@ use ironrdp::cliprdr::{backend::CliprdrBackend, pdu::*};
 
 #[derive(Default)]
 pub(super) struct ClipboardBackend {
-    offered: bool,
+    offered: Option<ClipboardFormatId>,
     pub(super) receive_enabled: bool,
     pub(super) local_text: Option<String>,
+    pub(super) local_image: Option<Vec<u8>>,
     pub(super) reply: Option<OwnedFormatDataResponse>,
-    pending: bool,
+    pending: Option<ClipboardFormatId>,
     superseded: bool,
     pub(super) received: Option<String>,
+    pub(super) received_image: Option<super::clipboard_image::ClipboardImage>,
 }
 
 impl std::fmt::Debug for ClipboardBackend {
@@ -28,16 +30,17 @@ impl ClipboardBackend {
     }
 
     pub(super) fn cancel_request(&mut self) {
-        self.pending = false;
+        self.pending = None;
     }
 
-    pub(super) fn request_text(&mut self) -> bool {
-        if self.pending || !std::mem::take(&mut self.offered) {
-            return false;
+    pub(super) fn request_format(&mut self) -> Option<ClipboardFormatId> {
+        if self.pending.is_some() {
+            return None;
         }
-        self.pending = true;
+        let format = self.offered.take()?;
+        self.pending = Some(format);
         self.superseded = false;
-        true
+        Some(format)
     }
 }
 
@@ -52,28 +55,56 @@ impl CliprdrBackend for ClipboardBackend {
     fn on_request_format_list(&mut self) {}
     fn on_process_negotiated_capabilities(&mut self, _: ClipboardGeneralCapabilityFlags) {}
     fn on_remote_copy(&mut self, formats: &[ClipboardFormat]) {
-        self.superseded = self.pending;
+        self.superseded = self.pending.is_some();
         self.received = None;
-        self.offered = self.receive_enabled
-            && formats
-                .iter()
-                .any(|format| format.id() == ClipboardFormatId::CF_UNICODETEXT);
+        self.received_image = None;
+        self.offered = if self.receive_enabled {
+            [
+                ClipboardFormatId::CF_DIBV5,
+                ClipboardFormatId::CF_DIB,
+                ClipboardFormatId::CF_UNICODETEXT,
+            ]
+            .into_iter()
+            .find(|preferred| formats.iter().any(|format| format.id() == *preferred))
+        } else {
+            None
+        };
     }
     fn on_format_data_request(&mut self, request: FormatDataRequest) {
-        self.reply = Some(match &self.local_text {
-            Some(text) if request.format == ClipboardFormatId::CF_UNICODETEXT => {
+        self.reply = Some(match (&self.local_text, &self.local_image) {
+            (Some(text), _) if request.format == ClipboardFormatId::CF_UNICODETEXT => {
                 FormatDataResponse::new_unicode_string(text)
+            }
+            (_, Some(image))
+                if matches!(
+                    request.format,
+                    ClipboardFormatId::CF_DIB | ClipboardFormatId::CF_DIBV5
+                ) =>
+            {
+                FormatDataResponse::new_data(image.clone())
             }
             _ => FormatDataResponse::new_error(),
         });
     }
     fn on_format_data_response(&mut self, response: FormatDataResponse<'_>) {
-        if std::mem::take(&mut self.pending)
-            && !self.superseded
-            && !response.is_error()
-            && response.data().len() <= super::vnc::CLIPBOARD_LIMIT
-        {
-            self.received = response.to_unicode_string().ok();
+        let Some(format) = self.pending.take() else {
+            return;
+        };
+        if self.superseded || response.is_error() {
+            return;
+        }
+        match format {
+            ClipboardFormatId::CF_UNICODETEXT
+                if response.data().len() <= super::vnc::CLIPBOARD_LIMIT =>
+            {
+                self.received = response.to_unicode_string().ok();
+            }
+            ClipboardFormatId::CF_DIB | ClipboardFormatId::CF_DIBV5
+                if response.data().len() <= super::clipboard_image::MAX_BYTES =>
+            {
+                self.received_image = super::clipboard_image::decode_dib(response.data()).ok();
+            }
+            _ => {}
         }
     }
     fn on_file_contents_request(&mut self, _: FileContentsRequest) {}
@@ -91,10 +122,16 @@ mod tests {
         let mut backend = ClipboardBackend::new(true);
         let formats = [ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT)];
         backend.on_remote_copy(&formats);
-        assert!(backend.request_text());
+        assert_eq!(
+            backend.request_format(),
+            Some(ClipboardFormatId::CF_UNICODETEXT)
+        );
         backend.cancel_request();
         backend.on_remote_copy(&formats);
-        assert!(backend.request_text());
+        assert_eq!(
+            backend.request_format(),
+            Some(ClipboardFormatId::CF_UNICODETEXT)
+        );
     }
 
     #[test]
@@ -105,13 +142,19 @@ mod tests {
         };
         let formats = [ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT)];
         backend.on_remote_copy(&formats);
-        assert!(backend.request_text());
+        assert_eq!(
+            backend.request_format(),
+            Some(ClipboardFormatId::CF_UNICODETEXT)
+        );
         backend.on_remote_copy(&[]);
         backend.on_format_data_response(FormatDataResponse::new_unicode_string("stale"));
         assert!(backend.received.is_none());
 
         backend.on_remote_copy(&formats);
-        assert!(backend.request_text());
+        assert_eq!(
+            backend.request_format(),
+            Some(ClipboardFormatId::CF_UNICODETEXT)
+        );
         backend.on_format_data_response(FormatDataResponse::new_unicode_string("hello ✓"));
         assert_eq!(backend.received.as_deref(), Some("hello ✓"));
     }

@@ -129,6 +129,32 @@ impl Framebuffer {
         Ok(())
     }
 
+    pub(crate) fn write_colors(
+        &mut self,
+        region: Region,
+        pixels: &[Color32],
+    ) -> Result<(), &'static str> {
+        let [x, y] = region.origin;
+        let [w, h] = region.size;
+        let [right, bottom] = region.end().ok_or("Invalid framebuffer rectangle.")?;
+        if w == 0
+            || h == 0
+            || right > self.size[0]
+            || bottom > self.size[1]
+            || w.checked_mul(h) != Some(pixels.len())
+        {
+            return Err("Invalid framebuffer rectangle or pixel length.");
+        }
+        for row in 0..h {
+            let source = row * w;
+            let target = (y + row) * self.size[0] + x;
+            self.pixels[target..target + w].copy_from_slice(&pixels[source..source + w]);
+        }
+        self.revision = self.revision.wrapping_add(1);
+        self.mark_dirty(region);
+        Ok(())
+    }
+
     pub(crate) fn copy_rect(
         &mut self,
         source: [usize; 2],
@@ -248,6 +274,22 @@ mod tests {
         let source = [255, 0, 0, 0, 99, 99, 99, 99, 0, 255, 0, 0];
         fb.write_strided_rgba(region, &source, 8).unwrap();
         assert_eq!(fb.pixels, [Color32::RED, Color32::GREEN]);
+    }
+
+    #[test]
+    fn writes_prepared_color_rows_into_the_framebuffer() {
+        let mut fb = Framebuffer::default();
+        fb.resize([3, 2]).unwrap();
+        fb.write_colors(
+            Region {
+                origin: [1, 0],
+                size: [2, 2],
+            },
+            &[Color32::RED, Color32::GREEN, Color32::BLUE, Color32::WHITE],
+        )
+        .unwrap();
+        assert_eq!(fb.pixels[1..3], [Color32::RED, Color32::GREEN]);
+        assert_eq!(fb.pixels[4..6], [Color32::BLUE, Color32::WHITE]);
     }
 
     #[test]

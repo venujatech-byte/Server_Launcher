@@ -44,6 +44,7 @@ use std::{
     borrow::Cow,
     io::{self, Read, Write},
     net::{SocketAddr, TcpStream, ToSocketAddrs},
+    ops::Range,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -459,6 +460,7 @@ fn run(
     let mut encoder = super::rdp_input::Encoder::default();
     let mut events = Vec::with_capacity(64);
     let mut dirty_regions = Vec::with_capacity(8);
+    let mut converted_damage = Vec::new();
     let mut proposed_resize = None;
     let received_bytes = state.lock().unwrap().received_bytes.clone();
     loop {
@@ -753,7 +755,15 @@ fn run(
                     return Err(error("The RDP server ended the session."))
                 }
                 ActiveStageOutput::DeactivateAll => {
-                    publish_damage(&mut dirty_regions, &image, width, height, state, ctx)?;
+                    publish_damage(
+                        &mut dirty_regions,
+                        &image,
+                        width,
+                        height,
+                        state,
+                        ctx,
+                        &mut converted_damage,
+                    )?;
                     let mut activation = activation_factory.create();
                     framed
                         .get_inner()
@@ -821,7 +831,15 @@ fn run(
                 _ => {}
             }
         }
-        publish_damage(&mut dirty_regions, &image, width, height, state, ctx)?;
+        publish_damage(
+            &mut dirty_regions,
+            &image,
+            width,
+            height,
+            state,
+            ctx,
+            &mut converted_damage,
+        )?;
     }
 }
 
@@ -1111,34 +1129,115 @@ fn publish_damage(
     height: u16,
     state: &Arc<Mutex<Connection>>,
     ctx: &egui::Context,
+    converted_pixels: &mut Vec<egui::Color32>,
 ) -> io::Result<()> {
     if regions.is_empty() {
         return Ok(());
     }
-    for region in regions.iter() {
-        let [x, y] = region.origin;
-        let [right, bottom] = [x.checked_add(region.size[0]), y.checked_add(region.size[1])];
-        if right.is_none_or(|right| right > usize::from(width))
-            || bottom.is_none_or(|bottom| bottom > usize::from(height))
-        {
-            return Err(error("The RDP server reported invalid framebuffer damage."));
-        }
-    }
-
-    let stride = image.stride();
-    let data = image.data();
+    let prepared = prepare_damage(
+        regions,
+        image.data(),
+        image.stride(),
+        width,
+        height,
+        converted_pixels,
+    )?;
     let mut shared = state.lock().unwrap();
-    for region in regions.drain(..) {
-        let offset = region.origin[1] * stride + region.origin[0] * 4;
+    for (region, range) in prepared {
         shared
             .framebuffer
-            .write_strided_rgba(region, &data[offset..], stride)
+            .write_colors(region, &converted_pixels[range])
             .map_err(error)?;
     }
+    regions.clear();
     shared.display_updates = shared.display_updates.wrapping_add(1);
     drop(shared);
     ctx.request_repaint();
     Ok(())
+}
+
+fn prepare_damage(
+    regions: &[Region],
+    data: &[u8],
+    stride: usize,
+    width: u16,
+    height: u16,
+    pixels: &mut Vec<egui::Color32>,
+) -> io::Result<Vec<(Region, Range<usize>)>> {
+    pixels.clear();
+    let minimum_stride = usize::from(width)
+        .checked_mul(4)
+        .ok_or_else(|| error("The RDP server reported invalid framebuffer damage."))?;
+    if stride < minimum_stride {
+        return Err(error("The RDP server reported invalid framebuffer damage."));
+    }
+    let frame_pixels = usize::from(width)
+        .checked_mul(usize::from(height))
+        .ok_or_else(|| error("The RDP server reported invalid framebuffer damage."))?;
+    let mut damaged_pixels = 0usize;
+    for &region in regions {
+        let [x, y] = region.origin;
+        let [w, h] = region.size;
+        let right = x
+            .checked_add(w)
+            .ok_or_else(|| error("The RDP server reported invalid framebuffer damage."))?;
+        let bottom = y
+            .checked_add(h)
+            .ok_or_else(|| error("The RDP server reported invalid framebuffer damage."))?;
+        if w == 0 || h == 0 || right > usize::from(width) || bottom > usize::from(height) {
+            return Err(error("The RDP server reported invalid framebuffer damage."));
+        }
+        damaged_pixels = damaged_pixels
+            .checked_add(
+                w.checked_mul(h)
+                    .ok_or_else(|| error("The RDP server reported invalid framebuffer damage."))?,
+            )
+            .ok_or_else(|| error("The RDP server reported invalid framebuffer damage."))?;
+    }
+    let full_frame = [Region {
+        origin: [0, 0],
+        size: [usize::from(width), usize::from(height)],
+    }];
+    let regions = if damaged_pixels >= frame_pixels {
+        &full_frame[..]
+    } else {
+        regions
+    };
+    let mut prepared = Vec::with_capacity(regions.len());
+    for &region in regions {
+        let [x, y] = region.origin;
+        let [w, h] = region.size;
+        let bottom = y + h;
+        let count = w
+            .checked_mul(h)
+            .ok_or_else(|| error("The RDP server reported invalid framebuffer damage."))?;
+        pixels
+            .try_reserve(count)
+            .map_err(|_| error("Could not allocate the RDP frame update."))?;
+        let start = pixels.len();
+        for row in y..bottom {
+            let byte_start = row
+                .checked_mul(stride)
+                .and_then(|offset| x.checked_mul(4).and_then(|x| offset.checked_add(x)))
+                .ok_or_else(|| error("The RDP server reported invalid framebuffer damage."))?;
+            let byte_end =
+                byte_start
+                    .checked_add(w.checked_mul(4).ok_or_else(|| {
+                        error("The RDP server reported invalid framebuffer damage.")
+                    })?)
+                    .ok_or_else(|| error("The RDP server reported invalid framebuffer damage."))?;
+            let row_data = data
+                .get(byte_start..byte_end)
+                .ok_or_else(|| error("The RDP server reported invalid framebuffer damage."))?;
+            pixels.extend(
+                row_data
+                    .chunks_exact(4)
+                    .map(|pixel| egui::Color32::from_rgb(pixel[0], pixel[1], pixel[2])),
+            );
+        }
+        prepared.push((region, start..pixels.len()));
+    }
+    Ok(prepared)
 }
 
 struct EgfxHandler {
@@ -1453,6 +1552,59 @@ fn rdp_quality_presets_set_bitmap_depth_and_adaptive_color() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prepares_damage_pixels_outside_the_shared_framebuffer() {
+        let data = [
+            255, 0, 0, 0, 0, 255, 0, 0, 91, 91, 91, 91, 0, 0, 255, 0, 255, 255, 255, 0,
+        ];
+        let regions = [Region {
+            origin: [0, 0],
+            size: [2, 2],
+        }];
+        let mut pixels = Vec::new();
+        let prepared = prepare_damage(&regions, &data, 12, 2, 2, &mut pixels).unwrap();
+        assert_eq!(prepared, [(regions[0], 0..4)]);
+        assert_eq!(
+            pixels,
+            [
+                egui::Color32::RED,
+                egui::Color32::GREEN,
+                egui::Color32::BLUE,
+                egui::Color32::WHITE,
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_damage_outside_decoded_image_data() {
+        let mut pixels = Vec::new();
+        let result = prepare_damage(
+            &[Region {
+                origin: [0, 1],
+                size: [1, 1],
+            }],
+            &[0, 0, 0, 0],
+            4,
+            1,
+            2,
+            &mut pixels,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn coalesces_damage_larger_than_the_frame_into_one_bounded_upload() {
+        let data = [255, 0, 0, 0, 0, 255, 0, 0];
+        let region = Region {
+            origin: [0, 0],
+            size: [2, 1],
+        };
+        let mut pixels = Vec::new();
+        let prepared = prepare_damage(&[region, region], &data, 8, 2, 1, &mut pixels).unwrap();
+        assert_eq!(prepared, [(region, 0..2)]);
+        assert_eq!(pixels, [egui::Color32::RED, egui::Color32::GREEN]);
+    }
 
     #[test]
     fn administrative_session_requests_session_zero_only_when_enabled() {

@@ -867,7 +867,12 @@ impl eframe::App for Viewer {
                             let seconds = recorder.duration().as_secs();
                             ui.colored_label(
                                 egui::Color32::LIGHT_RED,
-                                format!("{status} {:02}:{:02}", seconds / 60, seconds % 60),
+                                format!(
+                                    "{status} {:02}:{:02} · {}",
+                                    seconds / 60,
+                                    seconds % 60,
+                                    crate::sensors::format_bytes(recorder.output_bytes())
+                                ),
                             );
                             if !recorder.paused() {
                                 ctx.request_repaint_after(Duration::from_secs(1));

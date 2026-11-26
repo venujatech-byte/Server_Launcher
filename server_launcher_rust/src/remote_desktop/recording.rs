@@ -15,6 +15,7 @@ pub(super) struct Recording {
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     written_us: Arc<AtomicU64>,
+    output_bytes: Arc<AtomicU64>,
     worker: Option<thread::JoinHandle<()>>,
     pub(super) result: mpsc::Receiver<Result<PathBuf, String>>,
 }
@@ -27,15 +28,24 @@ impl Recording {
         let worker_paused = paused.clone();
         let written_us = Arc::new(AtomicU64::new(0));
         let progress = written_us.clone();
+        let output_bytes = Arc::new(AtomicU64::new(0));
+        let worker_bytes = output_bytes.clone();
         let (sender, result) = mpsc::channel();
         let worker = thread::spawn(move || {
-            let _ = sender.send(record(&connection, &cancelled, &worker_paused, &progress));
+            let _ = sender.send(record(
+                &connection,
+                &cancelled,
+                &worker_paused,
+                &progress,
+                &worker_bytes,
+            ));
             ctx.request_repaint();
         });
         Self {
             stop,
             paused,
             written_us,
+            output_bytes,
             worker: Some(worker),
             result,
         }
@@ -43,6 +53,10 @@ impl Recording {
 
     pub(super) fn duration(&self) -> Duration {
         Duration::from_micros(self.written_us.load(Ordering::Relaxed))
+    }
+
+    pub(super) fn output_bytes(&self) -> u64 {
+        self.output_bytes.load(Ordering::Relaxed)
     }
 
     pub(super) fn paused(&self) -> bool {
@@ -72,6 +86,7 @@ fn record(
     stop: &AtomicBool,
     paused: &AtomicBool,
     progress: &AtomicU64,
+    output_bytes: &AtomicU64,
 ) -> Result<PathBuf, String> {
     let deadline = Instant::now() + Duration::from_secs(8);
     let frame = loop {
@@ -159,12 +174,15 @@ fn record(
                 frame,
                 Duration::from_millis(200),
                 |frame| {
-                    super::screenshot::save_in(
+                    let path = super::screenshot::save_in(
                         frame,
                         sequence.path(),
                         &format!("frame-{index:08}"),
                     )
                     .map_err(|error| error.to_string())?;
+                    if let Ok(metadata) = std::fs::metadata(path) {
+                        output_bytes.fetch_add(metadata.len(), Ordering::Relaxed);
+                    }
                     index += 1;
                     progress.store(index * 200_000, Ordering::Relaxed);
                     Ok(())
@@ -198,6 +216,11 @@ fn record(
             pipe.write_all(&pixels)
                 .map_err(|error| format!("Could not write the recording: {error}"))?;
             frames += 1;
+            if frames % 30 == 0 {
+                if let Ok(metadata) = std::fs::metadata(&output) {
+                    output_bytes.store(metadata.len(), Ordering::Relaxed);
+                }
+            }
             progress.store(frames * 1_000_000 / 30, Ordering::Relaxed);
             Ok(())
         },

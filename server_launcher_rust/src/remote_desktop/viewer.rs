@@ -1211,12 +1211,14 @@ impl eframe::App for Viewer {
                         } else if let Some(result) = &self.recording_result {
                             match result {
                                 Ok(path) => {
-                                    let label = if path.is_dir() {
-                                        "FFmpeg unavailable. PNG frames saved to"
-                                    } else {
-                                        "Recording saved to"
-                                    };
-                                    ui.label(format!("{label} {}", path.display()));
+                                    ui.label(format!(
+                                        "{} {}",
+                                        recording_result_label(
+                                            self.recording_format,
+                                            path.is_dir(),
+                                        ),
+                                        path.display()
+                                    ));
                                 }
                                 Err(error) => {
                                     ui.label(error);
@@ -1358,6 +1360,17 @@ fn should_close_after_failure(close_on_failure: bool, finished: bool, connected:
     close_on_failure && finished && !connected
 }
 
+fn recording_result_label(
+    format: crate::config::RemoteRecordingFormat,
+    is_directory: bool,
+) -> &'static str {
+    match (format, is_directory) {
+        (crate::config::RemoteRecordingFormat::PngSequence, _) => "PNG sequence saved to",
+        (_, true) => "FFmpeg unavailable. PNG frames saved to",
+        (_, false) => "Recording saved to",
+    }
+}
+
 #[cfg(test)]
 #[test]
 fn shortcut_releases_keys_in_reverse_order() {
@@ -1379,6 +1392,22 @@ fn close_on_failure_waits_until_retries_finish() {
     assert!(!should_close_after_failure(true, true, true));
     assert!(should_close_after_failure(true, true, false));
     assert!(!should_close_after_failure(false, true, false));
+}
+
+#[cfg(test)]
+#[test]
+fn recording_result_distinguishes_selected_png_from_fallback() {
+    use crate::config::RemoteRecordingFormat::{Mp4, PngSequence};
+
+    assert_eq!(
+        recording_result_label(PngSequence, true),
+        "PNG sequence saved to"
+    );
+    assert_eq!(
+        recording_result_label(Mp4, true),
+        "FFmpeg unavailable. PNG frames saved to"
+    );
+    assert_eq!(recording_result_label(Mp4, false), "Recording saved to");
 }
 
 fn scale_label(scale: Scaling) -> &'static str {

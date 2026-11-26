@@ -38,6 +38,14 @@ pub(crate) fn run(
         .filter(|_| protocol == DesktopProtocol::Vnc)
         .map_or(Scaling::Fit, |profile| profile.scaling);
     let viewer_host = profile.filter(|_| !test_pattern).cloned();
+    let confirm_unencrypted_vnc = viewer_host
+        .as_ref()
+        .filter(|_| protocol == DesktopProtocol::Vnc)
+        .is_some_and(|host| {
+            host.vnc.as_ref().is_some_and(|profile| {
+                !profile.tunnel_via_ssh && super::vnc::needs_unencrypted_warning(&host.host)
+            })
+        });
     let view_only = viewer_host
         .as_ref()
         .and_then(|host| host.vnc.as_ref())
@@ -115,6 +123,7 @@ pub(crate) fn run(
                 capture: Capture::default(),
                 host_name,
                 protocol,
+                confirm_unencrypted_vnc,
                 clipboard_notice: None,
                 copy_screenshot: false,
                 screenshot_clipboard: None,
@@ -176,6 +185,7 @@ struct Viewer {
     capture: Capture,
     host_name: String,
     protocol: DesktopProtocol,
+    confirm_unencrypted_vnc: bool,
     clipboard_notice: Option<(Instant, &'static str)>,
     copy_screenshot: bool,
     screenshot_clipboard: Option<arboard::Clipboard>,
@@ -354,7 +364,7 @@ impl eframe::App for Viewer {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
-        if self.connection.is_none() {
+        if self.connection.is_none() && !self.confirm_unencrypted_vnc {
             if let Some(host) = &self.session_host {
                 self.connection = Some(start_connection(
                     host.clone(),
@@ -396,6 +406,59 @@ impl eframe::App for Viewer {
                     }
                 });
             });
+            return;
+        }
+        if self.confirm_unencrypted_vnc {
+            let mut choice = None;
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.with_layout(
+                    egui::Layout::centered_and_justified(egui::Direction::TopDown),
+                    |ui| {
+                        egui::Frame::none()
+                            .fill(ui.visuals().widgets.noninteractive.bg_fill)
+                            .rounding(egui::Rounding::same(12.0))
+                            .inner_margin(egui::Margin::same(24.0))
+                            .show(ui, |ui| {
+                                ui.set_max_width(520.0);
+                                ui.heading("Direct VNC is not encrypted");
+                                ui.add_space(8.0);
+                                ui.label(format!(
+                                    "The connection to {} will send screen data and input without transport encryption. Use an SSH tunnel when possible.",
+                                    self.host_name
+                                ));
+                                ui.add_space(16.0);
+                                ui.horizontal_wrapped(|ui| {
+                                    if ui.button("Use SSH tunnel").clicked() {
+                                        choice = Some(0);
+                                    }
+                                    if ui.button("Continue directly").clicked() {
+                                        choice = Some(1);
+                                    }
+                                    if ui.button("Cancel").clicked() {
+                                        choice = Some(2);
+                                    }
+                                });
+                            });
+                    },
+                );
+            });
+            match choice {
+                Some(0) => {
+                    if let Some(host) = &mut self.session_host {
+                        if let Some(profile) = &mut host.vnc {
+                            profile.tunnel_via_ssh = true;
+                        }
+                    }
+                    self.confirm_unencrypted_vnc = false;
+                    ctx.request_repaint();
+                }
+                Some(1) => {
+                    self.confirm_unencrypted_vnc = false;
+                    ctx.request_repaint();
+                }
+                Some(2) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                _ => {}
+            }
             return;
         }
         let (update, status, connected, reconnect_at, finished, connected_since, received_bytes) =

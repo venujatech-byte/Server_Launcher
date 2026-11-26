@@ -216,6 +216,18 @@ fn reconnect_delay(attempt: u32, entropy: u64) -> Duration {
     Duration::from_millis(base_ms + entropy % (base_ms / 4 + 1))
 }
 
+#[cfg(test)]
+mod warning_tests {
+    use super::needs_unencrypted_warning;
+
+    #[test]
+    fn warns_for_public_and_unresolved_vnc_hosts() {
+        assert!(needs_unencrypted_warning("203.0.113.10"));
+        assert!(needs_unencrypted_warning("vnc.example.test"));
+        assert!(!needs_unencrypted_warning("192.168.1.12"));
+    }
+}
+
 fn error(message: &str) -> io::Error {
     io::Error::other(message)
 }
@@ -228,6 +240,13 @@ fn private(address: IpAddr) -> bool {
             |ip| private(IpAddr::V4(ip)),
         ),
     }
+}
+
+pub(crate) fn needs_unencrypted_warning(host: &str) -> bool {
+    let address = host.trim().trim_matches(['[', ']']);
+    // shortcut: hostnames are treated as potentially public; resolve asynchronously to avoid a
+    // conservative warning for private DNS names.
+    address.parse::<IpAddr>().map_or(true, |address| !private(address))
 }
 
 fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> io::Result<()> {
@@ -444,17 +463,9 @@ fn open_direct(host: &SshRemoteHost, port: u16) -> io::Result<TcpStream> {
     let addresses = (address, port)
         .to_socket_addrs()
         .map_err(|_| error("Could not resolve the VNC host."))?;
-    let mut private_addresses = addresses
-        .filter(|addr| private(addr.ip()))
-        .take(3)
-        .peekable();
-    if private_addresses.peek().is_none() {
-        return Err(error(
-            "Direct VNC requires a private address. Enable Tunnel via SSH in the VNC tab.",
-        ));
-    }
     let mut last_error = None;
-    let stream = private_addresses
+    let stream = addresses
+        .take(16)
         .find_map(|addr| match TcpStream::connect_timeout(&addr, TIMEOUT) {
             Ok(stream) => Some(stream),
             Err(error) => {

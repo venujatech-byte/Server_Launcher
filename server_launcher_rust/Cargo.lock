@@ -6170,6 +6170,7 @@ dependencies = [
  "des 0.8.1",
  "eframe",
  "egui",
+ "flate2",
  "getrandom 0.4.3",
  "image",
  "ironrdp",

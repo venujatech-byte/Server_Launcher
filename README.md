@@ -70,7 +70,7 @@ store; protocol passwords are not saved in `servers.json`.
   keyboard and mouse input, text clipboard sync, screenshots, recording, and
   dynamic resize when the server supports Display Control. Saved certificate
   fingerprints can be reviewed or removed in Settings → Remote Desktop.
-- VNC supports classic password authentication, Raw and CopyRect framebuffer
+- VNC supports classic password authentication, Raw, CopyRect, and ZRLE framebuffer
   updates, keyboard and mouse input, text clipboard sync, screenshots,
   recording, and server-supported resolution changes. Classic VNC is not
   encrypted; the viewer warns before a direct connection to public or unknown
@@ -85,11 +85,12 @@ store; protocol passwords are not saved in `servers.json`.
   By default, captures are saved under Pictures/ServerLauncher.
 
 RDP audio, microphone, drive redirection, Microsoft RD Gateway, RDP multi-monitor,
-and keyboard-layout-specific IME are not implemented. VNC Tight and ZRLE
+and keyboard-layout-specific IME are not implemented. VNC Tight
 encodings, username-based authentication, and remote cursor shapes are not
-implemented. SSH desktop tunnels currently require Unix; Windows can use direct
-RDP/VNC connections. Protocol interoperation and performance still need testing
-against real servers on Windows, Linux X11, and Linux Wayland.
+implemented. SSH desktop tunnels support Unix and Windows key/agent credentials;
+Windows password-only SSH tunnels are not supported. Protocol interoperation
+and performance still need testing against real servers on Windows, Linux X11,
+and Linux Wayland.
 
 ### Local Apps & Packages
 

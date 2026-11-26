@@ -85,13 +85,16 @@ probe worker and controls resolution time independently of the socket deadline.
 ## VNC transport and current limits
 
 The live RFB implementation validates display dimensions and rectangle lengths
-before allocating and requests incremental updates. It supports Raw and
-CopyRect rectangles, classic VNC password authentication, SSH stdio forwarding
-on Unix and Windows, keyboard and pointer input, clipboard text, and server-supported
-resolution changes. Quality selects 16-bit or 32-bit pixels. Direct VNC to a
+before allocating and requests incremental updates. It supports Raw, CopyRect,
+and ZRLE rectangles (raw, solid, packed-palette, and RLE tiles), classic VNC
+password authentication, SSH stdio forwarding on Unix and Windows, keyboard
+and pointer input, clipboard text, and server-supported resolution changes.
+Quality selects 16-bit or 32-bit pixels. Direct VNC to a
 public or unknown address requires an explicit warning confirmation. The
-configured encoding priority is not yet applied: Tight and ZRLE are unsupported,
-as are username-based authentication and remote cursor shapes. Classic RFB
+configured encoding priority is applied for the supported encodings; Tight is
+shown as unsupported and skipped. Username-based authentication and remote
+cursor shapes are unsupported. ZRLE uses one bounded persistent zlib stream per
+connection. Classic RFB
 clipboard text is Latin-1. Only the earlier loopback Raw handshake/rendering
 smoke test is recorded; current end-to-end input, tunnel, authentication, and
 encoding interoperability need real-server validation.

@@ -75,7 +75,9 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
                 (RdpPainting::Fast, "Fast / crisp"),
             ],
         );
-        ui.label("Smooth filtering blends scaled pixels; Fast uses sharper nearest-neighbor sampling.");
+        ui.label(
+            "Smooth filtering blends scaled pixels; Fast uses sharper nearest-neighbor sampling.",
+        );
         color_depth(ui, &mut profile.color_depth);
         choice(
             ui,
@@ -212,7 +214,7 @@ pub(crate) fn vnc(ui: &mut Ui, draft: &mut Option<VncProfile>, port_text: &mut S
             for i in 0..profile.encodings.len() {
                 let encoding = profile.encodings[i];
                 let label = match encoding {
-                    Encoding::Tight => "Tight",
+                    Encoding::Tight => "Tight (unsupported; skipped)",
                     Encoding::Zrle => "ZRLE",
                     Encoding::CopyRect => "CopyRect",
                     Encoding::Raw => "Raw",

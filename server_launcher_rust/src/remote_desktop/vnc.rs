@@ -1,7 +1,7 @@
 use super::{
     credentials::{self, DesktopProtocol},
     framebuffer::{Framebuffer, Region},
-    profile::{Clipboard, Quality},
+    profile::{Clipboard, Encoding, Quality},
     tunnel::{self, DesktopStream},
 };
 use crate::config::SshRemoteHost;
@@ -25,8 +25,10 @@ pub(crate) const CLIPBOARD_LIMIT: usize = 1024 * 1024;
 
 const RAW: i32 = 0;
 const COPY_RECT: i32 = 1;
+const ZRLE: i32 = 16;
 const DESKTOP_SIZE: i32 = -223;
 const EXTENDED_DESKTOP_SIZE: i32 = -308;
+const MAX_ZRLE_COMPRESSED: usize = 64 * 1024 * 1024;
 
 const TIMEOUT: Duration = Duration::from_secs(8);
 const TUNNEL_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
@@ -246,7 +248,9 @@ pub(crate) fn needs_unencrypted_warning(host: &str) -> bool {
     let address = host.trim().trim_matches(['[', ']']);
     // shortcut: hostnames are treated as potentially public; resolve asynchronously to avoid a
     // conservative warning for private DNS names.
-    address.parse::<IpAddr>().map_or(true, |address| !private(address))
+    address
+        .parse::<IpAddr>()
+        .map_or(true, |address| !private(address))
 }
 
 fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> io::Result<()> {
@@ -307,8 +311,34 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
     let mut format_message = [0; 20];
     format_message[4..].copy_from_slice(&pixel_format);
     stream.write_all(&format_message)?;
-    let mut encodings = vec![2, 0, 0, 4];
-    for encoding in [COPY_RECT, RAW, EXTENDED_DESKTOP_SIZE, DESKTOP_SIZE] {
+    let mut encodings = vec![2, 0];
+    let mut enabled_encodings = Vec::with_capacity(5);
+    for encoding in &profile.encodings {
+        let encoding = match encoding {
+            Encoding::Zrle => ZRLE,
+            Encoding::CopyRect => COPY_RECT,
+            Encoding::Raw => RAW,
+            Encoding::Tight => continue,
+        };
+        if !enabled_encodings.contains(&encoding) {
+            enabled_encodings.push(encoding);
+        }
+    }
+    if !enabled_encodings
+        .iter()
+        .any(|encoding| matches!(*encoding, ZRLE | COPY_RECT | RAW))
+    {
+        enabled_encodings.push(RAW);
+    }
+    for encoding in [EXTENDED_DESKTOP_SIZE, DESKTOP_SIZE] {
+        if !enabled_encodings.contains(&encoding) {
+            enabled_encodings.push(encoding);
+        }
+    }
+    let count = u16::try_from(enabled_encodings.len())
+        .map_err(|_| error("Too many VNC encodings were configured."))?;
+    encodings.extend_from_slice(&count.to_be_bytes());
+    for encoding in enabled_encodings {
         encodings.extend_from_slice(&encoding.to_be_bytes());
     }
     stream.write_all(&encodings)?;
@@ -352,6 +382,7 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
     );
 
     let mut pixels = Vec::new();
+    let mut zrle = ZrleDecoder::default();
     loop {
         let mut kind = [0];
         match stream.read_exact(&mut kind) {
@@ -384,6 +415,7 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
                         &mut pixels,
                         index + 1 == count,
                         compact_pixels,
+                        &mut zrle,
                     )? {
                         size = new_size;
                         resized = true;
@@ -589,6 +621,7 @@ fn read_rectangle(
     pixels: &mut Vec<u8>,
     last: bool,
     compact_pixels: bool,
+    zrle: &mut ZrleDecoder,
 ) -> io::Result<Option<[usize; 2]>> {
     let mut rect = [0; 12];
     stream.read_exact(&mut rect)?;
@@ -676,6 +709,24 @@ fn read_rectangle(
                 .copy_rect(source, region)
                 .map_err(error)?;
         }
+        ZRLE => {
+            let mut length = [0; 4];
+            stream.read_exact(&mut length)?;
+            let length = u32::from_be_bytes(length) as usize;
+            if length > MAX_ZRLE_COMPRESSED {
+                return Err(error(
+                    "The VNC ZRLE rectangle exceeds the compressed data limit.",
+                ));
+            }
+            let mut compressed = vec![0; length];
+            stream.read_exact(&mut compressed)?;
+            let decoded = zrle.decompress(&compressed, w, h, compact_pixels)?;
+            let mut state = state.lock().unwrap();
+            state
+                .framebuffer
+                .write_rgba(region, &decoded)
+                .map_err(error)?;
+        }
         _ => {
             return Err(error(
                 "The VNC server sent an unsupported framebuffer encoding.",
@@ -683,6 +734,215 @@ fn read_rectangle(
         }
     }
     Ok(None)
+}
+
+#[derive(Default)]
+struct ZrleDecoder {
+    stream: Option<flate2::Decompress>,
+}
+
+impl ZrleDecoder {
+    fn decompress(
+        &mut self,
+        compressed: &[u8],
+        width: usize,
+        height: usize,
+        compact_pixels: bool,
+    ) -> io::Result<Vec<u8>> {
+        let area = width
+            .checked_mul(height)
+            .filter(|area| *area <= 16 * 1024 * 1024)
+            .ok_or_else(|| error("The VNC ZRLE rectangle exceeds the pixel limit."))?;
+        let pixels = u64::try_from(area).map_err(|_| error("Invalid VNC rectangle size."))?;
+        let tiles = width.div_ceil(64).saturating_mul(height.div_ceil(64)) as u64;
+        let output_limit = pixels
+            .checked_mul(4)
+            .and_then(|bytes| bytes.checked_add(tiles * 384 + 4096))
+            .and_then(|bytes| usize::try_from(bytes).ok())
+            .ok_or_else(|| error("The VNC ZRLE rectangle is too large."))?;
+        let stream = self
+            .stream
+            .get_or_insert_with(|| flate2::Decompress::new(true));
+        let mut output = Vec::with_capacity(output_limit);
+        let input_before = stream.total_in();
+        let status = stream
+            .decompress_vec(compressed, &mut output, flate2::FlushDecompress::Sync)
+            .map_err(|_| error("The VNC server sent invalid ZRLE data."))?;
+        if stream.total_in() - input_before != compressed.len() as u64 {
+            return Err(error(
+                "The VNC server sent truncated or oversized ZRLE data.",
+            ));
+        }
+        if output.len() == output_limit && status == flate2::Status::BufError {
+            return Err(error(
+                "The VNC ZRLE rectangle exceeds the decoded data limit.",
+            ));
+        }
+        decode_zrle_tiles(&output, width, height, compact_pixels)
+    }
+}
+
+fn decode_zrle_tiles(
+    data: &[u8],
+    width: usize,
+    height: usize,
+    compact_pixels: bool,
+) -> io::Result<Vec<u8>> {
+    let area = width
+        .checked_mul(height)
+        .filter(|area| *area <= 16 * 1024 * 1024)
+        .ok_or_else(|| error("The VNC ZRLE rectangle exceeds the pixel limit."))?;
+    let mut output = vec![0; area * 4];
+    let mut input = data;
+    for tile_y in (0..height).step_by(64) {
+        for tile_x in (0..width).step_by(64) {
+            let tile_width = (width - tile_x).min(64);
+            let tile_height = (height - tile_y).min(64);
+            let subencoding = take_byte(&mut input)?;
+            let tile_area = tile_width * tile_height;
+            let mut tile = Vec::with_capacity(tile_area);
+            match subencoding {
+                0 => {
+                    for _ in 0..tile_area {
+                        tile.push(take_pixel(&mut input, compact_pixels)?);
+                    }
+                }
+                1 => {
+                    let pixel = take_pixel(&mut input, compact_pixels)?;
+                    tile.resize(tile_area, pixel);
+                }
+                2..=16 => {
+                    let palette_size = usize::from(subencoding);
+                    let palette = take_palette(&mut input, palette_size, compact_pixels)?;
+                    let bits = if palette_size <= 2 {
+                        1
+                    } else if palette_size <= 4 {
+                        2
+                    } else {
+                        4
+                    };
+                    for _ in 0..tile_height {
+                        let row_bytes = (tile_width * bits).div_ceil(8);
+                        let row = take_bytes(&mut input, row_bytes)?;
+                        for x in 0..tile_width {
+                            let bit = x * bits;
+                            let index = (row[bit / 8] >> (8 - bits - bit % 8)) & ((1 << bits) - 1);
+                            tile.push(*palette.get(usize::from(index)).ok_or_else(|| {
+                                error("The VNC ZRLE tile references a missing palette color.")
+                            })?);
+                        }
+                    }
+                }
+                128 => {
+                    while tile.len() < tile_area {
+                        let pixel = take_pixel(&mut input, compact_pixels)?;
+                        let run = take_run_length(&mut input)?;
+                        append_run(&mut tile, pixel, run, tile_area)?;
+                    }
+                }
+                129..=255 => {
+                    let palette =
+                        take_palette(&mut input, usize::from(subencoding - 128), compact_pixels)?;
+                    while tile.len() < tile_area {
+                        let encoded = take_byte(&mut input)?;
+                        let index = usize::from(encoded & 0x7f);
+                        let pixel = *palette.get(index).ok_or_else(|| {
+                            error("The VNC ZRLE tile references a missing palette color.")
+                        })?;
+                        let run = if encoded & 0x80 != 0 {
+                            take_run_length(&mut input)?
+                        } else {
+                            1
+                        };
+                        append_run(&mut tile, pixel, run, tile_area)?;
+                    }
+                }
+                _ => return Err(error("The VNC server sent an unsupported ZRLE tile.")),
+            }
+            if tile.len() != tile_area {
+                return Err(error("The VNC ZRLE tile has an invalid pixel count."));
+            }
+            for (index, pixel) in tile.into_iter().enumerate() {
+                let x = tile_x + index % tile_width;
+                let y = tile_y + index / tile_width;
+                output[(y * width + x) * 4..][..4].copy_from_slice(&pixel);
+            }
+        }
+    }
+    if !input.is_empty() {
+        return Err(error("The VNC ZRLE rectangle contains trailing data."));
+    }
+    Ok(output)
+}
+
+fn take_byte(input: &mut &[u8]) -> io::Result<u8> {
+    let (&byte, rest) = input
+        .split_first()
+        .ok_or_else(|| error("The VNC server sent truncated ZRLE data."))?;
+    *input = rest;
+    Ok(byte)
+}
+
+fn take_bytes<'a>(input: &mut &'a [u8], count: usize) -> io::Result<&'a [u8]> {
+    if input.len() < count {
+        return Err(error("The VNC server sent truncated ZRLE data."));
+    }
+    let (bytes, rest) = input.split_at(count);
+    *input = rest;
+    Ok(bytes)
+}
+
+fn take_pixel(input: &mut &[u8], compact_pixels: bool) -> io::Result<[u8; 4]> {
+    if compact_pixels {
+        let pixel = take_bytes(input, 2)?;
+        let value = u16::from_le_bytes([pixel[0], pixel[1]]);
+        let [red, green, blue] = [
+            (value >> 11) as u8,
+            ((value >> 5) & 63) as u8,
+            (value & 31) as u8,
+        ];
+        Ok([
+            (red << 3) | (red >> 2),
+            (green << 2) | (green >> 4),
+            (blue << 3) | (blue >> 2),
+            255,
+        ])
+    } else {
+        let pixel = take_bytes(input, 3)?;
+        Ok([pixel[0], pixel[1], pixel[2], 255])
+    }
+}
+
+fn take_palette(input: &mut &[u8], size: usize, compact_pixels: bool) -> io::Result<Vec<[u8; 4]>> {
+    (0..size)
+        .map(|_| take_pixel(input, compact_pixels))
+        .collect()
+}
+
+fn take_run_length(input: &mut &[u8]) -> io::Result<usize> {
+    let mut length = 1usize;
+    loop {
+        let byte = usize::from(take_byte(input)?);
+        length = length
+            .checked_add(byte)
+            .ok_or_else(|| error("The VNC ZRLE run is too large."))?;
+        if byte != 255 {
+            return Ok(length);
+        }
+    }
+}
+
+fn append_run(
+    tile: &mut Vec<[u8; 4]>,
+    pixel: [u8; 4],
+    length: usize,
+    limit: usize,
+) -> io::Result<()> {
+    if length == 0 || length > limit.saturating_sub(tile.len()) {
+        return Err(error("The VNC ZRLE run exceeds its tile."));
+    }
+    tile.resize(tile.len() + length, pixel);
+    Ok(())
 }
 
 fn expand_rgb565(pixels: &mut [u8]) {
@@ -711,6 +971,34 @@ mod tests {
         let mut pixels = [0x00, 0xf8, 0xe0, 0x07, 0x1f, 0x00, 0, 0, 0, 0, 0, 0];
         expand_rgb565(&mut pixels);
         assert_eq!(pixels, [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn decodes_zrle_raw_solid_palette_and_rle_tiles() {
+        let raw = decode_zrle_tiles(&[0, 255, 0, 0, 0, 255, 0], 2, 1, false).unwrap();
+        assert_eq!(&raw, &[255, 0, 0, 255, 0, 255, 0, 255]);
+
+        let solid = decode_zrle_tiles(&[1, 0, 0, 255], 2, 1, false).unwrap();
+        assert_eq!(&solid, &[0, 0, 255, 255, 0, 0, 255, 255]);
+
+        let packed =
+            decode_zrle_tiles(&[2, 255, 0, 0, 0, 255, 0, 0b0100_0000], 2, 1, false).unwrap();
+        assert_eq!(&packed, &[255, 0, 0, 255, 0, 255, 0, 255]);
+
+        let rle = decode_zrle_tiles(&[128, 255, 0, 0, 1], 2, 1, false).unwrap();
+        assert_eq!(&rle, &[255, 0, 0, 255, 255, 0, 0, 255]);
+
+        let palette_rle = decode_zrle_tiles(&[129, 0, 0, 255, 0x80, 1], 2, 1, false).unwrap();
+        assert_eq!(&palette_rle, &[0, 0, 255, 255, 0, 0, 255, 255]);
+
+        let rgb565 = decode_zrle_tiles(&[0, 0x00, 0xf8], 1, 1, true).unwrap();
+        assert_eq!(&rgb565, &[255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn rejects_zrle_tile_overruns_and_truncated_pixels() {
+        assert!(decode_zrle_tiles(&[128, 0, 0, 0, 255, 255], 1, 1, false).is_err());
+        assert!(decode_zrle_tiles(&[0, 0], 1, 1, false).is_err());
     }
 
     #[test]

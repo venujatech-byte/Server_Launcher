@@ -177,6 +177,10 @@ its own working copy and does not log connector errors or credentials.
 
 Initial dimensions are validated before allocating the decoded framebuffer.
 Damage from the graphics stage feeds the common partial texture renderer.
+The client requests the server pointer and composites its shape into the
+software framebuffer so the remote cursor follows pointer movement in the
+viewer. This adds cursor pixels to framebuffer damage; it does not change the
+server's display-update rate.
 Input and display control are wired separately from graphics. When enabled, the
 profile requests two side-by-side remote monitors whose combined width and height
 come from the selected resolution. The viewer shows them in one combined window

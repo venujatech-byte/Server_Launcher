@@ -696,12 +696,12 @@ fn config(
         } else {
             MajorPlatformType::UNIX
         },
-        enable_server_pointer: false,
+        enable_server_pointer: true,
         request_data: None,
         autologon: tls_only,
         enable_audio_playback: false,
         compression_type: Some(CompressionType::Rdp61),
-        pointer_software_rendering: false,
+        pointer_software_rendering: true,
         multitransport_flags: None,
         performance_flags: performance,
         desktop_scale_factor: 0,

@@ -222,7 +222,9 @@ limits and the server's advertised monitor area. Server reactivation updates
 the share ID and graphics decoder and allocates a validated framebuffer for
 the new size, restoring the negotiated bulk decompressor for fast-path updates.
 The RDP profile exposes Smooth/Fast texture filtering, Incremental/Full-frame
-painting, and Auto/Best/Good/Fast bitmap quality. Auto retains manual color-depth
+repainting, and Auto/Best/Good/Fast bitmap quality. Full-frame repaint is a
+client-side compatibility mode: it redraws the complete image after each
+received update, but does not alter server rendering or network behavior. Auto retains manual color-depth
 selection; Best requests 32-bit without lossy bitmap flags, while Good and Fast
 request 24-bit and 16-bit and allow dynamic color fidelity/subsampling. These
 capabilities allow the server to adapt; they do not guarantee a specific frame

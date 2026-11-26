@@ -80,15 +80,15 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
         );
         choice(
             ui,
-            "Frame painting",
+            "Frame update mode",
             &mut profile.frame_painting,
             &[
-                (RdpFramePainting::Incremental, "Incremental regions"),
-                (RdpFramePainting::FullFrame, "Full-frame compatibility"),
+                (RdpFramePainting::Incremental, "Incremental repaint (recommended)"),
+                (RdpFramePainting::FullFrame, "Full-frame repaint (Remmina-style)"),
             ],
         );
         ui.label(
-            "Full-frame painting redraws the whole image after each RDP update and may use more resources.",
+            "Full-frame repaint redraws the complete received image after each update. It changes client-side painting only and may use more CPU; it does not change network or server rendering behavior.",
         );
         choice(
             ui,

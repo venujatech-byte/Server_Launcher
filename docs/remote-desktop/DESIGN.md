@@ -214,14 +214,14 @@ XWayland only if it responds, leaving the main launcher on Wayland and avoiding
 an X11-only viewer when XWayland is unavailable. The viewer initializes Xlib's
 thread support before starting its event loop and keyboard-capture workers.
 
-On Linux/X11, Right Ctrl is configurable as a host-key prefix. Right Ctrl+F
-toggles fullscreen, +S takes a screenshot, +R starts/stops recording, +D closes
-the viewer, and +K opens the Send keys window. Other Right Ctrl combinations
-are forwarded normally. On Windows a low-level keyboard hook forwards physical
-scan codes while the viewer is the foreground window, including Super and
-Alt+Tab; Ctrl+Alt+Delete remains reserved by Windows. Wayland sessions without
-a reachable XWayland server keep the direct egui input path, where system-
-reserved shortcuts may stay local.
+On Linux/X11 and Windows, Right Ctrl is configurable as a host-key prefix.
+Right Ctrl+F toggles fullscreen, +S takes a screenshot, +R starts/stops
+recording, +D closes the viewer, and +K opens the Send keys window. Other Right
+Ctrl combinations are forwarded normally. Windows uses a low-level keyboard
+hook to forward physical scan codes while the viewer is the foreground window,
+including Super and Alt+Tab; Ctrl+Alt+Delete remains reserved by Windows.
+Wayland sessions without a reachable XWayland server keep the direct egui input
+path, where system-reserved shortcuts may stay local.
 Input mapping and focus release were tested in-process. Synthetic desktop input
 did not reach the loopback peer in the X11 smoke test, so end-to-end input
 behavior remains unverified.

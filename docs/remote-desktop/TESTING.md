@@ -75,10 +75,10 @@ The checked app revision was `8ec3a0d`.
    On Wayland without a reachable XWayland display, check whether the OS keeps
    system shortcuts local and use **Send keys** as the fallback. Turn Keyboard
    off and confirm input stays local.
-   On Linux/X11, verify Right Ctrl+F, +S, +R, +D, and +K, then disable the host
-   key in Settings → Remote Desktop and confirm those chords are forwarded
-   normally. Confirm Right Ctrl alone and unknown Right Ctrl combinations are
-   forwarded normally.
+   On Linux/X11 and Windows, verify Right Ctrl+F, +S, +R, +D, and +K, then
+   disable the host key in Settings → Remote Desktop and confirm those chords
+   are forwarded normally. Confirm Right Ctrl alone and unknown Right Ctrl
+   combinations are forwarded normally.
    Enable View only and confirm the display remains live while keyboard,
    pointer, and outgoing clipboard input are suppressed.
 4. Resize the viewer with dynamic resolution enabled. Check for correct aspect

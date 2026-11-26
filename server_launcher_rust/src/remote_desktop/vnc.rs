@@ -26,6 +26,8 @@ pub(crate) const CLIPBOARD_LIMIT: usize = 1024 * 1024;
 const RAW: i32 = 0;
 const COPY_RECT: i32 = 1;
 const ZRLE: i32 = 16;
+const RICH_CURSOR: i32 = -239;
+const POINTER_POS: [i32; 2] = [-225, -232];
 const DESKTOP_SIZE: i32 = -223;
 const EXTENDED_DESKTOP_SIZE: i32 = -308;
 const MAX_ZRLE_COMPRESSED: usize = 64 * 1024 * 1024;
@@ -147,6 +149,10 @@ pub(crate) struct Connection {
     pub(crate) clipboard_text: Option<String>,
     pub(crate) clipboard_image: Option<super::clipboard_image::ClipboardImage>,
     pub(crate) vnc_screen: Option<[u8; 16]>,
+    pub(crate) vnc_cursor: Option<Arc<egui::ColorImage>>,
+    pub(crate) vnc_cursor_hotspot: [usize; 2],
+    pub(crate) vnc_cursor_position: Option<[usize; 2]>,
+    pub(crate) vnc_cursor_revision: u64,
     pub(crate) rdp_resize_supported: bool,
     pub(crate) rdp_resize_enabled: bool,
     pub(crate) resize_request: Option<[u32; 2]>,
@@ -188,6 +194,10 @@ impl Connection {
             clipboard_text: None,
             clipboard_image: None,
             vnc_screen: None,
+            vnc_cursor: None,
+            vnc_cursor_hotspot: [0; 2],
+            vnc_cursor_position: None,
+            vnc_cursor_revision: 0,
             rdp_resize_supported: false,
             rdp_resize_enabled: true,
             resize_request: None,
@@ -219,6 +229,8 @@ impl Connection {
                 state.clipboard_image = None;
                 state.clipboard_too_large = false;
                 state.vnc_screen = None;
+                state.vnc_cursor = None;
+                state.vnc_cursor_position = None;
                 state.resize_request = None;
                 state.rdp_resize_supported = false;
                 state.status = result
@@ -395,7 +407,13 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
     {
         enabled_encodings.push(RAW);
     }
-    for encoding in [EXTENDED_DESKTOP_SIZE, DESKTOP_SIZE] {
+    for encoding in [
+        RICH_CURSOR,
+        POINTER_POS[0],
+        POINTER_POS[1],
+        EXTENDED_DESKTOP_SIZE,
+        DESKTOP_SIZE,
+    ] {
         if !enabled_encodings.contains(&encoding) {
             enabled_encodings.push(encoding);
         }
@@ -747,6 +765,28 @@ fn read_rectangle(
     let field = |i| usize::from(u16::from_be_bytes([rect[i], rect[i + 1]]));
     let [x, y, w, h] = [field(0), field(2), field(4), field(6)];
     let encoding = i32::from_be_bytes([rect[8], rect[9], rect[10], rect[11]]);
+    if encoding == RICH_CURSOR {
+        let cursor = if w == 0 || h == 0 {
+            None
+        } else {
+            if w > 256 || h > 256 || x >= w || y >= h {
+                return Err(error("The VNC server sent an invalid cursor shape."));
+            }
+            Some(Arc::new(read_cursor(stream, w, h, compact_pixels)?))
+        };
+        let mut state = state.lock().unwrap();
+        state.vnc_cursor = cursor;
+        if w != 0 && h != 0 {
+            state.vnc_cursor_hotspot = [x, y];
+        }
+        state.vnc_cursor_revision = state.vnc_cursor_revision.wrapping_add(1);
+        return Ok(None);
+    }
+    if POINTER_POS.contains(&encoding) {
+        let mut state = state.lock().unwrap();
+        state.vnc_cursor_position = (x <= size[0] && y <= size[1]).then_some([x, y]);
+        return Ok(None);
+    }
     if encoding == EXTENDED_DESKTOP_SIZE {
         let mut header = [0; 4];
         stream.read_exact(&mut header)?;
@@ -853,6 +893,46 @@ fn read_rectangle(
         }
     }
     Ok(None)
+}
+
+fn read_cursor(
+    stream: &mut impl Read,
+    width: usize,
+    height: usize,
+    compact_pixels: bool,
+) -> io::Result<egui::ColorImage> {
+    let area = width
+        .checked_mul(height)
+        .filter(|area| *area <= 256 * 256)
+        .ok_or_else(|| error("The VNC cursor exceeds the image limit."))?;
+    let pixel_bytes = if compact_pixels { 2 } else { 4 };
+    let mut pixels = vec![0; area * pixel_bytes];
+    stream.read_exact(&mut pixels)?;
+    if compact_pixels {
+        pixels.resize(area * 4, 0);
+        expand_rgb565(&mut pixels);
+    }
+    let mask_stride = width.div_ceil(8);
+    let mut mask = vec![0; mask_stride * height];
+    stream.read_exact(&mut mask)?;
+    let colors = pixels
+        .chunks_exact(4)
+        .zip((0..area).map(|i| {
+            mask[i / width * mask_stride + (i % width) / 8] & (0x80 >> (i % width % 8)) != 0
+        }))
+        .map(|(pixel, visible)| {
+            egui::Color32::from_rgba_unmultiplied(
+                pixel[0],
+                pixel[1],
+                pixel[2],
+                if visible { 255 } else { 0 },
+            )
+        })
+        .collect();
+    Ok(egui::ColorImage {
+        size: [width, height],
+        pixels: colors,
+    })
 }
 
 #[derive(Default)]
@@ -1090,6 +1170,14 @@ mod tests {
         let mut pixels = [0x00, 0xf8, 0xe0, 0x07, 0x1f, 0x00, 0, 0, 0, 0, 0, 0];
         expand_rgb565(&mut pixels);
         assert_eq!(pixels, [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn decodes_rich_cursor_mask_and_rgb_pixels() {
+        let mut wire = &[255, 0, 0, 0, 0, 255, 0, 0, 0b1000_0000][..];
+        let image = read_cursor(&mut wire, 2, 1, false).unwrap();
+        assert_eq!(image.pixels[0], egui::Color32::RED);
+        assert_eq!(image.pixels[1].a(), 0);
     }
 
     #[test]

@@ -81,11 +81,10 @@ server selects the codec during negotiation. Older `quality` and `color_depth`
 fields remain intact and are used when no explicit `color_profile` is saved.
 RDP and VNC can disable fractional wheel accumulation; RDP can also swap the
 primary and secondary pointer buttons for left-handed use. These are local
-input/display settings, not protocol performance modes. Remmina's
-TCP_USER_TIMEOUT, server-side local-input lock, and remote cursor-shape options
-are not exposed because this client does not currently implement them. VNC
-continues to skip Tight encoding, and its default bell handling ignores bell
-messages.
+input/display settings, not protocol performance modes. The VNC viewer requests
+RichCursor and PointerPos updates and draws the cursor over the scaled framebuffer.
+Remmina's server-side local-input lock is not exposed. VNC continues to skip
+Tight encoding, and its default bell handling ignores bell messages.
 
 ## Direct connection checks
 
@@ -108,13 +107,14 @@ and pointer input, clipboard text, and server-supported resolution changes.
 Fast quality selects RGB565; Auto follows the configured color depth. Direct
 VNC to a public or unknown address requires an explicit warning confirmation. The
 configured encoding priority is applied for the supported encodings; Tight is
-shown as unsupported and skipped. Username-based authentication and remote
-cursor shapes are unsupported. ZRLE uses one bounded persistent zlib stream per
-connection. Classic RFB
-clipboard text is Latin-1; outgoing Unicode text and images outside that support
-show a notice in the viewer. Only the earlier loopback Raw handshake/rendering
-smoke test is recorded; current end-to-end input, tunnel, authentication, and
-encoding interoperability need real-server validation.
+shown as unsupported and skipped. Username-based authentication is unsupported.
+Rich cursor shapes are drawn locally when the server supports RichCursor and a
+PointerPos extension. ZRLE uses one bounded persistent zlib stream per
+connection. Classic RFB clipboard text is Latin-1; outgoing Unicode text and
+images outside that support show a notice in the viewer. Only the earlier
+loopback Raw handshake/rendering smoke test is recorded; current end-to-end
+input, tunnel, authentication, and encoding interoperability need real-server
+validation.
 
 The VNC TCP user timeout profile is applied with `TCP_USER_TIMEOUT` only for
 direct Linux TCP connections. Zero leaves the OS default; SSH-tunneled and

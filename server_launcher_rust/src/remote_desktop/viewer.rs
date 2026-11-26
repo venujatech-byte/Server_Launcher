@@ -157,6 +157,8 @@ pub(crate) fn run(
                 recording_fps,
                 recording_format,
                 texture: None,
+                vnc_cursor_texture: None,
+                vnc_cursor_revision: 0,
                 scaling,
                 rdp_painting,
                 rdp_frame_painting,
@@ -231,6 +233,8 @@ struct Viewer {
     recording_fps: u32,
     recording_format: crate::config::RemoteRecordingFormat,
     texture: Option<egui::TextureHandle>,
+    vnc_cursor_texture: Option<egui::TextureHandle>,
+    vnc_cursor_revision: u64,
     scaling: Scaling,
     rdp_painting: RdpPainting,
     rdp_frame_painting: RdpFramePainting,
@@ -541,6 +545,7 @@ impl eframe::App for Viewer {
             connected_since,
             received_bytes,
             display_updates,
+            remote_cursor,
         ) =
             if let Some(connection) = &self.connection {
                 let mut connection = connection.lock().unwrap();
@@ -584,6 +589,14 @@ impl eframe::App for Viewer {
                     connection.connected_since,
                     connection.received_bytes.load(Ordering::Relaxed),
                     connection.display_updates,
+                    connection.vnc_cursor.as_ref().map(|image| {
+                        (
+                            image.clone(),
+                            connection.vnc_cursor_hotspot,
+                            connection.vnc_cursor_position,
+                            connection.vnc_cursor_revision,
+                        )
+                    }),
                 )
             } else {
                 (
@@ -595,8 +608,21 @@ impl eframe::App for Viewer {
                     None,
                     0,
                     0,
+                    None,
                 )
             };
+        if let Some((image, _, _, revision)) = &remote_cursor {
+            if self.vnc_cursor_revision != *revision {
+                self.vnc_cursor_revision = *revision;
+                self.vnc_cursor_texture = Some(ctx.load_texture(
+                    "remote-vnc-cursor",
+                    (**image).clone(),
+                    egui::TextureOptions::NEAREST,
+                ));
+            }
+        } else if self.protocol == DesktopProtocol::Vnc {
+            self.vnc_cursor_texture = None;
+        }
         if self.protocol == DesktopProtocol::Rdp
             && self.rdp_frame_painting == RdpFramePainting::FullFrame
         {
@@ -1177,6 +1203,27 @@ impl eframe::App for Viewer {
                 );
                 screen
             };
+            if self.protocol == DesktopProtocol::Vnc {
+                if let (Some(texture), Some((_, hotspot, Some(position), _))) =
+                    (&self.vnc_cursor_texture, &remote_cursor)
+                {
+                    let scale = egui::vec2(
+                        screen.width() / pixels[0] as f32,
+                        screen.height() / pixels[1] as f32,
+                    );
+                    let cursor_origin = screen.min
+                        + egui::vec2(
+                            (position[0] as f32 - hotspot[0] as f32) * scale.x,
+                            (position[1] as f32 - hotspot[1] as f32) * scale.y,
+                        );
+                    ui.painter().with_clip_rect(clip).image(
+                        texture.id(),
+                        egui::Rect::from_min_size(cursor_origin, texture.size_vec2() * scale),
+                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                }
+            }
             self.send_input(ctx, screen, clip, pixels, ui.layer_id());
         });
     }

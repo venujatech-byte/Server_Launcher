@@ -160,8 +160,13 @@ its own working copy and does not log connector errors or credentials.
 
 Initial dimensions are validated before allocating the decoded framebuffer.
 Damage from the graphics stage feeds the common partial texture renderer.
-Input and display control are wired separately from graphics. Audio, microphone,
-drive redirection, and RD Gateway remain unsupported.
+Input and display control are wired separately from graphics. When enabled, the
+profile requests two side-by-side remote monitors whose combined width and height
+come from the selected resolution. The viewer shows them in one combined window
+and disables fit-to-window resize to preserve the layout. IronRDP exposes the
+server's aggregate display-area limit but not its monitor-count limit, so the
+server may still reject the two-monitor request. Audio, microphone, drive
+redirection, and RD Gateway remain unsupported.
 IronRDP and its blocking adapter are available under MIT or Apache-2.0.
 
 The optional live FPS value counts received display-update batches per second

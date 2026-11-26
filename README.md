@@ -69,7 +69,8 @@ store; protocol passwords are not saved in `servers.json`.
 - RDP supports NLA by default, explicit TLS, certificate fingerprint prompts,
   keyboard and mouse input, text and bounded image clipboard sync, screenshots,
   recording, and dynamic resize when the server supports Display Control. Saved certificate
-  fingerprints can be reviewed or removed in Settings → Remote Desktop.
+  fingerprints can be reviewed or removed in Settings → Remote Desktop. The RDP profile can
+  request two side-by-side remote displays using the selected combined resolution.
 - VNC supports classic password authentication, Raw, CopyRect, and ZRLE framebuffer
   updates, keyboard and mouse input, text clipboard sync, screenshots,
   recording, and server-supported resolution changes. Classic VNC is not
@@ -84,8 +85,9 @@ store; protocol passwords are not saved in `servers.json`.
   30, or 60 FPS. Screenshot clipboard copying can be set as the viewer default.
   By default, captures are saved under Pictures/ServerLauncher.
 
-RDP audio, microphone, drive redirection, Microsoft RD Gateway, RDP multi-monitor,
-and keyboard-layout-specific IME are not implemented. VNC Tight
+RDP audio, microphone, drive redirection, Microsoft RD Gateway, and keyboard-layout-specific
+IME are not implemented. RDP dual-display layout is best-effort: the server must support two
+monitors, and the viewer presents their combined desktop in one window. VNC Tight
 encodings, username-based authentication, and remote cursor shapes are not
 implemented. SSH desktop tunnels support Unix and Windows key/agent credentials;
 Windows password-only SSH tunnels are not supported. Protocol interoperation

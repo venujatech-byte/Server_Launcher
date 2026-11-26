@@ -3596,6 +3596,13 @@ impl eframe::App for LauncherApp {
             _ => {}
         }
 
+        if let Some((host_id, protocol)) = self.desktop_sessions.take_edit_request() {
+            if let Some(host) = self.ssh_hosts.iter().find(|host| host.id == host_id) {
+                self.ssh_host_modal.open_desktop(host, protocol);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
+        }
         let ssh_modal_action = render_ssh_host_modal(ctx, &mut self.ssh_host_modal, &p, self.ssh_probe_timeouts.connection_test_seconds);
         match ssh_modal_action {
             ModalAction::SaveSshHost(mut new_host, old_id, mut staged) => {

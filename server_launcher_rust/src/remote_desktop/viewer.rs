@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{config::ConfigFile, theme::ThemeMode};
 use std::{
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -529,6 +529,16 @@ impl eframe::App for Viewer {
                 }
                 if finished {
                     if let Some(host) = &self.session_host {
+                        if ui.button("Edit settings").clicked() {
+                            let mut output = std::io::stdout().lock();
+                            if writeln!(output, "{}", super::session::EDIT_SETTINGS)
+                                .and_then(|()| output.flush())
+                                .is_err()
+                            {
+                                self.clipboard_notice =
+                                    Some((Instant::now(), "Could not open settings"));
+                            }
+                        }
                         if ui.button("Retry").clicked() {
                             self.connection = Some(start_connection(
                                 host.clone(),

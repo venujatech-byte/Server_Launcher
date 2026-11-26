@@ -1,17 +1,28 @@
 use super::credentials::DesktopProtocol;
 use std::{
     collections::HashMap,
-    io::{self, Write},
+    io::{self, BufRead, BufReader, Write},
     path::Path,
     process::{Command, Stdio},
-    sync::mpsc::{self, RecvTimeoutError, SyncSender, TrySendError},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, RecvTimeoutError, SyncSender, TrySendError},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 
 #[derive(Default)]
 pub(crate) struct Sessions {
-    open: HashMap<(String, DesktopProtocol), SyncSender<()>>,
+    open: HashMap<(String, DesktopProtocol), Session>,
 }
+
+struct Session {
+    focus: SyncSender<()>,
+    edit: Arc<AtomicBool>,
+}
+
+pub(super) const EDIT_SETTINGS: &str = "server-launcher:edit-remote-desktop";
 
 impl Sessions {
     pub(crate) fn open(
@@ -24,7 +35,10 @@ impl Sessions {
     ) -> io::Result<()> {
         let key = (host_id.to_owned(), protocol);
         if let Some(focus) = self.open.get(&key) {
-            if !matches!(focus.try_send(()), Err(TrySendError::Disconnected(()))) {
+            if !matches!(
+                focus.focus.try_send(()),
+                Err(TrySendError::Disconnected(()))
+            ) {
                 return Ok(());
             }
         }
@@ -35,11 +49,23 @@ impl Sessions {
             .arg(config_path)
             .arg(theme)
             .stdin(Stdio::piped())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()?;
         let mut pipe = child.stdin.take().expect("viewer stdin was piped");
         let (focus, commands) = mpsc::sync_channel(1);
+        let output = child.stdout.take().expect("viewer stdout was piped");
+        let edit = Arc::new(AtomicBool::new(false));
+        let pending_edit = Arc::clone(&edit);
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(output).lines().map_while(Result::ok) {
+                if line == EDIT_SETTINGS {
+                    pending_edit.store(true, Ordering::Release);
+                    repaint.request_repaint();
+                }
+            }
+        });
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             while matches!(child.try_wait(), Ok(None)) {
@@ -62,8 +88,17 @@ impl Sessions {
             }
             ctx.request_repaint();
         });
-        self.open.insert(key, focus);
+        self.open.insert(key, Session { focus, edit });
         Ok(())
+    }
+
+    pub(crate) fn take_edit_request(&self) -> Option<(String, DesktopProtocol)> {
+        self.open.iter().find_map(|(key, session)| {
+            session
+                .edit
+                .swap(false, Ordering::AcqRel)
+                .then(|| key.clone())
+        })
     }
 
     pub(crate) fn close_host(&mut self, id: &str) {

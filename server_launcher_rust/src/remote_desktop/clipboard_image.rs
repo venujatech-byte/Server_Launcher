@@ -1,5 +1,5 @@
 const MAX_SIDE: usize = 8192;
-pub(crate) const MAX_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_BYTES: usize = 64 * 1024 * 1024;
 const V5_HEADER_SIZE: usize = 124;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -13,6 +13,7 @@ pub(crate) fn encode_dibv5_with_limit(
     image: &ClipboardImage,
     max_bytes: usize,
 ) -> Result<Vec<u8>, &'static str> {
+    let max_bytes = max_bytes.min(MAX_BYTES);
     validate_image(image.width, image.height, image.rgba.len(), max_bytes)?;
     let pixels_len = image.rgba.len();
     let mut dib = vec![0; V5_HEADER_SIZE + pixels_len];
@@ -43,6 +44,7 @@ pub(crate) fn decode_dib_with_limit(
     dib: &[u8],
     max_bytes: usize,
 ) -> Result<ClipboardImage, &'static str> {
+    let max_bytes = max_bytes.min(MAX_BYTES);
     if dib.len() < 40 || dib.len() > max_bytes {
         return Err("The remote clipboard image exceeds the supported size.");
     }

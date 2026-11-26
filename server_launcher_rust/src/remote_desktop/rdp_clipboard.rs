@@ -133,7 +133,10 @@ mod tests {
 
     #[test]
     fn failed_request_can_be_followed_by_a_new_offer() {
-        let mut backend = ClipboardBackend::new(true, super::clipboard_image::MAX_BYTES);
+        let mut backend = ClipboardBackend::new(
+            true,
+            crate::remote_desktop::clipboard_image::MAX_BYTES,
+        );
         let formats = [ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT)];
         backend.on_remote_copy(&formats);
         assert_eq!(
@@ -175,7 +178,10 @@ mod tests {
 
     #[test]
     fn rejected_image_format_falls_back_to_text_from_same_offer() {
-        let mut backend = ClipboardBackend::new(true, super::clipboard_image::MAX_BYTES);
+        let mut backend = ClipboardBackend::new(
+            true,
+            crate::remote_desktop::clipboard_image::MAX_BYTES,
+        );
         let formats = [
             ClipboardFormat::new(ClipboardFormatId::CF_DIBV5),
             ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT),

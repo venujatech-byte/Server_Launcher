@@ -760,7 +760,16 @@ fn handshake(
     let compatible = if &version == b"RFB 003.003\n" {
         let mut kind = [0; 4];
         stream.read_exact(&mut kind)?;
-        u32::from_be_bytes(kind) == u32::from(preferred)
+        let offered = u32::from_be_bytes(kind);
+        if offered == u32::from(preferred) {
+            true
+        } else if offered == 2 && password.is_none() {
+            return Err(authentication_error(
+                "The VNC server requires a password. Enter one to connect.",
+            ));
+        } else {
+            false
+        }
     } else {
         let mut count = [0];
         stream.read_exact(&mut count)?;
@@ -770,18 +779,18 @@ fn handshake(
         if offered.contains(&preferred) && (password.is_some() || !offered.contains(&2)) {
             stream.write_all(&[preferred])?;
             true
+        } else if password.is_none() && offered.contains(&2) {
+            return Err(authentication_error(
+                "The VNC server requires a password. Enter one to connect.",
+            ));
         } else {
             false
         }
     };
     if !compatible {
-        return Err(if password.is_some() {
-            error("The VNC server did not offer classic password authentication.")
-        } else {
-            authentication_error(
-                "The VNC server requires a password or does not offer a supported security mode.",
-            )
-        });
+        return Err(error(
+            "The VNC server did not offer a supported security mode.",
+        ));
     }
     if let Some(password) = password {
         let mut challenge = [0; 16];
@@ -1955,6 +1964,31 @@ mod tests {
         };
         assert!(handshake(&mut peer, true, Some(b"test")).is_err());
         assert_eq!(peer.outgoing, b"RFB 003.008\n");
+    }
+
+    #[test]
+    fn only_password_security_offers_request_a_password() {
+        let mut password_offer = Transcript {
+            incoming: io::Cursor::new(b"RFB 003.008\n\x01\x02".to_vec()),
+            outgoing: Vec::new(),
+        };
+        assert_eq!(
+            handshake(&mut password_offer, true, None)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::PermissionDenied
+        );
+
+        let mut unsupported_offer = Transcript {
+            incoming: io::Cursor::new(b"RFB 003.008\n\x01\x13".to_vec()),
+            outgoing: Vec::new(),
+        };
+        assert_eq!(
+            handshake(&mut unsupported_offer, true, None)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Other
+        );
     }
 
     #[test]

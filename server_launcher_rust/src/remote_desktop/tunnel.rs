@@ -213,8 +213,6 @@ impl Tunnel {
                 "-o",
                 "ServerAliveCountMax=2",
                 "-o",
-                "ClearAllForwardings=yes",
-                "-o",
                 "PermitLocalCommand=no",
                 "-o",
                 "ForwardAgent=no",

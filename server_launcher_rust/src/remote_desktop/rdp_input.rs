@@ -13,6 +13,7 @@ pub(crate) struct Encoder {
 impl Encoder {
     pub(crate) fn encode(&mut self, input: Input, out: &mut Vec<FastPathInputEvent>) {
         match input {
+            Input::VncResize { .. } => {}
             Input::Key { keysym, pressed } => {
                 if let Some((code, extended)) = scancode(keysym) {
                     let mut flags = KeyboardFlags::empty();

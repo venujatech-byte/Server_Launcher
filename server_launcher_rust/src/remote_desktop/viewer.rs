@@ -347,6 +347,46 @@ impl eframe::App for Viewer {
                             ui.selectable_value(&mut self.scaling, scale, scale_label(scale));
                         }
                     });
+                if self.protocol == DesktopProtocol::Vnc {
+                    if let Some(connection) = &self.connection {
+                        let connection = connection.lock().unwrap();
+                        let menu = ui
+                            .add_enabled_ui(
+                                connected && !self.view_only && connection.vnc_screen.is_some(),
+                                |ui| {
+                                    ui.menu_button("Resolution", |ui| {
+                                        for size in [
+                                            [1024, 768],
+                                            [1280, 720],
+                                            [1600, 900],
+                                            [1920, 1080],
+                                            [2560, 1440],
+                                        ] {
+                                            if ui
+                                                .button(format!("{} × {}", size[0], size[1]))
+                                                .clicked()
+                                            {
+                                                if let Some(screen) = connection.vnc_screen {
+                                                    connection.send_input(Input::VncResize {
+                                                        size,
+                                                        screen,
+                                                    });
+                                                }
+                                                ui.close_menu();
+                                            }
+                                        }
+                                    })
+                                    .response
+                                },
+                            )
+                            .inner;
+                        if connection.vnc_screen.is_none() {
+                            menu.on_disabled_hover_text(
+                                "The VNC server must support single-screen remote resizing.",
+                            );
+                        }
+                    }
+                }
                 if ui
                     .button(if fullscreen {
                         "Exit fullscreen"

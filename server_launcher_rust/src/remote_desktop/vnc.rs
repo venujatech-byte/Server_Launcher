@@ -22,6 +22,7 @@ use zeroize::Zeroizing;
 const RAW: i32 = 0;
 const COPY_RECT: i32 = 1;
 const DESKTOP_SIZE: i32 = -223;
+const EXTENDED_DESKTOP_SIZE: i32 = -308;
 
 const TIMEOUT: Duration = Duration::from_secs(8);
 
@@ -29,11 +30,24 @@ const TIMEOUT: Duration = Duration::from_secs(8);
 pub(crate) enum Input {
     Key { keysym: u32, pressed: bool },
     Pointer { x: u16, y: u16, buttons: u8 },
+    VncResize { size: [u16; 2], screen: [u8; 16] },
 }
 
 impl Input {
     fn write(self, stream: &mut impl Write) -> io::Result<()> {
         match self {
+            Self::VncResize {
+                size: [width, height],
+                mut screen,
+            } => {
+                let [w0, w1] = width.to_be_bytes();
+                let [h0, h1] = height.to_be_bytes();
+                screen[4..12].copy_from_slice(&[0, 0, 0, 0, w0, w1, h0, h1]);
+                let mut message = [0; 24];
+                message[..8].copy_from_slice(&[251, 0, w0, w1, h0, h1, 1, 0]);
+                message[8..].copy_from_slice(&screen);
+                stream.write_all(&message)
+            }
             Self::Key { keysym, pressed } => {
                 let [a, b, c, d] = keysym.to_be_bytes();
                 stream.write_all(&[4, u8::from(pressed), 0, 0, a, b, c, d])
@@ -51,6 +65,7 @@ pub(crate) struct Connection {
     pub framebuffer: Framebuffer,
     pub status: String,
     pub connected: bool,
+    pub(crate) vnc_screen: Option<[u8; 16]>,
     pub(crate) resize_request: Option<[u32; 2]>,
     pub(crate) trust_prompt: Option<super::trust::Prompt>,
     input: Option<mpsc::SyncSender<Input>>,
@@ -73,6 +88,7 @@ impl Connection {
             framebuffer: Framebuffer::default(),
             status: initial_status.into(),
             connected: false,
+            vnc_screen: None,
             resize_request: None,
             trust_prompt: None,
             input: None,
@@ -172,8 +188,8 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
     stream.write_all(&[
         0, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16, 0, 0, 0,
     ])?;
-    let mut encodings = vec![2, 0, 0, 3];
-    for encoding in [COPY_RECT, RAW, DESKTOP_SIZE] {
+    let mut encodings = vec![2, 0, 0, 4];
+    for encoding in [COPY_RECT, RAW, EXTENDED_DESKTOP_SIZE, DESKTOP_SIZE] {
         encodings.extend_from_slice(&encoding.to_be_bytes());
     }
     stream.write_all(&encodings)?;
@@ -397,6 +413,28 @@ fn read_rectangle(
     let field = |i| usize::from(u16::from_be_bytes([rect[i], rect[i + 1]]));
     let [x, y, w, h] = [field(0), field(2), field(4), field(6)];
     let encoding = i32::from_be_bytes([rect[8], rect[9], rect[10], rect[11]]);
+    if encoding == EXTENDED_DESKTOP_SIZE {
+        let mut header = [0; 4];
+        stream.read_exact(&mut header)?;
+        let mut screen = [0; 16];
+        for _ in 0..header[0] {
+            stream.read_exact(&mut screen)?;
+        }
+        let mut state = state.lock().unwrap();
+        if x == 1 && y != 0 {
+            state.status = format!("VNC server rejected the resolution change (code {y})");
+            return Ok(None);
+        }
+        state.vnc_screen = (header[0] == 1).then_some(screen);
+        if x == 1 {
+            state.status = format!("VNC resolution changed to {w} × {h}");
+        }
+        if [w, h] == size {
+            return Ok(None);
+        }
+        state.framebuffer.resize([w, h]).map_err(error)?;
+        return Ok(Some([w, h]));
+    }
     if encoding == DESKTOP_SIZE {
         if !last {
             return Err(error("The VNC server sent an invalid desktop size update."));
@@ -484,6 +522,24 @@ mod tests {
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn resize_message_preserves_screen_identity_and_flags() {
+        let mut screen = [0; 16];
+        screen[3] = 7;
+        screen[15] = 9;
+        let mut wire = Vec::new();
+        Input::VncResize {
+            size: [1280, 720],
+            screen,
+        }
+        .write(&mut wire)
+        .unwrap();
+        assert_eq!(
+            wire,
+            [251, 0, 5, 0, 2, 208, 1, 0, 0, 0, 0, 7, 0, 0, 0, 0, 5, 0, 2, 208, 0, 0, 0, 9]
+        );
     }
 
     #[test]

@@ -83,6 +83,8 @@ pub(crate) struct Connection {
     pub(crate) receiving_frame: bool,
     pub(crate) clipboard_text: Option<String>,
     pub(crate) vnc_screen: Option<[u8; 16]>,
+    pub(crate) rdp_resize_supported: bool,
+    pub(crate) rdp_resize_enabled: bool,
     pub(crate) resize_request: Option<[u32; 2]>,
     pub(crate) trust_prompt: Option<super::trust::Prompt>,
     input: Option<mpsc::SyncSender<Input>>,
@@ -117,6 +119,8 @@ impl Connection {
             receiving_frame: false,
             clipboard_text: None,
             vnc_screen: None,
+            rdp_resize_supported: false,
+            rdp_resize_enabled: true,
             resize_request: None,
             trust_prompt: None,
             input: None,
@@ -143,6 +147,7 @@ impl Connection {
                 state.clipboard_text = None;
                 state.vnc_screen = None;
                 state.resize_request = None;
+                state.rdp_resize_supported = false;
                 state.status = result
                     .err()
                     .map_or_else(|| "Session ended".into(), |error| error.to_string());

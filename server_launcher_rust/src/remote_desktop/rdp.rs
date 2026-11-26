@@ -106,15 +106,18 @@ fn run(
     let mut connector =
         connector::ClientConnector::new(config(host, profile, &password), local_addr);
     let max_monitor_area = Arc::new(AtomicU64::new(0));
-    if profile.resolution == Resolution::FitWindow {
-        let server_limit = max_monitor_area.clone();
-        connector.attach_static_channel(DrdynvcClient::new().with_dynamic_channel(
-            DisplayControlClient::new(move |capabilities| {
-                server_limit.store(capabilities.max_monitor_area(), Ordering::Release);
-                Ok(Vec::new())
-            }),
-        ));
-    }
+    let server_limit = max_monitor_area.clone();
+    let resize_state = state.clone();
+    let resize_ctx = ctx.clone();
+    connector.attach_static_channel(DrdynvcClient::new().with_dynamic_channel(
+        DisplayControlClient::new(move |capabilities| {
+            let limit = capabilities.max_monitor_area();
+            server_limit.store(limit, Ordering::Release);
+            resize_state.lock().unwrap().rdp_resize_supported = limit != 0;
+            resize_ctx.request_repaint();
+            Ok(Vec::new())
+        }),
+    ));
     drop(password);
     let upgrade = ironrdp_blocking::connect_begin(&mut framed, &mut connector).map_err(|_| {
         error("RDP security negotiation failed. Check the server's NLA and TLS settings.")
@@ -223,8 +226,12 @@ fn run(
                 "The RDP input queue is full. The session was closed to release held inputs.",
             ));
         }
-        if profile.resolution == Resolution::FitWindow {
-            if let Some(size) = state.lock().unwrap().resize_request.take() {
+        let (resize_enabled, requested_size) = {
+            let mut state = state.lock().unwrap();
+            (state.rdp_resize_enabled, state.resize_request.take())
+        };
+        if resize_enabled {
+            if let Some(size) = requested_size {
                 proposed_resize = Some((size, Instant::now()));
             }
             if let Some(([desired_width, desired_height], changed)) = proposed_resize {
@@ -247,6 +254,8 @@ fn run(
                     }
                 }
             }
+        } else {
+            proposed_resize = None;
         }
         events.clear();
         for event in input.try_iter().take(32) {

@@ -506,6 +506,23 @@ impl eframe::App for Viewer {
                         }
                     });
                 });
+                if self.protocol == DesktopProtocol::Rdp {
+                    if let Some(connection) = &self.connection {
+                        let mut connection = connection.lock().unwrap();
+                        let response = ui.add_enabled(
+                            connected && connection.rdp_resize_supported,
+                            egui::Checkbox::new(&mut self.dynamic_resize, "Resize remote to fit"),
+                        );
+                        if response.changed() {
+                            connection.rdp_resize_enabled = self.dynamic_resize;
+                            connection.resize_request = None;
+                            self.last_window_size = None;
+                        }
+                        response.on_disabled_hover_text(
+                            "Waiting for RDP Display Control support from the server.",
+                        );
+                    }
+                }
                 if self.protocol == DesktopProtocol::Vnc {
                     if let Some(connection) = &self.connection {
                         let connection = connection.lock().unwrap();
@@ -647,7 +664,9 @@ impl eframe::App for Viewer {
                 if self.last_window_size != Some(dimensions) {
                     self.last_window_size = Some(dimensions);
                     if let Some(connection) = &self.connection {
-                        connection.lock().unwrap().resize_request = Some(dimensions);
+                        let mut connection = connection.lock().unwrap();
+                        connection.rdp_resize_enabled = true;
+                        connection.resize_request = Some(dimensions);
                     }
                 }
             }

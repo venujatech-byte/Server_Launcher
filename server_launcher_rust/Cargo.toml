@@ -6,10 +6,11 @@ authors = ["Venuka Silva"]
 description = "Cross-platform developer server launcher for Linux & Windows written in Rust"
 
 [dependencies]
-ironrdp = { git = "https://github.com/Devolutions/IronRDP.git", rev = "5eb8c371baf0cd5db9943c1109efa703c6aacce4", default-features = false, features = ["cliprdr", "connector", "core", "displaycontrol", "dvc", "graphics", "pdu", "session"] }
+ironrdp = { git = "https://github.com/Devolutions/IronRDP.git", rev = "5eb8c371baf0cd5db9943c1109efa703c6aacce4", default-features = false, features = ["cliprdr", "connector", "core", "displaycontrol", "dvc", "graphics", "pdu", "rdpdr", "rdpsnd", "session"] }
 ironrdp-blocking = { git = "https://github.com/Devolutions/IronRDP.git", rev = "5eb8c371baf0cd5db9943c1109efa703c6aacce4" }
 ironrdp-bulk = { git = "https://github.com/Devolutions/IronRDP.git", rev = "5eb8c371baf0cd5db9943c1109efa703c6aacce4" }
 ironrdp-egfx = { git = "https://github.com/Devolutions/IronRDP.git", rev = "5eb8c371baf0cd5db9943c1109efa703c6aacce4", features = ["openh264-libloading"] }
+ironrdp-rdpsnd-native = { git = "https://github.com/Devolutions/IronRDP.git", rev = "5eb8c371baf0cd5db9943c1109efa703c6aacce4", default-features = false }
 rustls = { version = "0.23", default-features = false, features = ["std", "ring", "tls12"] }
 rustls-native-certs = "0.8"
 x509-cert = { version = "0.2", default-features = false, features = ["std"] }

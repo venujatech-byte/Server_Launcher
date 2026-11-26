@@ -68,10 +68,11 @@ store; protocol passwords are not saved in `servers.json`.
 
 - RDP supports NLA by default, explicit TLS, certificate fingerprint prompts,
   keyboard and mouse input, text and bounded image clipboard sync, screenshots,
-  recording, and dynamic resize when the server supports Display Control. Saved certificate
-  fingerprints can be reviewed or removed in Settings → Remote Desktop. The RDP profile can
-  request two side-by-side remote displays using the selected combined resolution, and it
-  composites the remote pointer into the displayed framebuffer. Display controls include
+  recording, local audio playback, and dynamic resize when the server supports
+  Display Control. Saved certificate fingerprints can be reviewed or removed in
+  Settings → Remote Desktop. The RDP profile can request two side-by-side remote
+  displays using the selected combined resolution, and it composites the remote
+  pointer into the displayed framebuffer. Display controls include
   smooth/fast texture filtering, incremental/full-frame repainting, Automatic and RemoteFX
   profiles, 32/24-bit true color, 16/15-bit high color, left-handed mouse mapping, and an
   option to disable smooth scrolling. The profiles include GFX AVC420 and
@@ -101,9 +102,12 @@ store; protocol passwords are not saved in `servers.json`.
   30, or 60 FPS. Screenshot clipboard copying can be set as the viewer default.
   By default, captures are saved under Pictures/ServerLauncher.
 
-RDP audio, microphone, drive redirection, Microsoft RD Gateway, and keyboard-layout-specific
-IME are not implemented. RDP dual-display layout is best-effort: the server must support two
-monitors, and the viewer presents their combined desktop in one window. VNC
+RDP microphone, drive redirection, Microsoft RD Gateway, and keyboard-layout-specific
+IME are not implemented. Linux source builds need the ALSA development package
+(`libasound2-dev` on Ubuntu/Debian, `alsa-lib-devel` on Fedora/RHEL) for local
+RDP audio playback. RDP dual-display layout is best-effort: the server must
+support two monitors, and the viewer presents their combined desktop in one
+window. VNC
 username-based authentication is not implemented. VNC cursor
 shapes can be toggled in the VNC profile; they are enabled by default and need
 server support for RichCursor or XCursor shapes and PointerPos. SSH desktop tunnels support Unix

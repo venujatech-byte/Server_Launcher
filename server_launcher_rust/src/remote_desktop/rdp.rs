@@ -3,7 +3,7 @@
 use super::{
     credentials::{self, DesktopProtocol},
     framebuffer::Region,
-    profile::{Clipboard, Quality, RdpColorProfile, RdpProfile, RdpSecurity, Resolution},
+    profile::{Audio, Clipboard, Quality, RdpColorProfile, RdpProfile, RdpSecurity, Resolution},
     trust::Verifier,
     tunnel::{self, DesktopStream},
     vnc::{Connection, Input},
@@ -141,6 +141,15 @@ fn run(
                 Clipboard::Both | Clipboard::RemoteToLocal
             )),
         )));
+    }
+    if profile.audio == Audio::Local {
+        connector.attach_static_channel(ironrdp::rdpsnd::client::Rdpsnd::new(Box::new(
+            ironrdp_rdpsnd_native::cpal::RdpsndBackend::new(),
+        )));
+        connector.attach_static_channel(ironrdp::rdpdr::Rdpdr::new(
+            Box::new(ironrdp::rdpdr::NoopRdpdrBackend),
+            "ServerLauncher".into(),
+        ));
     }
     let max_monitor_area = Arc::new(AtomicU64::new(0));
     let server_limit = max_monitor_area.clone();
@@ -793,7 +802,7 @@ fn config(
         enable_server_pointer: true,
         request_data: None,
         autologon: true,
-        enable_audio_playback: false,
+        enable_audio_playback: profile.audio == Audio::Local,
         enable_audio_capture: false,
         audio_playback_mode: None,
         compression_type: Some(CompressionType::Rdp61),
@@ -904,7 +913,14 @@ mod tests {
             let config = config(&host, &profile, "test-password", None);
             assert_eq!((config.enable_tls, config.enable_credssp), (tls, credssp));
             assert!(!config.enable_standard_rdp_security);
+            assert!(config.enable_audio_playback);
         }
+
+        let profile = RdpProfile {
+            audio: Audio::Off,
+            ..Default::default()
+        };
+        assert!(!config(&host, &profile, "test-password", None).enable_audio_playback);
     }
 
     #[test]

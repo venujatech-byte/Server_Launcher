@@ -41,6 +41,15 @@ relevant server/client logs with credentials and clipboard contents removed.
 Do not expose a server port just to run this matrix. Use an existing private
 network or the host's configured SSH tunnel.
 
+### Endpoint handshake smoke check (2026-11-26)
+
+On the authorized Ubuntu 24.04.5 SSH test PC, xrdp 0.9.24 answered an X.224
+connection request and selected TLS. TigerVNC 1.13.1 returned an RFB 3.8
+banner and offered VeNCrypt plus classic VNC password authentication. These
+checks stopped before authentication and did not launch this app's viewer, so
+they confirm reachable protocol endpoints only, not a working desktop session.
+The checked app revision was `8ec3a0d`.
+
 ## RDP checks
 
 1. Open the RDP and VNC editor tabs and confirm the SSH-side server scan finds

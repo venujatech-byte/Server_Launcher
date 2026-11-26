@@ -114,48 +114,52 @@ fn run(
         return;
     }
 
-    let mut window = 0;
-    let mut revert = 0;
-    unsafe { (xlib.XGetInputFocus)(display, &mut window, &mut revert) };
-    if window == 0 {
-        unsafe { (xlib.XCloseDisplay)(display) };
-        let _ = ready.send(Err("The remote viewer does not have keyboard focus.".into()));
-        return;
-    }
-    let mut title_pointer = ptr::null_mut();
-    let has_title = unsafe { (xlib.XFetchName)(display, window, &mut title_pointer) } != 0;
-    let focused_title = if has_title && !title_pointer.is_null() {
-        let title = unsafe { CStr::from_ptr(title_pointer) }
-            .to_string_lossy()
-            .into_owned();
-        unsafe { (xlib.XFree)(title_pointer.cast()) };
-        title
-    } else {
-        String::new()
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let mut failure = "The remote viewer did not receive keyboard focus.";
+    let window = loop {
+        if stopped.try_recv().is_ok() {
+            unsafe { (xlib.XCloseDisplay)(display) };
+            return;
+        }
+        let mut focused = 0;
+        let mut revert = 0;
+        unsafe { (xlib.XGetInputFocus)(display, &mut focused, &mut revert) };
+        if focused != 0 {
+            let mut title_pointer = ptr::null_mut();
+            unsafe { (xlib.XFetchName)(display, focused, &mut title_pointer) };
+            let focused_title = if !title_pointer.is_null() {
+                let title = unsafe { CStr::from_ptr(title_pointer) }
+                    .to_string_lossy()
+                    .into_owned();
+                unsafe { (xlib.XFree)(title_pointer.cast()) };
+                title
+            } else {
+                String::new()
+            };
+            if focused_title == expected_title {
+                let result = unsafe {
+                    (xlib.XGrabKeyboard)(
+                        display,
+                        focused,
+                        xlib::False,
+                        xlib::GrabModeAsync,
+                        xlib::GrabModeAsync,
+                        xlib::CurrentTime,
+                    )
+                };
+                if result == xlib::GrabSuccess {
+                    break focused;
+                }
+                failure = "Another application owns the X11 keyboard grab.";
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            unsafe { (xlib.XCloseDisplay)(display) };
+            let _ = ready.send(Err(failure.into()));
+            return;
+        }
+        thread::sleep(Duration::from_millis(30));
     };
-    if focused_title != expected_title {
-        unsafe { (xlib.XCloseDisplay)(display) };
-        let _ = ready.send(Err(
-            "The focused window is not this remote viewer; keyboard capture was not started."
-                .into(),
-        ));
-        return;
-    }
-    let result = unsafe {
-        (xlib.XGrabKeyboard)(
-            display,
-            window,
-            xlib::False,
-            xlib::GrabModeAsync,
-            xlib::GrabModeAsync,
-            xlib::CurrentTime,
-        )
-    };
-    if result != xlib::GrabSuccess {
-        unsafe { (xlib.XCloseDisplay)(display) };
-        let _ = ready.send(Err("Another application owns the X11 keyboard grab.".into()));
-        return;
-    }
     unsafe { (xlib.XSync)(display, xlib::False) };
     if ready.send(Ok(())).is_err() {
         unsafe {

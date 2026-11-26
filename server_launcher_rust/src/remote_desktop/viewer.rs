@@ -118,6 +118,7 @@ pub(crate) fn run(
                 clipboard_notice: None,
                 copy_screenshot: false,
                 screenshot_clipboard: None,
+                screenshot_queued: false,
                 screenshot: None,
                 screenshot_result: None,
                 show_fps: false,
@@ -176,6 +177,7 @@ struct Viewer {
     clipboard_notice: Option<(Instant, &'static str)>,
     copy_screenshot: bool,
     screenshot_clipboard: Option<arboard::Clipboard>,
+    screenshot_queued: bool,
     screenshot: Option<mpsc::Receiver<super::screenshot::SaveResult>>,
     screenshot_result: Option<Result<PathBuf, String>>,
     test_pattern: bool,
@@ -189,12 +191,14 @@ impl Viewer {
         let frame = if let Some(connection) = &self.connection {
             let connection = connection.lock().unwrap();
             if connection.receiving_frame {
+                self.screenshot_queued = true;
                 return;
             }
             connection.framebuffer.snapshot()
         } else {
             self.framebuffer.snapshot()
         };
+        self.screenshot_queued = false;
         let Some(frame) = frame else { return };
         let (sender, receiver) = mpsc::channel();
         self.screenshot = Some(receiver);
@@ -428,6 +432,16 @@ impl eframe::App for Viewer {
                     0,
                 )
             };
+        if self.screenshot_queued {
+            if connected {
+                self.take_screenshot(ctx);
+            } else {
+                self.screenshot_queued = false;
+                self.screenshot_result = Some(Err(
+                    "Session ended before the screenshot was captured.".into(),
+                ));
+            }
+        }
         if !connected {
             self.capture = Capture::default();
             self.last_window_size = None;
@@ -631,14 +645,18 @@ impl eframe::App for Viewer {
                 if !connected && self.texture.is_some() && !self.test_pattern {
                     ui.label(&status);
                 }
-                let screenshot_label = if self.screenshot.is_some() {
+                let screenshot_label = if self.screenshot_queued {
+                    "Waiting for frame…"
+                } else if self.screenshot.is_some() {
                     "Saving…"
                 } else {
                     "Screenshot"
                 };
                 if ui
                     .add_enabled(
-                        self.texture.is_some() && self.screenshot.is_none(),
+                        self.texture.is_some()
+                            && self.screenshot.is_none()
+                            && !self.screenshot_queued,
                         egui::Button::new(screenshot_label),
                     )
                     .clicked()

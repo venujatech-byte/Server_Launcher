@@ -1085,6 +1085,7 @@ impl eframe::App for Viewer {
                                     match super::x11_keyboard::NativeKeyboardCapture::start(
                                         connection_handle,
                                         ctx.clone(),
+                                        format!("{} - {}", self.host_name, self.protocol.label()),
                                     ) {
                                         Ok(capture) => {
                                             self.native_keyboard = Some(capture);

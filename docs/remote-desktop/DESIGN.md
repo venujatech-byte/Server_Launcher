@@ -292,10 +292,10 @@ and a full interactive RDP server test remain pending.
 The viewer toolbar's Keyboard toggle routes key events while the viewer window
 is focused, without requiring a click inside the remote canvas. On Linux/X11 it
 also grabs keyboard input for that focused viewer, so system shortcuts such as
-Super and Alt+Tab can reach the remote. The grab is released when capture is
-disabled, the viewer loses focus, or the session closes. Wayland and Windows
-use egui capture; system-reserved shortcuts may stay local there, and Send keys
-remains the fallback.
+Super and Alt+Tab can reach the remote. The grab is released while focus is
+away and resumes when the viewer regains focus; it also ends when capture is
+disabled or the session closes. Wayland and Windows use egui capture;
+system-reserved shortcuts may stay local there, and Send keys remains the fallback.
 
 Unknown-issuer RDP certificates can now be explicitly trusted from the
 viewer after comparing the SHA-256 fingerprint. Validity dates and TLS

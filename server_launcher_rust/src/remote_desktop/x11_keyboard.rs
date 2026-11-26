@@ -1,6 +1,7 @@
 use super::vnc::{Connection, Input};
 use std::{
     collections::HashMap,
+    ffi::CStr,
     ptr,
     sync::{mpsc, Arc, Mutex},
     thread::{self, JoinHandle},
@@ -17,10 +18,11 @@ impl NativeKeyboardCapture {
     pub(crate) fn start(
         connection: Arc<Mutex<Connection>>,
         ctx: egui::Context,
+        expected_title: String,
     ) -> Result<Self, String> {
         let (stop, stopped) = mpsc::channel();
         let (ready, started) = mpsc::sync_channel(1);
-        let worker = thread::spawn(move || run(connection, ctx, stopped, ready));
+        let worker = thread::spawn(move || run(connection, ctx, expected_title, stopped, ready));
         match started.recv_timeout(Duration::from_secs(2)) {
             Ok(Ok(())) => Ok(Self {
                 stop,
@@ -51,6 +53,7 @@ impl Drop for NativeKeyboardCapture {
 fn run(
     connection: Arc<Mutex<Connection>>,
     ctx: egui::Context,
+    expected_title: String,
     stopped: mpsc::Receiver<()>,
     ready: mpsc::SyncSender<Result<(), String>>,
 ) {
@@ -75,6 +78,25 @@ fn run(
     if window == 0 {
         unsafe { (xlib.XCloseDisplay)(display) };
         let _ = ready.send(Err("The remote viewer does not have keyboard focus.".into()));
+        return;
+    }
+    let mut title_pointer = ptr::null_mut();
+    let has_title = unsafe { (xlib.XFetchName)(display, window, &mut title_pointer) } != 0;
+    let focused_title = if has_title && !title_pointer.is_null() {
+        let title = unsafe { CStr::from_ptr(title_pointer) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { (xlib.XFree)(title_pointer.cast()) };
+        title
+    } else {
+        String::new()
+    };
+    if focused_title != expected_title {
+        unsafe { (xlib.XCloseDisplay)(display) };
+        let _ = ready.send(Err(
+            "The focused window is not this remote viewer; keyboard capture was not started."
+                .into(),
+        ));
         return;
     }
     let result = unsafe {

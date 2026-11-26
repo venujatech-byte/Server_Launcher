@@ -176,16 +176,14 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
             ],
         );
         profile.keyboard_layout = layout;
-        ui.add_enabled_ui(false, |ui| {
-            choice(
-                ui,
-                "Audio output",
-                &mut profile.audio,
-                &[(Audio::Local, "Play locally"), (Audio::Off, "Off")],
-            );
-            ui.checkbox(&mut profile.mic, "Share microphone");
-        });
-        ui.label("RDP audio playback and microphone redirection are not supported yet.");
+        choice(
+            ui,
+            "Audio output",
+            &mut profile.audio,
+            &[(Audio::Local, "Play locally"), (Audio::Off, "Off")],
+        );
+        ui.add_enabled(false, egui::Checkbox::new(&mut profile.mic, "Share microphone"));
+        ui.label("Microphone capture is not available yet.");
         clipboard(ui, &mut profile.clipboard);
         ui.collapsing("Drive redirection (unsupported)", |ui| {
             ui.label("RDP drive sharing is not supported yet. Saved entries are preserved:");

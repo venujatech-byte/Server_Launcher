@@ -526,9 +526,10 @@ fn run(
                             {
                                 clipboard.local_text = None;
                                 clipboard.local_image = Some(image);
-                                if let Ok(offer) = channel.initiate_copy(&[ClipboardFormat::new(
-                                    ClipboardFormatId::CF_DIBV5,
-                                )]) {
+                                if let Ok(offer) = channel.initiate_copy(&[
+                                    ClipboardFormat::new(ClipboardFormatId::CF_DIBV5),
+                                    ClipboardFormat::new(ClipboardFormatId::CF_DIB),
+                                ]) {
                                     if let Ok(packet) = stage.process_svc_processor_messages(offer)
                                     {
                                         framed.write_all(&packet)?;

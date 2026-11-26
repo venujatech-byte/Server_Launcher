@@ -187,4 +187,20 @@ mod tests {
         assert_eq!(backend.received.as_deref(), Some("fallback ✓"));
         assert_eq!(backend.request_format(), None);
     }
+
+    #[test]
+    fn local_image_can_be_requested_in_both_dib_formats() {
+        let payload = vec![1, 2, 3];
+        let mut backend = ClipboardBackend {
+            local_image: Some(payload.clone()),
+            ..Default::default()
+        };
+
+        for format in [ClipboardFormatId::CF_DIBV5, ClipboardFormatId::CF_DIB] {
+            backend.on_format_data_request(FormatDataRequest { format });
+            let response = backend.reply.take().unwrap();
+            assert!(!response.is_error());
+            assert_eq!(response.data(), payload);
+        }
+    }
 }

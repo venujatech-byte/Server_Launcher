@@ -71,10 +71,12 @@ the final versions.
 Compile checks on 2026-11-26 passed for Linux (`cargo check --locked
 --all-targets` on the SSH test PC) and Windows x86_64 MSVC (`cargo check
 --locked --all-targets --target x86_64-pc-windows-msvc` in GitHub Actions) at
-`d0409ef`. These checks do not prove that either viewer connects or performs
-well. No connection, platform interoperability, or performance measurements
-have been completed. Record those results here only after a runnable viewer is
-measured.
+`8862062`. The Linux test PC pulled that commit from `vnc/rdp`; Windows CI run
+[45858003619](https://github.com/venujatech-byte/Server_Launcher/actions/runs/45858003619)
+also checked all targets. These checks do not prove that either viewer connects
+or that clipboard behavior works. No connection, platform interoperability, or
+performance measurements have been completed. Record those results here only
+after a runnable viewer is measured.
 
 ## Display profiles and input controls
 

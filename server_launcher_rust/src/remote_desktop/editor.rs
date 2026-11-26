@@ -145,7 +145,6 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
             "Full-frame repaint redraws the complete received image after each update. It changes client-side painting only and may use more CPU; it does not change network or server rendering behavior.",
         );
         rdp_color_profile(ui, &mut profile.color_profile);
-        ui.label("GFX RFX uses the graphics pipeline; AVC/H.264 remains unavailable.");
         ui.label("RemoteFX is advertised to the server; the server still chooses the negotiated codec.");
         choice(
             ui,

@@ -18,7 +18,7 @@ impl Region {
         ])
     }
 
-    fn union(self, other: Self) -> Self {
+    pub(crate) fn union(self, other: Self) -> Self {
         let origin = [
             self.origin[0].min(other.origin[0]),
             self.origin[1].min(other.origin[1]),
@@ -33,7 +33,7 @@ impl Region {
         }
     }
 
-    fn intersects(self, other: Self) -> bool {
+    pub(crate) fn intersects(self, other: Self) -> bool {
         let [right_a, bottom_a] = self.end().unwrap();
         let [right_b, bottom_b] = other.end().unwrap();
         self.origin[0] < right_b

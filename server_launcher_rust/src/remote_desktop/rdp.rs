@@ -1202,8 +1202,8 @@ fn prepare_damage(
         let mut index = 0;
         while index < merged_regions.len() {
             let other = merged_regions[index];
-            if damage_intersects(merged, other) {
-                merged = damage_union(merged, other);
+            if merged.intersects(other) {
+                merged = merged.union(other);
                 merged_regions.swap_remove(index);
                 index = 0;
             } else {
@@ -1262,25 +1262,6 @@ fn prepare_damage(
         prepared.push((region, start..pixels.len()));
     }
     Ok(prepared)
-}
-
-fn damage_intersects(a: Region, b: Region) -> bool {
-    a.origin[0] < b.origin[0] + b.size[0]
-        && b.origin[0] < a.origin[0] + a.size[0]
-        && a.origin[1] < b.origin[1] + b.size[1]
-        && b.origin[1] < a.origin[1] + a.size[1]
-}
-
-fn damage_union(a: Region, b: Region) -> Region {
-    let origin = [a.origin[0].min(b.origin[0]), a.origin[1].min(b.origin[1])];
-    let end = [
-        (a.origin[0] + a.size[0]).max(b.origin[0] + b.size[0]),
-        (a.origin[1] + a.size[1]).max(b.origin[1] + b.size[1]),
-    ];
-    Region {
-        origin,
-        size: [end[0] - origin[0], end[1] - origin[1]],
-    }
 }
 
 struct EgfxHandler {

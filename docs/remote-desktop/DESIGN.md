@@ -123,11 +123,12 @@ outside the canvas, the viewer releases tracked keys, modifiers and buttons.
 The VNC worker omits its input channel in view-only mode. A bounded queue
 disconnects on overflow so a key release cannot silently disappear. Pointer
 coordinates follow the displayed canvas and are clamped during a drag.
-Classic RFB currently forwards the primary three buttons and both scroll
-axes. Extra buttons, IME, host-key shortcuts and platform keyboard capture
-are pending. Input mapping and focus release were tested in-process. Synthetic
-desktop input did not reach the loopback peer in the X11 smoke test, so
-end-to-end input behavior remains unverified.
+Classic RFB forwards buttons 1–5 and both scroll axes. Extra RDP pointer
+buttons are unavailable in the current IronRDP input flags. IME, host-key
+shortcuts and platform keyboard capture are pending. Input mapping and focus
+release were tested in-process. Synthetic desktop input did not reach the
+loopback peer in the X11 smoke test, so end-to-end input behavior remains
+unverified.
 
 ## Clipboard text
 

@@ -178,7 +178,8 @@ fn mouse_button(button: PointerButton) -> Option<u8> {
         PointerButton::Primary => Some(1),
         PointerButton::Middle => Some(2),
         PointerButton::Secondary => Some(4),
-        PointerButton::Extra1 | PointerButton::Extra2 => None,
+        PointerButton::Extra1 => Some(8),
+        PointerButton::Extra2 => Some(16),
     }
 }
 

@@ -43,6 +43,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) fn start(
     host: SshRemoteHost,
     config_path: PathBuf,
+    monitor_size: Option<[u32; 2]>,
     ctx: egui::Context,
 ) -> Arc<Mutex<Connection>> {
     let reconnect = host
@@ -50,7 +51,7 @@ pub(crate) fn start(
         .as_ref()
         .is_some_and(|profile| profile.auto_reconnect);
     Connection::start_worker("Connecting to RDP…", reconnect, ctx, move |state, ctx| {
-        run(&host, &config_path, state, ctx)
+        run(&host, &config_path, monitor_size, state, ctx)
     })
 }
 
@@ -72,6 +73,7 @@ impl sspi::network_client::NetworkClient for NoKdc {
 fn run(
     host: &SshRemoteHost,
     config_path: &Path,
+    monitor_size: Option<[u32; 2]>,
     state: &Arc<Mutex<Connection>>,
     ctx: &egui::Context,
 ) -> io::Result<()> {
@@ -104,7 +106,7 @@ fn run(
     };
     let mut framed = Framed::new(socket);
     let mut connector =
-        connector::ClientConnector::new(config(host, profile, &password), local_addr);
+        connector::ClientConnector::new(config(host, profile, &password, monitor_size), local_addr);
     let max_monitor_area = Arc::new(AtomicU64::new(0));
     let server_limit = max_monitor_area.clone();
     let resize_state = state.clone();
@@ -427,18 +429,27 @@ fn open_direct(hostname: &str, port: u16) -> io::Result<TcpStream> {
     Ok(socket)
 }
 
-fn config(host: &SshRemoteHost, profile: &RdpProfile, password: &str) -> connector::Config {
+fn initial_dimensions(profile: &RdpProfile, monitor_size: Option<[u32; 2]>) -> [u16; 2] {
+    match profile.resolution {
+        Resolution::Fixed => [profile.width.clamp(1, 4096), profile.height.clamp(1, 4096)],
+        Resolution::MatchLocalScreen => monitor_size.unwrap_or([1280, 720]).map(|size| size as u16),
+        Resolution::FitWindow => [1280, 720],
+    }
+}
+
+fn config(
+    host: &SshRemoteHost,
+    profile: &RdpProfile,
+    password: &str,
+    monitor_size: Option<[u32; 2]>,
+) -> connector::Config {
     let username = if profile.same_username_as_ssh {
         &host.user
     } else {
         &profile.username
     };
     let tls_only = profile.security == RdpSecurity::Tls;
-    let (width, height) = if profile.resolution == Resolution::Fixed {
-        (profile.width.clamp(1, 4096), profile.height.clamp(1, 4096))
-    } else {
-        (1280, 720)
-    };
+    let [width, height] = initial_dimensions(profile, monitor_size);
     let mut performance = PerformanceFlags::default();
     performance.set(PerformanceFlags::DISABLE_WALLPAPER, !profile.wallpaper);
     performance.set(
@@ -503,6 +514,19 @@ fn config(host: &SshRemoteHost, profile: &RdpProfile, password: &str) -> connect
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn matches_monitor_dimensions_and_handles_missing_monitor_info() {
+        let profile = RdpProfile {
+            resolution: Resolution::MatchLocalScreen,
+            ..Default::default()
+        };
+        assert_eq!(
+            initial_dimensions(&profile, Some([2560, 1440])),
+            [2560, 1440]
+        );
+        assert_eq!(initial_dimensions(&profile, None), [1280, 720]);
+    }
 
     #[test]
     fn normalizes_remote_resize_and_respects_server_area() {

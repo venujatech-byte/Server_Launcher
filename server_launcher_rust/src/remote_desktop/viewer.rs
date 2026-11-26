@@ -99,9 +99,7 @@ pub(crate) fn run(
                 closed,
                 message,
                 framebuffer,
-                connection: viewer_host.as_ref().map(|host| {
-                    start_connection(host.clone(), &config_path, protocol, &cc.egui_ctx)
-                }),
+                connection: None,
                 session_host: viewer_host,
                 config_path,
                 texture: None,
@@ -135,7 +133,17 @@ fn start_connection(
     ctx: &egui::Context,
 ) -> Arc<Mutex<Connection>> {
     match protocol {
-        DesktopProtocol::Rdp => super::rdp::start(host, config_path.to_owned(), ctx.clone()),
+        DesktopProtocol::Rdp => {
+            let monitor_pixels = ctx.input(|input| {
+                let viewport = input.viewport();
+                let scale = viewport.native_pixels_per_point.unwrap_or(1.0);
+                viewport.monitor_size.map(|size| size * scale)
+            });
+            let monitor_size = monitor_pixels.map(|size| {
+                super::rdp::display_dimensions(size.x.round() as u32, size.y.round() as u32)
+            });
+            super::rdp::start(host, config_path.to_owned(), monitor_size, ctx.clone())
+        }
         DesktopProtocol::Vnc => Connection::start(host, ctx.clone()),
     }
 }
@@ -309,6 +317,16 @@ impl eframe::App for Viewer {
         if self.focus.swap(false, Ordering::AcqRel) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        if self.connection.is_none() {
+            if let Some(host) = &self.session_host {
+                self.connection = Some(start_connection(
+                    host.clone(),
+                    &self.config_path,
+                    self.protocol,
+                    ctx,
+                ));
+            }
         }
         let prompt = self.connection.as_ref().and_then(|connection| {
             let state = connection.lock().unwrap();

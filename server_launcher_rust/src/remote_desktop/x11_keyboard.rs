@@ -4,7 +4,7 @@ use super::{
 };
 use std::{
     collections::{HashMap, HashSet},
-    ffi::CStr,
+    ffi::{CStr, CString},
     ptr,
     sync::{mpsc, Arc, Mutex},
     thread::{self, JoinHandle},
@@ -137,6 +137,7 @@ fn run(
                 String::new()
             };
             if focused_title == expected_title {
+                request_wayland_keyboard_grab(&xlib, display, focused);
                 let result = unsafe {
                     (xlib.XGrabKeyboard)(
                         display,
@@ -188,6 +189,7 @@ fn run(
             grabbed = false;
             ctx.request_repaint();
         } else if !grabbed && focused_window == window {
+            request_wayland_keyboard_grab(&xlib, display, window);
             grabbed = unsafe {
                 (xlib.XGrabKeyboard)(
                     display,
@@ -308,6 +310,47 @@ fn run(
         (xlib.XCloseDisplay)(display);
     }
     ctx.request_repaint();
+}
+
+fn request_wayland_keyboard_grab(
+    xlib: &xlib::Xlib,
+    display: *mut xlib::Display,
+    window: xlib::Window,
+) {
+    let Ok(name) = CString::new("_XWAYLAND_MAY_GRAB_KEYBOARD") else {
+        return;
+    };
+    let atom = unsafe { (xlib.XInternAtom)(display, name.as_ptr(), xlib::False) };
+    if atom == 0 {
+        return;
+    }
+
+    let mut data = xlib::ClientMessageData::new();
+    data.set_long(0, 1);
+    data.set_long(1, xlib::CurrentTime as _);
+    let message = xlib::XClientMessageEvent {
+        type_: xlib::ClientMessage,
+        serial: 0,
+        send_event: xlib::True,
+        display,
+        window,
+        message_type: atom,
+        format: 32,
+        data,
+    };
+    let mut event = xlib::XEvent {
+        client_message: message,
+    };
+    unsafe {
+        (xlib.XSendEvent)(
+            display,
+            (xlib.XDefaultRootWindow)(display),
+            xlib::False,
+            xlib::SubstructureNotifyMask | xlib::SubstructureRedirectMask,
+            &mut event,
+        );
+        (xlib.XFlush)(display);
+    }
 }
 
 #[derive(Clone, Copy)]

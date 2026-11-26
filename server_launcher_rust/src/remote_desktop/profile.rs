@@ -178,12 +178,7 @@ impl Default for VncProfile {
             username: String::new(),
             credential_ref: None,
             quality: Quality::Auto,
-            encodings: vec![
-                Encoding::Tight,
-                Encoding::Zrle,
-                Encoding::CopyRect,
-                Encoding::Raw,
-            ],
+            encodings: vec![Encoding::Zrle, Encoding::CopyRect, Encoding::Raw],
             color_depth: 32,
             view_only: false,
             show_remote_cursor: true,

@@ -251,23 +251,21 @@ pub(crate) fn vnc(ui: &mut Ui, draft: &mut Option<VncProfile>, port_text: &mut S
             );
         });
         ui.label("Only classic VNC password authentication is supported.");
-        choice(
-            ui,
-            "Quality",
-            &mut profile.quality,
-            &[
-                (Quality::Auto, "Auto"),
-                (Quality::Best, "Best"),
-                (Quality::Good, "Good"),
-                (Quality::Fast, "Fast"),
-            ],
-        );
-        ui.collapsing("VNC encoding order", |ui| {
-            ui.label("Order is sent to the server; unsupported encodings are skipped.");
+        choice(ui, "Quality", &mut profile.quality, &[
+            (Quality::Auto, "Auto"),
+            (Quality::Best, "Best"),
+            (Quality::Good, "Good"),
+            (Quality::Fast, "Fast"),
+        ]);
+        color_depth(ui, &mut profile.color_depth);
+        clipboard(ui, &mut profile.clipboard);
+
+        ui.collapsing("Advanced", |ui| {
+            ui.label("Encoding priority (first supported encoding is preferred)");
             for i in 0..profile.encodings.len() {
                 let encoding = profile.encodings[i];
                 let label = match encoding {
-                    Encoding::Tight => "Tight (unsupported; skipped)",
+                    Encoding::Tight => "Tight (unsupported by this client)",
                     Encoding::Zrle => "ZRLE",
                     Encoding::CopyRect => "CopyRect",
                     Encoding::Raw => "Raw",
@@ -287,46 +285,49 @@ pub(crate) fn vnc(ui: &mut Ui, draft: &mut Option<VncProfile>, port_text: &mut S
                     break;
                 }
             }
+            ui.checkbox(
+                &mut profile.disable_smooth_scrolling,
+                "Disable smooth scrolling",
+            );
+        #[cfg(target_os = "linux")]
+            ui.horizontal(|ui| {
+                ui.label("TCP user timeout (seconds)");
+                ui.add(DragValue::new(&mut profile.tcp_user_timeout_secs).range(0..=2_147_483));
+            });
+        #[cfg(target_os = "linux")]
+            ui.label("0 uses the operating system default; this is not an idle timeout.");
+        #[cfg(not(target_os = "linux"))]
+            ui.label("TCP user timeout is available for direct Linux connections only.");
         });
-        color_depth(ui, &mut profile.color_depth);
-        ui.checkbox(&mut profile.view_only, "View only");
-        ui.checkbox(&mut profile.show_remote_cursor, "Show remote cursor");
-        ui.checkbox(
-            &mut profile.disable_smooth_scrolling,
-            "Disable smooth scrolling",
-        );
-        ui.checkbox(&mut profile.shared, "Shared session");
-        clipboard(ui, &mut profile.clipboard);
-        ui.label("Classic VNC shares Latin-1 text. Click the remote desktop before pasting.");
-        choice(
-            ui,
-            "Scaling",
-            &mut profile.scaling,
-            &[
+
+        ui.collapsing("Behavior", |ui| {
+            ui.checkbox(&mut profile.view_only, "View only");
+            ui.checkbox(&mut profile.shared, "Shared session");
+            ui.checkbox(&mut profile.show_remote_cursor, "Show remote cursor");
+            ui.checkbox(&mut profile.auto_reconnect, "Auto-reconnect");
+            ui.checkbox(&mut profile.close_on_failure, "Close on connection failure");
+            choice(ui, "Scaling", &mut profile.scaling, &[
                 (Scaling::Fit, "Fit"),
                 (Scaling::Native, "100%"),
                 (Scaling::Fill, "Fill"),
-            ],
-        );
-        ui.checkbox(&mut profile.tunnel_via_ssh, "Tunnel via SSH");
-        if !profile.tunnel_via_ssh {
-            ui.label("Classic VNC is unencrypted. Use an SSH tunnel on untrusted networks.");
-        }
-        #[cfg(target_os = "linux")]
-        ui.horizontal(|ui| {
-            ui.label("TCP user timeout (seconds)");
-            ui.add(DragValue::new(&mut profile.tcp_user_timeout_secs).range(0..=2_147_483));
+            ]);
         });
-        #[cfg(target_os = "linux")]
-        ui.label(if profile.tunnel_via_ssh {
-            "Applies to direct Linux TCP connections only; ignored while SSH tunneling is enabled."
-        } else {
-            "0 uses the operating system default. This is not an idle timeout."
+
+        ui.collapsing("SSH Tunnel", |ui| {
+            ui.checkbox(&mut profile.tunnel_via_ssh, "Tunnel via SSH");
+            if profile.tunnel_via_ssh {
+                ui.label("The VNC connection is carried through this host's SSH connection.");
+            } else {
+                ui.label("Classic VNC is unencrypted. Use an SSH tunnel on untrusted networks.");
+            }
+            #[cfg(target_os = "linux")]
+            ui.label("TCP user timeout only applies to direct connections, not SSH tunnels.");
         });
-        #[cfg(not(target_os = "linux"))]
-        ui.label("TCP user timeout is available for direct Linux connections only.");
-        ui.checkbox(&mut profile.auto_reconnect, "Auto-reconnect");
-        ui.checkbox(&mut profile.close_on_failure, "Close on connection failure");
+
+        ui.collapsing("Notes", |ui| {
+            ui.label("Classic VNC clipboard supports Latin-1 text only. Click the remote desktop before pasting.");
+            ui.label("Server bell messages are ignored. Dynamic resolution depends on server support.");
+        });
     });
     if draft.is_some() || profile.enabled {
         *draft = Some(profile);

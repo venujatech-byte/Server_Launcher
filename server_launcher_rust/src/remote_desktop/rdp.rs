@@ -10,7 +10,10 @@ use super::{
 };
 use crate::config::SshRemoteHost;
 use ironrdp::{
-    connector::{self, sspi},
+    connector::{self, connection_activation::ConnectionActivationState, sspi, Sequence},
+    core::WriteBuf,
+    displaycontrol::client::DisplayControlClient,
+    dvc::DrdynvcClient,
     graphics::image_processing::PixelFormat,
     pdu::{
         gcc::KeyboardType,
@@ -19,14 +22,17 @@ use ironrdp::{
             client_info::{PerformanceFlags, TimezoneInfo},
         },
     },
-    session::{image::DecodedImage, ActiveStageBuilder, ActiveStageOutput},
+    session::{fast_path, image::DecodedImage, ActiveStageBuilder, ActiveStageOutput},
 };
 use ironrdp_blocking::Framed;
 use std::{
     io,
     net::{SocketAddr, TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
-    sync::{atomic::Ordering, Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 use x509_cert::der::Decode;
@@ -99,6 +105,16 @@ fn run(
     let mut framed = Framed::new(socket);
     let mut connector =
         connector::ClientConnector::new(config(host, profile, &password), local_addr);
+    let max_monitor_area = Arc::new(AtomicU64::new(0));
+    if profile.resolution == Resolution::FitWindow {
+        let server_limit = max_monitor_area.clone();
+        connector.attach_static_channel(DrdynvcClient::new().with_dynamic_channel(
+            DisplayControlClient::new(move |capabilities| {
+                server_limit.store(capabilities.max_monitor_area(), Ordering::Release);
+                Ok(Vec::new())
+            }),
+        ));
+    }
     drop(password);
     let upgrade = ironrdp_blocking::connect_begin(&mut framed, &mut connector).map_err(|_| {
         error("RDP security negotiation failed. Check the server's NLA and TLS settings.")
@@ -157,8 +173,11 @@ fn run(
         hostname.to_owned().into(), binding, None,
     ).map_err(|_| error("RDP login failed. Check the username, domain, password, and Remote Desktop permissions."))?;
 
-    let width = result.desktop_size.width;
-    let height = result.desktop_size.height;
+    let mut width = result.desktop_size.width;
+    let mut height = result.desktop_size.height;
+    let activation_factory = result.activation_factory;
+    let io_channel_id = result.io_channel_id;
+    let user_channel_id = result.user_channel_id;
     let (input, overflow) = {
         let mut shared = state.lock().unwrap();
         shared
@@ -196,11 +215,37 @@ fn run(
     let mut encoder = super::rdp_input::Encoder::default();
     let mut events = Vec::with_capacity(64);
     let mut rgba = Vec::new();
+    let mut proposed_resize = None;
     loop {
         if overflow.load(Ordering::Acquire) {
             return Err(error(
                 "The RDP input queue is full. The session was closed to release held inputs.",
             ));
+        }
+        if profile.resolution == Resolution::FitWindow {
+            if let Some(size) = state.lock().unwrap().resize_request.take() {
+                proposed_resize = Some((size, Instant::now()));
+            }
+            if let Some(([desired_width, desired_height], changed)) = proposed_resize {
+                let max = max_monitor_area.load(Ordering::Acquire);
+                let current = [u32::from(width), u32::from(height)];
+                if [desired_width, desired_height] == current {
+                    proposed_resize = None;
+                } else if max != 0 && changed.elapsed() >= Duration::from_millis(180) {
+                    let size = fit_server_limit(desired_width, desired_height, max);
+                    if let Some([new_width, new_height]) = size {
+                        if let Some(packet) = stage.encode_resize(new_width, new_height, None, None)
+                        {
+                            let bytes = packet
+                                .map_err(|_| error("Could not encode RDP desktop resize."))?;
+                            framed.write_all(&bytes)?;
+                            proposed_resize = None;
+                        }
+                    } else {
+                        proposed_resize = None;
+                    }
+                }
+            }
         }
         events.clear();
         for event in input.try_iter().take(32) {
@@ -264,12 +309,98 @@ fn run(
                 ActiveStageOutput::Terminate(_) => {
                     return Err(error("The RDP server ended the session."))
                 }
-                ActiveStageOutput::DeactivateAll => return Err(error(
-                    "The RDP server requested session reactivation, which is not supported yet.",
-                )),
+                ActiveStageOutput::DeactivateAll => {
+                    let mut activation = activation_factory.create();
+                    framed
+                        .get_inner()
+                        .0
+                        .sock
+                        .set_read_timeout(CONNECT_TIMEOUT)?;
+                    let mut output = WriteBuf::new();
+                    let deadline = Instant::now() + CONNECT_TIMEOUT;
+                    loop {
+                        if let ConnectionActivationState::Finalized {
+                            desktop_size,
+                            share_id,
+                            enable_server_pointer,
+                            pointer_software_rendering,
+                        } = activation.connection_activation_state()
+                        {
+                            width = desktop_size.width;
+                            height = desktop_size.height;
+                            state
+                                .lock()
+                                .unwrap()
+                                .framebuffer
+                                .resize([width.into(), height.into()])
+                                .map_err(error)?;
+                            image = DecodedImage::new(PixelFormat::RgbA32, width, height);
+                            stage.set_share_id(share_id);
+                            stage.set_enable_server_pointer(enable_server_pointer);
+                            stage.set_fastpath_processor(
+                                fast_path::ProcessorBuilder {
+                                    io_channel_id,
+                                    user_channel_id,
+                                    share_id,
+                                    enable_server_pointer,
+                                    pointer_software_rendering,
+                                    bulk_decompressor: None,
+                                }
+                                .build(),
+                            );
+                            break;
+                        }
+                        let remaining = deadline.saturating_duration_since(Instant::now());
+                        if remaining.is_zero() {
+                            return Err(error("RDP session reactivation timed out."));
+                        }
+                        framed.get_inner().0.sock.set_read_timeout(remaining)?;
+                        output.clear();
+                        let written = if let Some(hint) = activation.next_pdu_hint() {
+                            let pdu = framed.read_by_hint(hint)?;
+                            activation.step(&pdu, &mut output)
+                        } else {
+                            activation.step_no_input(&mut output)
+                        }
+                        .map_err(|_| error("RDP session reactivation failed."))?;
+                        if let Some(length) = written.size() {
+                            framed.write_all(&output[..length])?;
+                        }
+                    }
+                    framed
+                        .get_inner()
+                        .0
+                        .sock
+                        .set_read_timeout(Duration::from_millis(30))?;
+                    ctx.request_repaint();
+                }
                 _ => {}
             }
         }
+    }
+}
+
+pub(crate) fn display_dimensions(width: u32, height: u32) -> [u32; 2] {
+    [width.clamp(200, 4096) & !1, height.clamp(200, 4096)]
+}
+
+fn fit_server_limit(width: u32, height: u32, area: u64) -> Option<[u32; 2]> {
+    if area < 40_000 {
+        return None;
+    }
+    if u64::from(width) * u64::from(height) <= area {
+        return Some([width, height]);
+    }
+    let scale = (area as f64 / (f64::from(width) * f64::from(height))).sqrt();
+    let [width, height] = display_dimensions(
+        (f64::from(width) * scale) as u32,
+        (f64::from(height) * scale) as u32,
+    );
+    let height = height.min((area / u64::from(width)) as u32);
+    if height < 200 {
+        Some([width.min((area / 200) as u32 & !1), 200])
+    } else {
+        Some([width, height])
     }
 }
 
@@ -325,7 +456,16 @@ fn config(host: &SshRemoteHost, profile: &RdpProfile, password: &str) -> connect
         ime_file_name: String::new(),
         dig_product_id: String::new(),
         desktop_size: connector::DesktopSize { width, height },
-        bitmap: None,
+        bitmap: ironrdp::pdu::rdp::capability_sets::client_codecs_capabilities(&[])
+            .ok()
+            .map(|codecs| connector::BitmapConfig {
+                color_depth: match profile.color_depth {
+                    16 | 24 => u32::from(profile.color_depth),
+                    _ => 32,
+                },
+                lossy_compression: false,
+                codecs,
+            }),
         client_build: 0,
         client_name: "ServerLauncher".into(),
         client_dir: String::new(),
@@ -348,5 +488,21 @@ fn config(host: &SshRemoteHost, profile: &RdpProfile, password: &str) -> connect
         timezone_info: TimezoneInfo::default(),
         alternate_shell: String::new(),
         work_dir: String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_remote_resize_and_respects_server_area() {
+        assert_eq!(display_dimensions(1001, 9000), [1000, 4096]);
+        assert_eq!(display_dimensions(1, 1), [200, 200]);
+        assert_eq!(fit_server_limit(1024, 768, 1_000_000), Some([1024, 768]));
+        assert_eq!(fit_server_limit(200, 4096, 40_000), Some([200, 200]));
+        assert!(fit_server_limit(200, 200, 39_999).is_none());
+        let [width, height] = fit_server_limit(4000, 3000, 510_000).unwrap();
+        assert!(width % 2 == 0 && width * height <= 510_000);
     }
 }

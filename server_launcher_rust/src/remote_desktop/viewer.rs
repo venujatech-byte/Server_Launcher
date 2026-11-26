@@ -2,7 +2,7 @@ use super::{
     credentials::DesktopProtocol,
     framebuffer::{Framebuffer, Region},
     input::Capture,
-    profile::Scaling,
+    profile::{Resolution, Scaling},
     vnc::Connection,
 };
 use crate::{config::ConfigFile, theme::ThemeMode};
@@ -41,6 +41,11 @@ pub(crate) fn run(
         .as_ref()
         .and_then(|host| host.vnc.as_ref())
         .is_some_and(|profile| protocol == DesktopProtocol::Vnc && profile.view_only);
+    let dynamic_resize = protocol == DesktopProtocol::Rdp
+        && viewer_host
+            .as_ref()
+            .and_then(|host| host.rdp.as_ref())
+            .is_some_and(|profile| profile.resolution == Resolution::FitWindow);
     let config_path = path.to_owned();
     let palette = ThemeMode::from_id_str(theme).palette();
     let options = eframe::NativeOptions {
@@ -92,6 +97,8 @@ pub(crate) fn run(
                 texture: None,
                 scaling,
                 fullscreen: false,
+                dynamic_resize,
+                last_window_size: None,
                 test_pattern,
                 view_only,
                 capture: Capture::default(),
@@ -113,6 +120,8 @@ struct Viewer {
     texture: Option<egui::TextureHandle>,
     scaling: Scaling,
     fullscreen: bool,
+    dynamic_resize: bool,
+    last_window_size: Option<[u32; 2]>,
     view_only: bool,
     capture: Capture,
     host_name: String,
@@ -362,6 +371,16 @@ impl eframe::App for Viewer {
         });
         self.screenshot_notification(ctx);
         egui::CentralPanel::default().show(ctx, |ui| {
+            if self.dynamic_resize && connected {
+                let size = ui.available_size() * ctx.pixels_per_point();
+                let dimensions = super::rdp::display_dimensions(size.x as u32, size.y as u32);
+                if self.last_window_size != Some(dimensions) {
+                    self.last_window_size = Some(dimensions);
+                    if let Some(connection) = &self.connection {
+                        connection.lock().unwrap().resize_request = Some(dimensions);
+                    }
+                }
+            }
             let Some(texture) = &self.texture else {
                 ui.centered_and_justified(|ui| ui.label(&status));
                 return;

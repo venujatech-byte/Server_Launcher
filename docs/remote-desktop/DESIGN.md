@@ -140,7 +140,7 @@ its own working copy and does not log connector errors or credentials.
 
 Initial dimensions are validated before allocating the decoded framebuffer.
 Damage from the graphics stage feeds the common partial texture renderer.
-Reactivation, input, display control, and redirection channels are separate work.
+Input and display control are wired separately from graphics. Redirection channels remain pending.
 IronRDP and its blocking adapter are available under MIT or Apache-2.0.
 
 RDP keyboard and pointer events use IronRDP fast-path input on the worker that
@@ -169,3 +169,12 @@ The writer publishes a completed PNG without overwriting an existing file.
 The viewer reports the result with open-file and show-folder actions.
 Custom capture folders, clipboard copies, and host-key shortcuts remain
 pending.
+
+
+In Fit Window mode, RDP sends a single-monitor display request after the
+window has settled for 180 ms. Requests are bounded by local framebuffer
+limits and the server's advertised monitor area. Server reactivation updates
+the share ID and graphics decoder and allocates a validated framebuffer for
+the new size. The selected color depth is advertised as a preference.
+Dimension normalization has unit coverage. A live resize against Windows
+RDP or xrdp still needs verification.

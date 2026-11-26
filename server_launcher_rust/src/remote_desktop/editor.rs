@@ -66,6 +66,16 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
                 (RdpSecurity::Tls, "TLS"),
             ],
         );
+        choice(
+            ui,
+            "Display painting",
+            &mut profile.painting,
+            &[
+                (RdpPainting::Smooth, "Smooth"),
+                (RdpPainting::Fast, "Fast / crisp"),
+            ],
+        );
+        ui.label("Smooth filtering blends scaled pixels; Fast uses sharper nearest-neighbor sampling.");
         color_depth(ui, &mut profile.color_depth);
         choice(
             ui,

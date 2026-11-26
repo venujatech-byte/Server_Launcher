@@ -2,7 +2,7 @@ use super::{
     credentials::DesktopProtocol,
     framebuffer::{Framebuffer, Region},
     input::Capture,
-    profile::{Clipboard, Resolution, Scaling},
+    profile::{Clipboard, RdpPainting, Resolution, Scaling},
     vnc::{Connection, Input},
 };
 use crate::{config::ConfigFile, theme::ThemeMode};
@@ -44,6 +44,10 @@ pub(crate) fn run(
         .and_then(|host| host.vnc.as_ref())
         .filter(|_| protocol == DesktopProtocol::Vnc)
         .map_or(Scaling::Fit, |profile| profile.scaling);
+    let rdp_painting = profile
+        .and_then(|host| host.rdp.as_ref())
+        .filter(|_| protocol == DesktopProtocol::Rdp)
+        .map_or(RdpPainting::Smooth, |profile| profile.painting);
     let viewer_host = profile.filter(|_| !test_pattern).cloned();
     let confirm_unencrypted_vnc = viewer_host
         .as_ref()
@@ -126,6 +130,7 @@ pub(crate) fn run(
                 recording_format,
                 texture: None,
                 scaling,
+                rdp_painting,
                 fullscreen: false,
                 toolbar_pinned: true,
                 toolbar_until: None,
@@ -194,6 +199,7 @@ struct Viewer {
     recording_format: crate::config::RemoteRecordingFormat,
     texture: Option<egui::TextureHandle>,
     scaling: Scaling,
+    rdp_painting: RdpPainting,
     fullscreen: bool,
     toolbar_pinned: bool,
     toolbar_until: Option<Instant>,
@@ -565,17 +571,24 @@ impl eframe::App for Viewer {
             self.fps_sample = None;
             self.fps = 0.0;
         }
+        let texture_options = if self.protocol == DesktopProtocol::Rdp
+            && self.rdp_painting == RdpPainting::Fast
+        {
+            egui::TextureOptions::NEAREST
+        } else {
+            egui::TextureOptions::LINEAR
+        };
         for update in updates {
             match self.texture.as_mut() {
                 Some(texture) if !update.resized => {
-                    texture.set_partial(update.origin, update.image, egui::TextureOptions::LINEAR);
+                    texture.set_partial(update.origin, update.image, texture_options);
                 }
-                Some(texture) => texture.set(update.image, egui::TextureOptions::LINEAR),
+                Some(texture) => texture.set(update.image, texture_options),
                 None => {
                     self.texture = Some(ctx.load_texture(
                         "remote-frame",
                         update.image,
-                        egui::TextureOptions::LINEAR,
+                        texture_options,
                     ));
                 }
             }

@@ -26,6 +26,7 @@ choices!(Resolution {
     Fixed,
     MatchLocalScreen
 });
+choices!(RdpPainting { Smooth, Fast });
 choices!(Audio { Local, Off });
 choices!(Clipboard {
     Both,
@@ -65,6 +66,7 @@ pub(crate) struct RdpProfile {
     pub domain: String,
     pub same_username_as_ssh: bool,
     pub security: RdpSecurity,
+    pub painting: RdpPainting,
     pub color_depth: u8,
     pub resolution: Resolution,
     pub width: u16,
@@ -95,6 +97,7 @@ impl Default for RdpProfile {
             domain: String::new(),
             same_username_as_ssh: false,
             security: RdpSecurity::Auto,
+            painting: RdpPainting::Smooth,
             color_depth: 32,
             resolution: Resolution::FitWindow,
             width: 1920,

@@ -65,8 +65,13 @@ network or the host's configured SSH tunnel.
    the configured size cap. Confirm received content is not echoed back.
 8. Test TLS-only explicitly against a server configured for TLS. Auto must not
    silently downgrade from NLA to legacy unencrypted RDP.
-9. Test network loss, server disconnect, retry, and close while input keys are
-   held. Confirm all remote keys/buttons are released on focus loss and close.
+9. Start with the server unavailable, then make it available during the retry
+   window and confirm the initial connection is retried. Confirm an
+   auto-reconnecting session makes at most five attempts after a failure, then
+   leaves the final error visible (or closes when Close on connection failure
+   is enabled). Test a disconnect after a stable session as well, and close
+   while input keys are held. Confirm all remote keys/buttons are released on
+   focus loss and close.
 
 The renderer accepts legacy bitmap updates and EGFX updates. EGFX AVC/H.264
 decoding is not enabled, so confirm the server negotiates one of the supported

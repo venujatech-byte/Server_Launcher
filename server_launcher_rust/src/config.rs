@@ -199,6 +199,14 @@ impl Default for SshIdleSettings {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteRecordingFormat {
+    #[default]
+    Mp4,
+    PngSequence,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RemoteDesktopSettings {
@@ -209,6 +217,7 @@ pub struct RemoteDesktopSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recording_folder: Option<PathBuf>,
     pub recording_fps: u32,
+    pub recording_format: RemoteRecordingFormat,
 }
 
 impl Default for RemoteDesktopSettings {
@@ -219,6 +228,7 @@ impl Default for RemoteDesktopSettings {
             screenshot_folder: None,
             recording_folder: None,
             recording_fps: 30,
+            recording_format: RemoteRecordingFormat::Mp4,
         }
     }
 }
@@ -520,6 +530,7 @@ mod tests {
         assert!(config.remote_desktop.screenshot_folder.is_none());
         assert!(config.remote_desktop.recording_folder.is_none());
         assert_eq!(config.remote_desktop.recording_fps, 30);
+        assert_eq!(config.remote_desktop.recording_format, RemoteRecordingFormat::Mp4);
     }
 
     #[test]

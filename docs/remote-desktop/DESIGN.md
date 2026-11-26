@@ -190,8 +190,9 @@ shortcuts remain pending.
 Recordings use FFmpeg H.264 at 30 fps when available and fall back to a PNG
 sequence when FFmpeg is missing. The recording destination and frame rate
 (15, 24, 30, or 60 FPS) are configurable in Remote Desktop settings, with
-Pictures/ServerLauncher and 30 FPS as defaults. Choosing a video format and
-encoding other than H.264 MP4 remain pending.
+Pictures/ServerLauncher and 30 FPS as defaults. Users can select MP4 (H.264)
+or a PNG sequence directly; the PNG fallback remains available when FFmpeg is
+missing.
 
 
 In Fit Window mode, RDP sends a single-monitor display request after the

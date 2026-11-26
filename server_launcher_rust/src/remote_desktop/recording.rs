@@ -1,7 +1,7 @@
 use super::vnc::Connection;
 use std::{
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -26,6 +26,7 @@ impl Recording {
         ctx: egui::Context,
         folder: Option<PathBuf>,
         fps: u32,
+        format: crate::config::RemoteRecordingFormat,
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let cancelled = stop.clone();
@@ -45,6 +46,7 @@ impl Recording {
                 &worker_bytes,
                 folder,
                 fps,
+                format,
             ));
             ctx.request_repaint();
         });
@@ -96,6 +98,7 @@ fn record(
     output_bytes: &AtomicU64,
     folder: Option<PathBuf>,
     fps: u32,
+    format: crate::config::RemoteRecordingFormat,
 ) -> Result<PathBuf, String> {
     let fps = normalize_fps(fps);
     let interval = Duration::from_secs_f64(1.0 / f64::from(fps));
@@ -124,8 +127,21 @@ fn record(
     let size = first_frame.0.size;
     let folder = recording_folder(folder)?;
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
-    let fps_arg = fps.to_string();
     let prefix = format!("remote-{}-", chrono::Local::now().format("%Y%m%d-%H%M%S"));
+    if format == crate::config::RemoteRecordingFormat::PngSequence {
+        return save_png_sequence(
+            connection,
+            stop,
+            paused,
+            first_frame,
+            &folder,
+            &prefix,
+            interval,
+            progress,
+            output_bytes,
+        );
+    }
+    let fps_arg = fps.to_string();
     let output = tempfile::Builder::new()
         .prefix(&prefix)
         .suffix(".mp4")
@@ -179,42 +195,17 @@ fn record(
     let mut child = match child {
         Ok(child) => child,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let sequence = tempfile::Builder::new()
-                .prefix(&prefix)
-                .tempdir_in(&folder)
-                .map_err(|error| error.to_string())?;
-            let mut index = 0_u64;
-            let result = sample_frames(
+            return save_png_sequence(
                 connection,
                 stop,
                 paused,
                 first_frame,
+                &folder,
+                &prefix,
                 interval,
-                |frame, _| {
-                    let path = super::screenshot::save_in(
-                        frame,
-                        sequence.path(),
-                        &format!("frame-{index:08}"),
-                    )
-                    .map_err(|error| error.to_string())?;
-                    if let Ok(metadata) = std::fs::metadata(path) {
-                        output_bytes.fetch_add(metadata.len(), Ordering::Relaxed);
-                    }
-                    index += 1;
-                    progress.store(index * frame_micros, Ordering::Relaxed);
-                    Ok(())
-                },
+                progress,
+                output_bytes,
             );
-            if index != 0 {
-                let path = sequence.keep();
-                result.map_err(|error| {
-                    format!("{error} Partial PNG sequence saved to {}", path.display())
-                })?;
-                return Ok(path);
-            }
-            return Err(result
-                .err()
-                .unwrap_or_else(|| "No recording frames were saved.".into()));
         }
         Err(error) => return Err(format!("Could not start FFmpeg: {error}")),
     };
@@ -251,6 +242,55 @@ fn record(
         return Err(format!("FFmpeg could not encode the recording ({status})."));
     }
     output.keep().map_err(|error| error.to_string())
+}
+
+fn save_png_sequence(
+    connection: &Mutex<Connection>,
+    stop: &AtomicBool,
+    paused: &AtomicBool,
+    first_frame: (egui::ColorImage, u64),
+    folder: &Path,
+    prefix: &str,
+    interval: Duration,
+    progress: &AtomicU64,
+    output_bytes: &AtomicU64,
+) -> Result<PathBuf, String> {
+    let sequence = tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir_in(folder)
+        .map_err(|error| error.to_string())?;
+    let mut index = 0_u64;
+    let result = sample_frames(
+        connection,
+        stop,
+        paused,
+        first_frame,
+        interval,
+        |frame, _| {
+            let path = super::screenshot::save_in(
+                frame,
+                sequence.path(),
+                &format!("frame-{index:08}"),
+            )
+            .map_err(|error| error.to_string())?;
+            if let Ok(metadata) = std::fs::metadata(path) {
+                output_bytes.fetch_add(metadata.len(), Ordering::Relaxed);
+            }
+            index += 1;
+            progress.store(index * interval.as_micros() as u64, Ordering::Relaxed);
+            Ok(())
+        },
+    );
+    if index != 0 {
+        let path = sequence.keep();
+        result.map_err(|error| {
+            format!("{error} Partial PNG sequence saved to {}", path.display())
+        })?;
+        return Ok(path);
+    }
+    Err(result
+        .err()
+        .unwrap_or_else(|| "No recording frames were saved.".into()))
 }
 
 fn recording_folder(folder: Option<PathBuf>) -> Result<PathBuf, String> {

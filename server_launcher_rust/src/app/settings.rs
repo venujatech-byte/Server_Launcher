@@ -776,6 +776,26 @@ impl LauncherApp {
                                                     }
                                                 });
                                         });
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("Recording format").size(12.0).strong().color(palette.text_primary));
+                                            egui::ComboBox::from_id_salt("remote_recording_format")
+                                                .selected_text(match self.remote_desktop_settings.recording_format {
+                                                    crate::config::RemoteRecordingFormat::Mp4 => "MP4 (H.264)",
+                                                    crate::config::RemoteRecordingFormat::PngSequence => "PNG sequence",
+                                                })
+                                                .show_ui(ui, |ui| {
+                                                    ui.selectable_value(
+                                                        &mut self.remote_desktop_settings.recording_format,
+                                                        crate::config::RemoteRecordingFormat::Mp4,
+                                                        "MP4 (H.264)",
+                                                    );
+                                                    ui.selectable_value(
+                                                        &mut self.remote_desktop_settings.recording_format,
+                                                        crate::config::RemoteRecordingFormat::PngSequence,
+                                                        "PNG sequence",
+                                                    );
+                                                });
+                                        });
                                         ui.add_space(12.0);
                                         ui.label(RichText::new("Trusted RDP certificates").size(13.0).strong().color(palette.text_primary));
                                         match &saved_pins {

@@ -333,8 +333,7 @@ mod tests {
     #[test]
     fn keyboard_capture_forwards_keys_without_a_canvas_click() {
         let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(100.0, 50.0));
-        let mut capture = Capture::default();
-        capture.set_keyboard_capture(true, |_| {});
+        let mut capture = Capture::new(false, false);
         let mut packets = Vec::new();
         capture.events(
             &[Event::Key {
@@ -370,12 +369,6 @@ mod tests {
                 pressed: false,
             })
         );
-    }
-
-    #[test]
-    fn keyboard_capture_is_enabled_by_default_for_remote_focus() {
-        let capture = Capture::new(false, false);
-        assert!(capture.keyboard_capture());
     }
 
     #[test]

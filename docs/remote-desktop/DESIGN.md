@@ -184,12 +184,12 @@ profiles still need runtime validation on Windows and real VNC/RDP servers.
 
 ## Viewer input
 
-Clicking the remote canvas captures pointer input and enables keyboard input.
-The Keyboard toolbar toggle also enables keyboard input without a canvas click
-while the viewer window is focused. On focus loss or a click outside the
-canvas, the viewer releases tracked keys, modifiers and buttons. The keyboard
-toggle remains enabled across focus changes so native capture can resume when
-the viewer regains focus.
+Clicking the remote canvas captures pointer input. Keyboard input is enabled
+while the viewer window is focused, without needing to click the canvas; the
+Keyboard toolbar toggle opts out. On focus loss or a click outside the canvas,
+the viewer releases tracked keys, modifiers and buttons. Keyboard capture
+remains enabled across focus changes so native capture can resume when the
+viewer regains focus.
 The VNC worker omits its input channel in view-only mode. A bounded queue
 disconnects on overflow so a key release cannot silently disappear. Pointer
 coordinates follow the displayed canvas and are clamped during a drag.

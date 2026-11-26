@@ -29,19 +29,26 @@ use ironrdp::{
             client_info::{CompressionType, PerformanceFlags, TimezoneInfo},
         },
     },
+    rdpsnd::{
+        client::{
+            Clock, RdpsndClientHandler, RdpsndDvcState, DVC_CHANNEL_NAME, LOSSY_DVC_CHANNEL_NAME,
+        },
+        pdu::{AudioFormat, AudioFormatFlags, PitchPdu, QualityMode, VolumePdu},
+    },
     session::{fast_path, image::DecodedImage, ActiveStageBuilder, ActiveStageOutput},
 };
 use ironrdp_blocking::Framed;
 use ironrdp_egfx::client::{GraphicsPipelineClient, GraphicsPipelineHandler};
 use ironrdp_egfx::decode::H264Decoder;
 use std::{
+    borrow::Cow,
     io,
     net::{SocketAddr, TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc::{self, SyncSender},
-        Arc, Mutex,
+        Arc, Mutex, PoisonError,
     },
     time::{Duration, Instant},
 };
@@ -50,6 +57,69 @@ use x509_cert::der::Decode;
 const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const AUDIO_INPUT_QUEUE: usize = 64;
+
+#[derive(Debug, Clone)]
+struct SharedPlayback {
+    backend: Arc<Mutex<ironrdp_rdpsnd_native::cpal::RdpsndBackend>>,
+    formats: Arc<[AudioFormat]>,
+}
+
+impl SharedPlayback {
+    fn new() -> Self {
+        let backend = ironrdp_rdpsnd_native::cpal::RdpsndBackend::new();
+        let formats = backend.get_formats().to_vec().into();
+        Self {
+            backend: Arc::new(Mutex::new(backend)),
+            formats,
+        }
+    }
+
+    fn with_backend<T>(
+        &self,
+        f: impl FnOnce(&mut ironrdp_rdpsnd_native::cpal::RdpsndBackend) -> T,
+    ) -> T {
+        f(&mut self.backend.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+}
+
+impl RdpsndClientHandler for SharedPlayback {
+    fn get_flags(&self) -> AudioFormatFlags {
+        self.with_backend(|backend| backend.get_flags())
+    }
+
+    fn get_formats(&self) -> &[AudioFormat] {
+        &self.formats
+    }
+
+    fn choose_formats(&self, formats: &[AudioFormat]) -> Vec<AudioFormat> {
+        self.with_backend(|backend| backend.choose_formats(formats))
+    }
+
+    fn wave(&mut self, format: &AudioFormat, timestamp: u32, data: Cow<'_, [u8]>) {
+        self.with_backend(|backend| backend.wave(format, timestamp, data));
+    }
+
+    fn playback_latency(&self) -> Duration {
+        self.with_backend(|backend| backend.playback_latency())
+    }
+
+    fn set_volume(&mut self, volume: VolumePdu) {
+        self.with_backend(|backend| backend.set_volume(volume));
+    }
+
+    fn set_pitch(&mut self, pitch: PitchPdu) {
+        self.with_backend(|backend| backend.set_pitch(pitch));
+    }
+
+    fn close(&mut self) {
+        self.with_backend(ironrdp_rdpsnd_native::cpal::RdpsndBackend::close);
+    }
+}
+
+fn audio_clock() -> Clock {
+    let origin = Instant::now();
+    Box::new(move || origin.elapsed())
+}
 
 struct AudioInputListener {
     sender: SyncSender<(DynamicChannelId, Vec<ironrdp::svc::SvcMessage>)>,
@@ -167,15 +237,19 @@ fn run(
             )),
         )));
     }
-    if profile.audio == Audio::Local {
+    let playback = if profile.audio == Audio::Local {
+        let playback = SharedPlayback::new();
         connector.attach_static_channel(ironrdp::rdpsnd::client::Rdpsnd::new(Box::new(
-            ironrdp_rdpsnd_native::cpal::RdpsndBackend::new(),
+            playback.clone(),
         )));
         connector.attach_static_channel(ironrdp::rdpdr::Rdpdr::new(
             Box::new(ironrdp::rdpdr::NoopRdpdrBackend),
             "ServerLauncher".into(),
         ));
-    }
+        Some(playback)
+    } else {
+        None
+    };
     let max_monitor_area = Arc::new(AtomicU64::new(0));
     let server_limit = max_monitor_area.clone();
     let resize_state = state.clone();
@@ -183,6 +257,15 @@ fn run(
     let multi_monitor = profile.multi_monitor;
     let [desktop_width, desktop_height] = initial_dimensions(profile, monitor_size).map(u32::from);
     let mut drdynvc = DrdynvcClient::new();
+    if let Some(playback) = playback {
+        let state = RdpsndDvcState::new(Box::new(playback))
+            .with_quality_mode(QualityMode::Dynamic)
+            .with_clock(audio_clock());
+        let lossy = state.clone();
+        drdynvc = drdynvc
+            .with_dynamic_channel_factory(DVC_CHANNEL_NAME, move || state.channel())
+            .with_dynamic_channel_factory(LOSSY_DVC_CHANNEL_NAME, move || lossy.lossy_channel());
+    }
     let (audio_input_tx, audio_input_rx) = mpsc::sync_channel(AUDIO_INPUT_QUEUE);
     if profile.mic {
         drdynvc = drdynvc.with_listener(AudioInputListener {

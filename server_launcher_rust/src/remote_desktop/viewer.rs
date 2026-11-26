@@ -293,7 +293,7 @@ struct Viewer {
     host_name: String,
     protocol: DesktopProtocol,
     confirm_unencrypted_vnc: bool,
-    clipboard_notice: Option<(Instant, &'static str)>,
+    clipboard_notice: Option<(Instant, String)>,
     copy_screenshot: bool,
     screenshot_clipboard: Option<arboard::Clipboard>,
     screenshot_queued: bool,
@@ -356,11 +356,14 @@ impl Viewer {
                         match result {
                             Ok(clipboard) => {
                                 self.screenshot_clipboard = Some(clipboard);
-                                self.clipboard_notice = Some((Instant::now(), "Screenshot copied"));
+                                self.clipboard_notice =
+                                    Some((Instant::now(), "Screenshot copied".into()));
                             }
                             Err(_) => {
-                                self.clipboard_notice =
-                                    Some((Instant::now(), "Screenshot clipboard unavailable"));
+                                self.clipboard_notice = Some((
+                                    Instant::now(),
+                                    "Screenshot clipboard unavailable".into(),
+                                ));
                             }
                         }
                     }
@@ -593,7 +596,7 @@ impl eframe::App for Viewer {
         ) = if let Some(connection) = &self.connection {
             let mut connection = connection.lock().unwrap();
             if connection.clipboard_sent.swap(false, Ordering::Relaxed) {
-                self.clipboard_notice = Some((Instant::now(), "Clipboard sent"));
+                self.clipboard_notice = Some((Instant::now(), "Clipboard sent".into()));
             }
             if connection
                 .clipboard_unsupported
@@ -601,22 +604,22 @@ impl eframe::App for Viewer {
             {
                 self.clipboard_notice = Some((
                     Instant::now(),
-                    "Classic VNC supports Latin-1 text only; images are unsupported",
+                    "Classic VNC supports Latin-1 text only; images are unsupported".into(),
                 ));
             }
             if std::mem::take(&mut connection.clipboard_too_large) {
-                self.clipboard_notice = Some((Instant::now(), "Clipboard exceeds the 1 MiB limit"));
+                self.clipboard_notice =
+                    Some((Instant::now(), "Clipboard exceeds the 1 MiB limit".into()));
             }
             if let Some(text) = connection.clipboard_text.take() {
-                self.clipboard_notice = Some((Instant::now(), "Clipboard received"));
                 if let Some(clipboard) = &self.clipboard_sync {
                     clipboard.set_remote_text(text);
                 } else {
+                    self.clipboard_notice = Some((Instant::now(), "Clipboard received".into()));
                     ctx.copy_text(text);
                 }
             }
             if let Some(image) = connection.clipboard_image.take() {
-                self.clipboard_notice = Some((Instant::now(), "Clipboard image received"));
                 if let Some(clipboard) = &self.clipboard_sync {
                     clipboard.set_remote_image(image);
                 }
@@ -686,6 +689,9 @@ impl eframe::App for Viewer {
         }
         if let Some(clipboard) = &self.clipboard_sync {
             clipboard.set_focused(connected && ctx.input(|input| input.focused));
+            if let Some(notice) = clipboard.take_notice() {
+                self.clipboard_notice = Some((Instant::now(), notice.into()));
+            }
             if connected && self.send_clipboard {
                 if let Some(connection) = &self.connection {
                     if let Some(pending) = clipboard.take_pending() {
@@ -823,7 +829,7 @@ impl eframe::App for Viewer {
                                 .is_err()
                             {
                                 self.clipboard_notice =
-                                    Some((Instant::now(), "Could not open settings"));
+                                    Some((Instant::now(), "Could not open settings".into()));
                             }
                         }
                         if ui.button("Retry").clicked() {
@@ -1072,7 +1078,7 @@ impl eframe::App for Viewer {
                 .response
                 .rect;
         }
-        if let Some((shown, label)) = self.clipboard_notice {
+        if let Some((shown, label)) = self.clipboard_notice.clone() {
             let remaining = Duration::from_secs(2).saturating_sub(shown.elapsed());
             if !remaining.is_zero() {
                 egui::Area::new(egui::Id::new("clipboard_activity"))

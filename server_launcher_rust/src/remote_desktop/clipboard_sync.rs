@@ -15,6 +15,7 @@ pub(crate) struct ClipboardSync {
     stopped: Arc<AtomicBool>,
     remote: Arc<Mutex<Option<PendingClipboard>>>,
     pending_local: Arc<Mutex<Option<PendingClipboard>>>,
+    notice: Arc<Mutex<Option<&'static str>>>,
 }
 
 pub(crate) enum PendingClipboard {
@@ -26,26 +27,47 @@ fn queue_latest(slot: &Mutex<Option<PendingClipboard>>, value: PendingClipboard)
     *slot.lock().unwrap() = Some(value);
 }
 
+fn take_notice(slot: &Mutex<Option<&'static str>>) -> Option<&'static str> {
+    slot.lock().unwrap().take()
+}
+
+fn report_notice(slot: &Mutex<Option<&'static str>>, notice: &'static str) {
+    *slot.lock().unwrap() = Some(notice);
+}
+
 impl ClipboardSync {
     pub(crate) fn start(ctx: egui::Context, read_local: bool) -> Self {
         let focused = Arc::new(AtomicBool::new(false));
         let stopped = Arc::new(AtomicBool::new(false));
         let remote = Arc::new(Mutex::new(None::<PendingClipboard>));
         let pending_local = Arc::new(Mutex::new(None::<PendingClipboard>));
+        let notice = Arc::new(Mutex::new(None));
         let (worker_focus, worker_stopped) = (focused.clone(), stopped.clone());
-        let (worker_remote, worker_pending_local) = (remote.clone(), pending_local.clone());
+        let (worker_remote, worker_pending_local, worker_notice) =
+            (remote.clone(), pending_local.clone(), notice.clone());
 
         thread::spawn(move || {
             let mut clipboard = None;
             let mut last_text = None;
             let mut last_image = None;
+            let mut init_notice_sent = false;
+            let mut remote_write_failed = false;
             while !worker_stopped.load(Ordering::Acquire) {
                 if clipboard.is_none() {
                     clipboard = arboard::Clipboard::new().ok();
                     if clipboard.is_none() {
+                        if !init_notice_sent {
+                            report_notice(
+                                &worker_notice,
+                                "This device's clipboard is unavailable; retrying.",
+                            );
+                            ctx.request_repaint();
+                            init_notice_sent = true;
+                        }
                         thread::sleep(Duration::from_secs(1));
                         continue;
                     }
+                    init_notice_sent = false;
                 }
                 if worker_focus.load(Ordering::Acquire) {
                     let Some(clipboard) = clipboard.as_mut() else {
@@ -57,7 +79,21 @@ impl ClipboardSync {
                             PendingClipboard::Text(text) => {
                                 if clipboard.set_text(text.clone()).is_ok() {
                                     last_text = Some(text);
+                                    remote_write_failed = false;
+                                    report_notice(
+                                        &worker_notice,
+                                        "Remote clipboard copied to this device.",
+                                    );
+                                    ctx.request_repaint();
                                 } else {
+                                    if !remote_write_failed {
+                                        report_notice(
+                                            &worker_notice,
+                                            "Could not write the remote clipboard here; retrying.",
+                                        );
+                                        ctx.request_repaint();
+                                    }
+                                    remote_write_failed = true;
                                     let mut pending = worker_remote.lock().unwrap();
                                     if pending.is_none() {
                                         *pending = Some(PendingClipboard::Text(text));
@@ -75,7 +111,21 @@ impl ClipboardSync {
                                     .is_ok()
                                 {
                                     last_image = Some(fingerprint);
+                                    remote_write_failed = false;
+                                    report_notice(
+                                        &worker_notice,
+                                        "Remote clipboard image copied to this device.",
+                                    );
+                                    ctx.request_repaint();
                                 } else {
+                                    if !remote_write_failed {
+                                        report_notice(
+                                            &worker_notice,
+                                            "Could not write the remote image clipboard here; retrying.",
+                                        );
+                                        ctx.request_repaint();
+                                    }
+                                    remote_write_failed = true;
                                     let mut pending = worker_remote.lock().unwrap();
                                     if pending.is_none() {
                                         *pending = Some(PendingClipboard::Image(image));
@@ -131,6 +181,7 @@ impl ClipboardSync {
             stopped,
             remote,
             pending_local,
+            notice,
         }
     }
 
@@ -148,6 +199,10 @@ impl ClipboardSync {
 
     pub(crate) fn take_pending(&self) -> Option<PendingClipboard> {
         self.pending_local.lock().unwrap().take()
+    }
+
+    pub(crate) fn take_notice(&self) -> Option<&'static str> {
+        take_notice(&self.notice)
     }
 }
 
@@ -215,5 +270,13 @@ mod tests {
             slot.into_inner().unwrap(),
             Some(PendingClipboard::Text(text)) if text == "new text"
         ));
+    }
+
+    #[test]
+    fn clipboard_notice_is_consumed_once() {
+        let slot = Mutex::new(None);
+        report_notice(&slot, "clipboard unavailable");
+        assert_eq!(take_notice(&slot), Some("clipboard unavailable"));
+        assert_eq!(take_notice(&slot), None);
     }
 }

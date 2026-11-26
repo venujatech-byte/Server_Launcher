@@ -16,7 +16,10 @@ use ironrdp::{
     },
     connector::{self, connection_activation::ConnectionActivationState, sspi, Sequence},
     core::WriteBuf,
-    displaycontrol::client::DisplayControlClient,
+    displaycontrol::{
+        client::DisplayControlClient,
+        pdu::{DisplayControlMonitorLayout, DisplayControlPdu, MonitorLayoutEntry},
+    },
     dvc::DrdynvcClient,
     graphics::image_processing::PixelFormat,
     pdu::{
@@ -123,13 +126,29 @@ fn run(
     let server_limit = max_monitor_area.clone();
     let resize_state = state.clone();
     let resize_ctx = ctx.clone();
+    let multi_monitor = profile.multi_monitor;
+    let [desktop_width, desktop_height] = initial_dimensions(profile, monitor_size).map(u32::from);
     connector.attach_static_channel(DrdynvcClient::new().with_dynamic_channel(
         DisplayControlClient::new(move |capabilities| {
             let limit = capabilities.max_monitor_area();
             server_limit.store(limit, Ordering::Release);
             resize_state.lock().unwrap().rdp_resize_supported = limit != 0;
             resize_ctx.request_repaint();
-            Ok(Vec::new())
+            let layout = if multi_monitor {
+                dual_monitor_layout(desktop_width, desktop_height, limit)
+            } else {
+                None
+            };
+            if multi_monitor && layout.is_none() {
+                resize_state.lock().unwrap().status =
+                    "The RDP server did not report enough display area for two monitors.".into();
+            }
+            Ok(layout
+                .map(|layout| {
+                    let pdu: DisplayControlPdu = layout.into();
+                    vec![Box::new(pdu) as ironrdp::dvc::DvcMessage]
+                })
+                .unwrap_or_default())
         }),
     ));
     drop(password);
@@ -587,6 +606,39 @@ fn initial_dimensions(profile: &RdpProfile, monitor_size: Option<[u32; 2]>) -> [
         Resolution::MatchLocalScreen => monitor_size.unwrap_or([1280, 720]).map(|size| size as u16),
         Resolution::FitWindow => [1280, 720],
     }
+}
+
+fn dual_monitor_layout(
+    width: u32,
+    height: u32,
+    max_monitor_area: u64,
+) -> Option<DisplayControlMonitorLayout> {
+    let monitor_width = (width.min(8192) / 2) & !1;
+    if monitor_width < 200 || !(200..=8192).contains(&height) {
+        return None;
+    }
+    let layout_area = u64::from(monitor_width) * u64::from(height) * 2;
+    if layout_area > max_monitor_area {
+        return None;
+    }
+    let primary = MonitorLayoutEntry::new_primary(monitor_width, height).ok()?;
+    let secondary = MonitorLayoutEntry::new_secondary(monitor_width, height)
+        .ok()?
+        .with_position(monitor_width as i32, 0)
+        .ok()?;
+    DisplayControlMonitorLayout::new(&[primary, secondary]).ok()
+}
+
+#[cfg(test)]
+#[test]
+fn multi_monitor_layout_fits_area_and_places_two_outputs_side_by_side() {
+    let layout = dual_monitor_layout(1920, 1080, 1920 * 1080).unwrap();
+    assert_eq!(layout.monitors().len(), 2);
+    assert!(layout.monitors()[0].is_primary());
+    assert_eq!(layout.monitors()[0].position(), Some((0, 0)));
+    assert_eq!(layout.monitors()[0].dimensions(), (960, 1080));
+    assert_eq!(layout.monitors()[1].position(), Some((960, 0)));
+    assert!(dual_monitor_layout(1920, 1080, 100).is_none());
 }
 
 fn config(

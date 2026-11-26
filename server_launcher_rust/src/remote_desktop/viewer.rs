@@ -72,7 +72,9 @@ pub(crate) fn run(
         && viewer_host
             .as_ref()
             .and_then(|host| host.rdp.as_ref())
-            .is_some_and(|profile| profile.resolution == Resolution::FitWindow);
+            .is_some_and(|profile| {
+                profile.resolution == Resolution::FitWindow && !profile.multi_monitor
+            });
     let send_clipboard = viewer_host
         .as_ref()
         .and_then(|host| match protocol {

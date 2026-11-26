@@ -115,7 +115,8 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
                 );
             });
         }
-        ui.checkbox(&mut profile.multi_monitor, "Multi-monitor");
+        ui.checkbox(&mut profile.multi_monitor, "Two side-by-side remote monitors");
+        ui.label("Uses the selected resolution as a combined display; server support is required.");
         let mut layout = profile.keyboard_layout;
         choice(
             ui,

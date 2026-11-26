@@ -195,7 +195,8 @@ the two extended side buttons with MouseEventEx. The viewer forwards committed
 non-ASCII egui IME text where the platform backend provides commit events;
 preedit candidates are not sent. Linux egui-winit 0.29 drops IME events, so
 Linux composition still depends on text events delivered by its keyboard
-backend. Host-key shortcuts and platform keyboard capture remain pending.
+backend. Host-key shortcut prefixes remain pending; native keyboard grabbing
+currently supports Linux/X11 only.
 Input mapping and focus release were tested in-process. Synthetic desktop input
 did not reach the loopback peer in the X11 smoke test, so end-to-end input
 behavior remains unverified.
@@ -288,12 +289,13 @@ scancodes, five RDP pointer buttons, and both scroll axes. RDP scancode mapping
 uses egui's physical key when available, while VNC keeps logical keysyms. IME
 and a full interactive RDP server test remain pending.
 
-The viewer toolbar's Keyboard toggle routes ordinary key events while the
-viewer window is focused, without requiring a click inside the remote canvas.
-Desktop-reserved shortcuts such as Super and Alt+Tab may still be intercepted
-by the local window manager; use the adjacent Send keys menu to send those
-shortcuts explicitly. Capturing those physical shortcuts requires a native
-platform keyboard grab and remains unimplemented.
+The viewer toolbar's Keyboard toggle routes key events while the viewer window
+is focused, without requiring a click inside the remote canvas. On Linux/X11 it
+also grabs keyboard input for that focused viewer, so system shortcuts such as
+Super and Alt+Tab can reach the remote. The grab is released when capture is
+disabled, the viewer loses focus, or the session closes. Wayland and Windows
+use egui capture; system-reserved shortcuts may stay local there, and Send keys
+remains the fallback.
 
 Unknown-issuer RDP certificates can now be explicitly trusted from the
 viewer after comparing the SHA-256 fingerprint. Validity dates and TLS
@@ -315,8 +317,8 @@ The writer publishes a completed PNG without overwriting an existing file.
 The viewer reports the result with open-file and show-folder actions.
 The user can choose a screenshot folder in Remote Desktop settings; leaving it
 unset uses Pictures/ServerLauncher. Screenshot clipboard copying can be enabled
-as a viewer default or toggled per session. Host-key shortcuts and platform
-keyboard capture are not implemented; the Send keys menu remains the fallback.
+as a viewer default or toggled per session. Host-key shortcut prefixes are not
+implemented; the Send keys menu remains the fallback for other platforms.
 
 Recordings use FFmpeg H.264 (MP4) or VP9 (WebM) at 30 fps when available and
 fall back to a PNG sequence when FFmpeg is missing. The recording destination

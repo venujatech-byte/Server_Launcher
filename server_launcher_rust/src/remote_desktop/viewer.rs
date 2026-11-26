@@ -198,6 +198,9 @@ pub(crate) fn run(
                 close_on_failure,
                 send_clipboard,
                 capture: Capture::new(left_handed_mouse, disable_smooth_scrolling),
+                #[cfg(target_os = "linux")]
+                native_keyboard: None,
+                keyboard_capture_feedback: None,
                 left_handed_mouse,
                 disable_smooth_scrolling,
                 host_name,
@@ -306,6 +309,9 @@ struct Viewer {
     close_on_failure: bool,
     send_clipboard: bool,
     capture: Capture,
+    #[cfg(target_os = "linux")]
+    native_keyboard: Option<super::x11_keyboard::NativeKeyboardCapture>,
+    keyboard_capture_feedback: Option<String>,
     left_handed_mouse: bool,
     disable_smooth_scrolling: bool,
     host_name: String,
@@ -438,6 +444,8 @@ impl Viewer {
         let Some(connection) = &self.connection else {
             return;
         };
+        #[cfg(target_os = "linux")]
+        self.native_keyboard.take();
         let connection = connection.lock().unwrap();
         if !connection.connected || self.view_only {
             return;
@@ -458,24 +466,25 @@ impl Viewer {
         canvas: egui::Rect,
         clip: egui::Rect,
         size: [usize; 2],
-        layer: egui::LayerId,
     ) {
         let Some(connection) = &self.connection else {
+            #[cfg(target_os = "linux")]
+            self.native_keyboard.take();
             return;
         };
         let connection = connection.lock().unwrap();
         if !connection.connected || self.view_only {
+            self.capture.release(|event| connection.send_input(event));
+            drop(connection);
+            #[cfg(target_os = "linux")]
+            self.native_keyboard.take();
             return;
         }
-        let unobstructed = ctx
-            .pointer_hover_pos()
-            .and_then(|pos| ctx.layer_id_at(pos))
-            .is_none_or(|top| top == layer);
         ctx.input(|input| {
             self.capture.events(
                 &input.events,
                 input.modifiers,
-                input.focused && unobstructed,
+                input.focused,
                 canvas,
                 clip,
                 size,
@@ -489,6 +498,19 @@ impl Viewer {
                 },
             );
         });
+        drop(connection);
+        if !self.capture.keyboard_capture() {
+            #[cfg(target_os = "linux")]
+            self.native_keyboard.take();
+            self.keyboard_capture_feedback = None;
+        }
+    }
+}
+
+impl Drop for Viewer {
+    fn drop(&mut self) {
+        #[cfg(target_os = "linux")]
+        self.native_keyboard.take();
     }
 }
 
@@ -1044,16 +1066,49 @@ impl eframe::App for Viewer {
                     );
                     if keyboard_button
                         .on_hover_text(
-                            "Route keyboard input to the remote while this viewer is focused. Use Send keys for shortcuts handled by your desktop.",
+                            "Capture keyboard input for the remote while this viewer is focused, including system shortcuts when supported.",
                         )
                         .clicked()
                     {
                         if let Some(connection) = &self.connection {
-                            let connection = connection.lock().unwrap();
-                            self.capture.set_keyboard_capture(!keyboard_capture, |event| {
+                            let enable = !keyboard_capture;
+                            let connection_handle = connection.clone();
+                            let connection = connection_handle.lock().unwrap();
+                            self.capture.set_keyboard_capture(enable, |event| {
                                 connection.send_input(event)
                             });
+                            drop(connection);
+                            #[cfg(target_os = "linux")]
+                            {
+                                self.native_keyboard = None;
+                                self.keyboard_capture_feedback = if enable {
+                                    match super::x11_keyboard::NativeKeyboardCapture::start(
+                                        connection_handle,
+                                        ctx.clone(),
+                                    ) {
+                                        Ok(capture) => {
+                                            self.native_keyboard = Some(capture);
+                                            None
+                                        }
+                                        Err(error) => {
+                                            Some(format!("System shortcuts stay local: {error}"))
+                                        }
+                                    }
+                                } else {
+                                    None
+                                };
+                            }
+                            #[cfg(not(target_os = "linux"))]
+                            {
+                                self.keyboard_capture_feedback = enable.then(|| {
+                                    "System shortcuts may stay local; use Send keys to forward them."
+                                        .into()
+                                });
+                            }
                         }
+                    }
+                    if let Some(feedback) = &self.keyboard_capture_feedback {
+                        ui.label(feedback);
                     }
                     ui.menu_button("Send keys", |ui| {
                         let shortcuts: &[(&str, &[u32])] = &[
@@ -1091,6 +1146,8 @@ impl eframe::App for Viewer {
                     egui::Checkbox::new(&mut self.view_only, "View only"),
                 );
                 if view_only_response.changed() && self.view_only {
+                    #[cfg(target_os = "linux")]
+                    self.native_keyboard.take();
                     if let Some(connection) = &self.connection {
                         let connection = connection.lock().unwrap();
                         self.capture
@@ -1386,7 +1443,7 @@ impl eframe::App for Viewer {
                     );
                 }
             }
-            self.send_input(ctx, screen, clip, pixels, ui.layer_id());
+            self.send_input(ctx, screen, clip, pixels);
         });
     }
 }

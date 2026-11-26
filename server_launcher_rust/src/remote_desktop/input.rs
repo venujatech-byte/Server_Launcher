@@ -48,7 +48,7 @@ impl Capture {
         mut send: impl FnMut(Input),
     ) {
         if !focused {
-            self.release(&mut send);
+            self.release_inputs(&mut send);
             return;
         }
         let visible = canvas.intersect(clip);
@@ -90,7 +90,7 @@ impl Capture {
                     }
                     self.sync_modifiers(previous, &mut send);
                 }
-                Event::WindowFocused(false) => self.release(&mut send),
+                Event::WindowFocused(false) => self.release_inputs(&mut send),
                 Event::PointerButton {
                     pos,
                     button,

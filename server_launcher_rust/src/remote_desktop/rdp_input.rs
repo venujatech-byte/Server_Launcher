@@ -142,9 +142,13 @@ fn scancode(keysym: u32) -> Option<(u8, bool)> {
         0xff63 => (0x52, true),
         0xffff => (0x53, true),
         0xffe1 => (0x2a, false),
+        0xffe2 => (0x36, false),
         0xffe3 => (0x1d, false),
+        0xffe4 => (0x1d, true),
         0xffe9 => (0x38, false),
+        0xffea | 0xfe03 => (0x38, true),
         0xffeb => (0x5b, true),
+        0xffec => (0x5c, true),
         0xffbe..=0xffc7 => ((keysym - 0xffbe) as u8 + 0x3b, false),
         0xffc8 => (0x57, false),
         0xffc9 => (0x58, false),
@@ -230,6 +234,10 @@ mod tests {
             )]
         );
         assert_eq!(scancode(b'A'.into()), Some((0x1e, false)));
+        assert_eq!(scancode(0xffe2), Some((0x36, false)));
+        assert_eq!(scancode(0xffe4), Some((0x1d, true)));
+        assert_eq!(scancode(0xffea), Some((0x38, true)));
+        assert_eq!(scancode(0xffec), Some((0x5c, true)));
         out.clear();
         encoder.encode(
             Input::Key {

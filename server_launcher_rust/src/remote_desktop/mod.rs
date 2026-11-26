@@ -18,3 +18,5 @@ pub(crate) mod trust;
 pub(crate) mod tunnel;
 pub(crate) mod viewer;
 pub(crate) mod vnc;
+#[cfg(target_os = "linux")]
+mod x11_keyboard;

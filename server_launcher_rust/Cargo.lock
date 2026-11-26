@@ -6632,6 +6632,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "windows-sys 0.61.2",
+ "x11-dl",
  "x509-cert 0.2.5",
  "zeroize",
 ]

@@ -65,8 +65,9 @@ The checked app revision was `8ec3a0d`.
    Confirm that a continuously changing desktop stays live over EGFX, and
    check that the viewer's FPS counter changes with received display updates.
    Enable Keyboard in the viewer toolbar and type without clicking the remote
-   canvas first. Confirm ordinary keys reach the remote. Test Super and Alt+Tab
-   through Send keys; the host desktop may intercept those physical shortcuts.
+   canvas first. On Linux/X11, confirm Super and Alt+Tab are captured by the
+   focused viewer and reach the remote. On Wayland or Windows, confirm the
+   toolbar explains that system shortcuts may stay local and use Send keys.
    Enable View only and confirm the display remains live while keyboard,
    pointer, and outgoing clipboard input are suppressed.
 4. Resize the viewer with dynamic resolution enabled. Check for correct aspect
@@ -116,7 +117,8 @@ microphone, drive redirection, committed IME input, and multi-monitor behavior
 have not been verified against real servers; do not mark them complete based on
 UI controls or compile checks alone. RD Gateway, including trusted-certificate
 handling and gateway authentication, still requires live-server validation.
-Platform keyboard capture remains unsupported.
+Native keyboard grabbing is currently Linux/X11-only. Windows and Wayland rely
+on egui input and cannot guarantee capture of OS-reserved shortcuts.
 
 ## VNC checks
 

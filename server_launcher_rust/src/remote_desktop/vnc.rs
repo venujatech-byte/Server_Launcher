@@ -135,12 +135,9 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
     }
     let password =
         credentials::load(host, DesktopProtocol::Vnc).map_err(|message| error(&message))?;
-    if password
-        .as_ref()
-        .is_some_and(|value| value.is_empty() || value.len() > 8)
-    {
+    if password.as_ref().is_some_and(|value| value.is_empty()) {
         return Err(error(
-            "Classic VNC requires a password from one to eight bytes.",
+            "The saved VNC password is empty. Update it in the VNC tab.",
         ));
     }
     let mut stream: Box<dyn DesktopStream> = if profile.tunnel_via_ssh {
@@ -338,7 +335,7 @@ fn handshake(
 
 fn response(password: &[u8], challenge: [u8; 16]) -> Zeroizing<[u8; 16]> {
     let mut key = Zeroizing::new([0; 8]);
-    // RFB puts the DES parity bit at the opposite end of each password byte.
+    // Classic RFB uses at most eight password bytes with each byte’s bits reversed.
     for (target, byte) in key.iter_mut().zip(password) {
         *target = byte.reverse_bits();
     }
@@ -448,6 +445,15 @@ mod tests {
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn classic_auth_uses_only_the_first_eight_password_bytes() {
+        let challenge = [0x42; 16];
+        assert_eq!(
+            *response(b"abcdefgh-extra", challenge),
+            *response(b"abcdefgh", challenge)
+        );
     }
 
     #[test]

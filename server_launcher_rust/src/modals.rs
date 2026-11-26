@@ -1922,6 +1922,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                             crate::remote_desktop::editor::vnc(ui, &mut state.vnc, &mut state.vnc_port_text, &state.host);
                             if let Some(profile) = state.vnc.as_mut().filter(|profile| profile.enabled) {
                                 state.vnc_password.show(ui, &mut profile.credential_ref);
+                                ui.label("Classic VNC uses only the first eight bytes of the password.");
                                 let request = crate::remote_desktop::editor::vnc_port(&state.vnc_port_text, &state.host)
                                     .filter(|_| !profile.tunnel_via_ssh && !state.host.trim().is_empty())
                                     .map(|port| crate::remote_desktop::probe::ProbeRequest {

@@ -92,6 +92,7 @@ pub(crate) struct RdpProfile {
     pub width: u16,
     pub height: u16,
     pub multi_monitor: bool,
+    pub view_only: bool,
     pub left_handed_mouse: bool,
     pub disable_smooth_scrolling: bool,
     pub keyboard_layout: Option<u32>,
@@ -128,6 +129,7 @@ impl Default for RdpProfile {
             width: 1920,
             height: 1080,
             multi_monitor: false,
+            view_only: false,
             left_handed_mouse: false,
             disable_smooth_scrolling: false,
             keyboard_layout: None,
@@ -178,7 +180,12 @@ impl Default for VncProfile {
             username: String::new(),
             credential_ref: None,
             quality: Quality::Auto,
-            encodings: vec![Encoding::Tight, Encoding::Zrle, Encoding::CopyRect, Encoding::Raw],
+            encodings: vec![
+                Encoding::Tight,
+                Encoding::Zrle,
+                Encoding::CopyRect,
+                Encoding::Raw,
+            ],
             color_depth: 32,
             view_only: false,
             show_remote_cursor: true,
@@ -204,7 +211,12 @@ mod tests {
 
         assert_eq!(
             VncProfile::default().encodings,
-            [Encoding::Tight, Encoding::Zrle, Encoding::CopyRect, Encoding::Raw]
+            [
+                Encoding::Tight,
+                Encoding::Zrle,
+                Encoding::CopyRect,
+                Encoding::Raw
+            ]
         );
     }
 

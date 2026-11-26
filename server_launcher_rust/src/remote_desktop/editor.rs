@@ -173,6 +173,7 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
         ui.checkbox(&mut profile.multi_monitor, "Two side-by-side remote monitors");
         ui.label("Uses the selected resolution as a combined display; server support is required.");
         ui.collapsing("Input", |ui| {
+            ui.checkbox(&mut profile.view_only, "Start in view-only mode");
             ui.checkbox(&mut profile.left_handed_mouse, "Left-handed mouse support");
             ui.checkbox(&mut profile.disable_smooth_scrolling, "Disable smooth scrolling");
         });

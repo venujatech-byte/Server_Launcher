@@ -82,10 +82,10 @@ pub(crate) fn run(
                     !profile.tunnel_via_ssh && super::vnc::needs_unencrypted_warning(&host.host)
                 })
         });
-    let view_only = viewer_host
-        .as_ref()
-        .and_then(|host| host.vnc.as_ref())
-        .is_some_and(|profile| protocol == DesktopProtocol::Vnc && profile.view_only);
+    let view_only = viewer_host.as_ref().is_some_and(|host| match protocol {
+        DesktopProtocol::Rdp => host.rdp.as_ref().is_some_and(|profile| profile.view_only),
+        DesktopProtocol::Vnc => host.vnc.as_ref().is_some_and(|profile| profile.view_only),
+    });
     let close_on_failure = viewer_host
         .as_ref()
         .and_then(|host| host.vnc.as_ref())
@@ -692,7 +692,7 @@ impl eframe::App for Viewer {
             if let Some(notice) = clipboard.take_notice() {
                 self.clipboard_notice = Some((Instant::now(), notice.into()));
             }
-            if connected && self.send_clipboard {
+            if connected && self.send_clipboard && !self.view_only {
                 if let Some(connection) = &self.connection {
                     if let Some(pending) = clipboard.take_pending() {
                         let event = match pending {
@@ -1044,9 +1044,10 @@ impl eframe::App for Viewer {
                         });
                     });
                 });
-                if self.view_only && connected {
-                    ui.label("View only");
-                }
+                ui.add_enabled(
+                    connected,
+                    egui::Checkbox::new(&mut self.view_only, "View only"),
+                );
                 if connected {
                     let label = if self.toolbar_pinned {
                         "Unpin toolbar"

@@ -335,7 +335,11 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
     let mut stream: Box<dyn DesktopStream> = if profile.tunnel_via_ssh {
         tunnel::open(host, profile.port, TUNNEL_HANDSHAKE_TIMEOUT)?
     } else {
-        Box::new(open_direct(host, profile.port)?)
+        Box::new(open_direct(
+            host,
+            profile.port,
+            profile.tcp_user_timeout_secs,
+        )?)
     };
     let mut size = handshake(
         &mut stream,
@@ -566,7 +570,11 @@ impl<R: Read> Read for CountReads<R> {
     }
 }
 
-fn open_direct(host: &SshRemoteHost, port: u16) -> io::Result<TcpStream> {
+fn open_direct(
+    host: &SshRemoteHost,
+    port: u16,
+    user_timeout_secs: u32,
+) -> io::Result<TcpStream> {
     let address = host.host.trim().trim_matches(['[', ']']);
     let addresses = (address, port)
         .to_socket_addrs()
@@ -594,7 +602,42 @@ fn open_direct(host: &SshRemoteHost, port: u16) -> io::Result<TcpStream> {
     stream.set_nodelay(true)?;
     stream.set_read_timeout(Some(TIMEOUT))?;
     stream.set_write_timeout(Some(TIMEOUT))?;
+    set_tcp_user_timeout(&stream, user_timeout_secs)?;
     Ok(stream)
+}
+
+fn set_tcp_user_timeout(stream: &TcpStream, seconds: u32) -> io::Result<()> {
+    if seconds == 0 {
+        return Ok(());
+    }
+    let timeout_ms = seconds.checked_mul(1_000).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "TCP user timeout is too large.")
+    })?;
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+
+        let result = unsafe {
+            libc::setsockopt(
+                stream.as_raw_fd(),
+                libc::IPPROTO_TCP,
+                libc::TCP_USER_TIMEOUT,
+                (&timeout_ms as *const u32).cast(),
+                std::mem::size_of_val(&timeout_ms) as libc::socklen_t,
+            )
+        };
+        if result == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (stream, timeout_ms);
+        Ok(())
+    }
 }
 
 fn handshake(
@@ -1245,7 +1288,7 @@ mod tests {
         let server = std::thread::spawn(move || listener.accept().unwrap());
         let host: SshRemoteHost =
             serde_json::from_str(r#"{"id":"test","name":"Test","host":"127.0.0.1"}"#).unwrap();
-        let stream = open_direct(&host, port).unwrap();
+        let stream = open_direct(&host, port, 1).unwrap();
         assert_eq!(stream.peer_addr().unwrap().port(), port);
         server.join().unwrap();
     }

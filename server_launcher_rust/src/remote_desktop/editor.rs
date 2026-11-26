@@ -302,6 +302,19 @@ pub(crate) fn vnc(ui: &mut Ui, draft: &mut Option<VncProfile>, port_text: &mut S
         if !profile.tunnel_via_ssh {
             ui.label("Classic VNC is unencrypted. Use an SSH tunnel on untrusted networks.");
         }
+        #[cfg(target_os = "linux")]
+        ui.horizontal(|ui| {
+            ui.label("TCP user timeout (seconds)");
+            ui.add(DragValue::new(&mut profile.tcp_user_timeout_secs).range(0..=2_147_483));
+        });
+        #[cfg(target_os = "linux")]
+        ui.label(if profile.tunnel_via_ssh {
+            "Applies to direct Linux TCP connections only; ignored while SSH tunneling is enabled."
+        } else {
+            "0 uses the operating system default. This is not an idle timeout."
+        });
+        #[cfg(not(target_os = "linux"))]
+        ui.label("TCP user timeout is available for direct Linux connections only.");
         ui.checkbox(&mut profile.auto_reconnect, "Auto-reconnect");
     });
     if draft.is_some() || profile.enabled {

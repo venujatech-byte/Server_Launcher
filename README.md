@@ -79,7 +79,9 @@ store; protocol passwords are not saved in `servers.json`.
   guarantee a specific frame rate or speedup.
 - VNC supports classic password authentication, Raw, CopyRect, and ZRLE framebuffer
   updates, keyboard and mouse input, text clipboard sync, screenshots,
-  recording, and server-supported resolution changes. Classic VNC is not
+  recording, and server-supported resolution changes. Its TCP user timeout setting
+  applies only to direct Linux connections; zero uses the OS default, and SSH tunnels
+  ignore it. Classic VNC is not
   encrypted; the viewer warns before a direct connection to public or unknown
   hosts. Use the SSH tunnel option on untrusted networks.
 - Both viewers offer Fit, native-size, and Fill scaling, a live received display

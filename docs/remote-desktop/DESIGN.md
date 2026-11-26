@@ -116,6 +116,11 @@ show a notice in the viewer. Only the earlier loopback Raw handshake/rendering
 smoke test is recorded; current end-to-end input, tunnel, authentication, and
 encoding interoperability need real-server validation.
 
+The VNC TCP user timeout profile is applied with `TCP_USER_TIMEOUT` only for
+direct Linux TCP connections. Zero leaves the OS default; SSH-tunneled and
+non-Linux connections ignore the setting. It bounds time spent retrying
+unacknowledged data and does not disconnect an otherwise idle session.
+
 Classic VNC password negotiation uses the [RFB security handshake](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.2.2)
 and [RustCrypto DES 0.8.1](https://docs.rs/des/0.8.1/des/) with its zeroize feature.
 DES is used only for this legacy challenge response. A direct session itself is

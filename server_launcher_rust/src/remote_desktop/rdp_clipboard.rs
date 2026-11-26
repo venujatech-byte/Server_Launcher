@@ -398,4 +398,30 @@ mod tests {
         );
         assert!(response.is_error());
     }
+
+    #[test]
+    fn locked_remote_paste_keeps_the_original_local_file_list() {
+        let directory = tempfile::tempdir().unwrap();
+        let original = directory.path().join("original.txt");
+        let replacement = directory.path().join("replacement.txt");
+        std::fs::write(&original, b"original").unwrap();
+        std::fs::write(&replacement, b"replacement").unwrap();
+        let mut backend = ClipboardBackend::new(true, true, 1024);
+        backend.local_files = vec![original];
+        backend.on_lock(LockDataId(4));
+        backend.local_files = vec![replacement];
+
+        backend.on_file_contents_request(FileContentsRequest {
+            stream_id: 12,
+            index: 0,
+            flags: FileContentsFlags::RANGE,
+            position: 0,
+            requested_size: 8,
+            data_id: Some(4),
+        });
+
+        let response = backend.take_file_response().unwrap();
+        assert!(!response.is_error());
+        assert_eq!(response.data(), b"original");
+    }
 }

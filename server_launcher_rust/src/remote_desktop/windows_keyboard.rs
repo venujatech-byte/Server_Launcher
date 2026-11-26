@@ -1,6 +1,6 @@
 use super::{
+    credentials::DesktopProtocol,
     input::{host_shortcut, HostShortcut},
-    profile::DesktopProtocol,
     vnc::{Connection, Input, InputHandle},
 };
 use std::{

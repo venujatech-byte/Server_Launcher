@@ -244,6 +244,9 @@ fn run(
     let mut framed = Framed::new(socket);
     let mut connector =
         connector::ClientConnector::new(config(host, profile, &password, monitor_size), local_addr);
+    if let Some(cluster_data) = administrative_cluster_data(profile.admin_session) {
+        connector = connector.with_cluster_data(cluster_data);
+    }
     let drives_attached = super::rdp_drives::attach(&mut connector, profile)?;
     if profile.clipboard != Clipboard::Off {
         connector.attach_static_channel(CliprdrClient::new(Box::new(
@@ -1251,6 +1254,17 @@ fn bitmap_quality(profile: &RdpProfile) -> (u32, bool) {
     }
 }
 
+fn administrative_cluster_data(enabled: bool) -> Option<ironrdp::pdu::gcc::ClientClusterData> {
+    use ironrdp::pdu::gcc::{ClientClusterData, RedirectionFlags, RedirectionVersion};
+
+    enabled.then_some(ClientClusterData {
+        flags: RedirectionFlags::REDIRECTION_SUPPORTED
+            | RedirectionFlags::REDIRECTED_SESSION_FIELD_VALID,
+        redirection_version: RedirectionVersion::V5,
+        redirected_session_id: 0,
+    })
+}
+
 #[cfg(test)]
 #[test]
 fn rdp_quality_presets_set_bitmap_depth_and_adaptive_color() {
@@ -1275,6 +1289,22 @@ fn rdp_quality_presets_set_bitmap_depth_and_adaptive_color() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn administrative_session_requests_session_zero_only_when_enabled() {
+        use ironrdp::pdu::gcc::{RedirectionFlags, RedirectionVersion};
+
+        assert!(administrative_cluster_data(false).is_none());
+        let cluster = administrative_cluster_data(true).unwrap();
+        assert!(cluster
+            .flags
+            .contains(RedirectionFlags::REDIRECTION_SUPPORTED));
+        assert!(cluster
+            .flags
+            .contains(RedirectionFlags::REDIRECTED_SESSION_FIELD_VALID));
+        assert_eq!(cluster.redirection_version, RedirectionVersion::V5);
+        assert_eq!(cluster.redirected_session_id, 0);
+    }
 
     #[test]
     fn security_modes_never_enable_legacy_rdp_security() {

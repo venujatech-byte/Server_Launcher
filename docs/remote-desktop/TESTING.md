@@ -70,6 +70,8 @@ network or the host's configured SSH tunnel.
    the configured size cap. Confirm received content is not echoed back.
 8. Test NLA-only and TLS-only explicitly against matching servers. Auto must
    accept either encrypted mode and must reject legacy unencrypted RDP.
+   Also test Administrative session against a Windows account allowed to use
+   it; confirm the default profile does not request session ID 0.
 9. Use Test Connection through direct, SSH-tunneled, and gateway routes. The
    tunnel check must reach the RDP security negotiation over SSH. Connect
    through an RD Gateway whose certificate is trusted by the client.

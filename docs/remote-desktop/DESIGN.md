@@ -235,9 +235,9 @@ symlink escape. Drive access and read-only enforcement still need real-server
 validation. RD Gateway uses the pinned IronRDP MS-TSGU transport over HTTPS and
 the saved RDP username/password for gateway authentication. Gateway TLS uses
 strict system-root validation; SSH tunneling cannot be combined with this route.
-This path still needs a live gateway test. The editor preserves the unused
-admin-session and VNC username fields, while marking those unsupported controls
-read-only.
+This path still needs a live gateway test. RDP administrative sessions request
+session ID 0 through GCC cluster data. The VNC username field remains visible
+but unsupported by the classic VNC authentication implementation.
 IronRDP and its blocking adapter are available under MIT or Apache-2.0.
 
 The RDP viewer now registers IronRDP's EGFX dynamic channel before advertising

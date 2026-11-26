@@ -243,8 +243,8 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
             ui.checkbox(&mut profile.animations, "Animations");
             ui.checkbox(&mut profile.themes, "Themes");
         });
-        ui.add_enabled(false, egui::Checkbox::new(&mut profile.admin_session, "Administrative session"));
-        ui.label("Administrative sessions are not supported by this RDP client.");
+        ui.checkbox(&mut profile.admin_session, "Administrative session");
+        ui.label("Requests the server's administrative session; server policy and permissions apply.");
         text(ui, "RD Gateway host (optional)", &mut profile.gateway);
         ui.label("Uses the RDP username and password for gateway sign-in. Gateway TLS certificates must be system-trusted.");
         ui.add_enabled_ui(profile.gateway.trim().is_empty(), |ui| {

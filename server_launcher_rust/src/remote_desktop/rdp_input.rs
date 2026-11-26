@@ -296,6 +296,43 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn encodes_super_and_alt_tab_for_remote_keyboard_capture() {
+        let mut encoder = Encoder::default();
+        let mut out = Vec::new();
+        for (keysym, pressed) in [
+            (0xffeb, true), // Super down
+            (0xffe9, true), // Alt down
+            (0xff09, true), // Tab down
+            (0xff09, false),
+            (0xffe9, false),
+            (0xffeb, false),
+        ] {
+            encoder.encode(
+                Input::Key {
+                    keysym,
+                    physical_key: None,
+                    pressed,
+                },
+                &mut out,
+            );
+        }
+        assert_eq!(
+            out,
+            [
+                FastPathInputEvent::KeyboardEvent(KeyboardFlags::EXTENDED, 0x5b),
+                FastPathInputEvent::KeyboardEvent(KeyboardFlags::empty(), 0x38),
+                FastPathInputEvent::KeyboardEvent(KeyboardFlags::empty(), 0x0f),
+                FastPathInputEvent::KeyboardEvent(KeyboardFlags::RELEASE, 0x0f),
+                FastPathInputEvent::KeyboardEvent(KeyboardFlags::RELEASE, 0x38),
+                FastPathInputEvent::KeyboardEvent(
+                    KeyboardFlags::EXTENDED | KeyboardFlags::RELEASE,
+                    0x5b
+                ),
+            ]
+        );
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn encodes_native_windows_scan_codes_without_keysym_remapping() {

@@ -1075,6 +1075,51 @@ impl eframe::App for Viewer {
                             ui.selectable_value(&mut self.scaling, scale, scale_label(scale));
                         }
                     });
+                ui.add_enabled_ui(connected && !self.view_only, |ui| {
+                    let keyboard_capture = self.capture.keyboard_capture();
+                    let label = if keyboard_capture {
+                        format!("{} Keyboard → Remote", crate::lucide::KEYBOARD)
+                    } else {
+                        format!("{} Keyboard", crate::lucide::KEYBOARD)
+                    };
+                    if ui
+                        .selectable_label(keyboard_capture, label)
+                        .on_hover_text("When enabled, all keys (including Super and Alt+Tab) go to the remote while this viewer is focused. The Right Ctrl host key remains available for viewer shortcuts.")
+                        .clicked()
+                    {
+                        if let Some(connection) = &self.connection {
+                            let enable = !keyboard_capture;
+                            let connection_handle = connection.clone();
+                            let connection = connection_handle.lock().unwrap();
+                            self.capture.set_keyboard_capture(enable, |event| {
+                                connection.send_input(event)
+                            });
+                            drop(connection);
+                            #[cfg(target_os = "linux")]
+                            {
+                                self.native_keyboard = None;
+                                self.native_keyboard_attempted = false;
+                                self.keyboard_capture_feedback = None;
+                            }
+                            #[cfg(target_os = "windows")]
+                            {
+                                self.native_keyboard = None;
+                                self.native_keyboard_attempted = false;
+                                self.keyboard_capture_feedback = None;
+                            }
+                            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+                            {
+                                self.keyboard_capture_feedback = enable.then(|| {
+                                    "System shortcuts may stay local; use Send keys to forward them."
+                                        .into()
+                                });
+                            }
+                        }
+                    }
+                    if let Some(feedback) = &self.keyboard_capture_feedback {
+                        ui.label(feedback);
+                    }
+                });
                 if let Some(deadline) = reconnect_at {
                     let remaining = deadline.saturating_duration_since(Instant::now());
                     ui.label(format!(
@@ -1332,47 +1377,6 @@ impl eframe::App for Viewer {
                 }
                 ui.checkbox(&mut self.copy_screenshot, "Copy screenshot");
                 ui.add_enabled_ui(connected && !self.view_only, |ui| {
-                    let keyboard_capture = self.capture.keyboard_capture();
-                    let keyboard_button = ui.selectable_label(
-                        keyboard_capture,
-                        format!("{} Keyboard", crate::lucide::KEYBOARD),
-                    );
-                    if keyboard_button
-                        .on_hover_text("Keyboard input, including system shortcuts when supported, goes to the remote while this viewer is focused. Turn off to type locally; use Send keys for secure system shortcuts.")
-                        .clicked()
-                    {
-                        if let Some(connection) = &self.connection {
-                            let enable = !keyboard_capture;
-                            let connection_handle = connection.clone();
-                            let connection = connection_handle.lock().unwrap();
-                            self.capture.set_keyboard_capture(enable, |event| {
-                                connection.send_input(event)
-                            });
-                            drop(connection);
-                            #[cfg(target_os = "linux")]
-                            {
-                                self.native_keyboard = None;
-                                self.native_keyboard_attempted = false;
-                                self.keyboard_capture_feedback = None;
-                            }
-                            #[cfg(target_os = "windows")]
-                            {
-                                self.native_keyboard = None;
-                                self.native_keyboard_attempted = false;
-                                self.keyboard_capture_feedback = None;
-                            }
-                            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-                            {
-                                self.keyboard_capture_feedback = enable.then(|| {
-                                    "System shortcuts may stay local; use Send keys to forward them."
-                                        .into()
-                                });
-                            }
-                        }
-                    }
-                    if let Some(feedback) = &self.keyboard_capture_feedback {
-                        ui.label(feedback);
-                    }
                     ui.menu_button("Send keys", |ui| {
                         let shortcuts: &[(&str, &[u32])] = &[
                             ("Ctrl+Alt+Del", &[0xffe3, 0xffe9, 0xffff]),

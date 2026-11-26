@@ -12,12 +12,15 @@ macro_rules! choices {
     };
 }
 
-choices!(RdpSecurity {
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RdpSecurity {
+    #[default]
+    #[serde(alias = "rdp")]
     Auto,
     Nla,
     Tls,
-    Rdp
-});
+}
 choices!(Resolution {
     FitWindow,
     Fixed,
@@ -161,6 +164,15 @@ impl Default for VncProfile {
 #[cfg(test)]
 mod tests {
     use crate::config::ConfigFile;
+
+    #[test]
+    fn legacy_rdp_security_loads_and_saves_as_auto() {
+        use super::RdpSecurity;
+
+        let security: RdpSecurity = serde_json::from_str(r#""rdp""#).unwrap();
+        assert_eq!(security, RdpSecurity::Auto);
+        assert_eq!(serde_json::to_string(&security).unwrap(), r#""auto""#);
+    }
 
     #[test]
     fn legacy_hosts_round_trip_without_protocol_keys() {

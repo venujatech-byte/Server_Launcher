@@ -88,7 +88,6 @@ fn rdp(stream: &mut (impl Read + Write), security: RdpSecurity) -> io::Result<St
     let offered: u8 = match security {
         RdpSecurity::Auto | RdpSecurity::Nla => 2,
         RdpSecurity::Tls => 1,
-        RdpSecurity::Rdp => return Err(invalid("select NLA or TLS in the RDP tab")),
     };
     let request = [
         3, 0, 0, 19, 14, 0xe0, 0, 0, 0, 0, 0, 1, 0, 8, 0, offered, 0, 0, 0,

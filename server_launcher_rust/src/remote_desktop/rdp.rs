@@ -80,11 +80,6 @@ fn run(
             "Microsoft RD Gateway is not supported yet. No connection was attempted.",
         ));
     }
-    if profile.security == RdpSecurity::Rdp {
-        return Err(error(
-            "Legacy unencrypted RDP security is unsupported. Select NLA or TLS.",
-        ));
-    }
     let password = credentials::load(host, DesktopProtocol::Rdp)
         .map_err(|message| error(&message))?
         .ok_or_else(|| error("Save an RDP password in the host settings before connecting."))?;

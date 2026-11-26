@@ -66,9 +66,6 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
                 (RdpSecurity::Tls, "TLS"),
             ],
         );
-        if profile.security == RdpSecurity::Rdp {
-            ui.label("This profile uses legacy RDP security. Select NLA or TLS to connect.");
-        }
         color_depth(ui, &mut profile.color_depth);
         choice(
             ui,

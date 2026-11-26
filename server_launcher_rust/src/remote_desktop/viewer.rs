@@ -367,6 +367,10 @@ impl eframe::App for Viewer {
                 if connection.clipboard_sent.swap(false, Ordering::Relaxed) {
                     self.clipboard_notice = Some((Instant::now(), "Clipboard sent"));
                 }
+                if std::mem::take(&mut connection.clipboard_too_large) {
+                    self.clipboard_notice =
+                        Some((Instant::now(), "Clipboard exceeds the 1 MiB limit"));
+                }
                 if let Some(text) = connection.clipboard_text.take() {
                     self.clipboard_notice = Some((Instant::now(), "Clipboard received"));
                     ctx.copy_text(text);

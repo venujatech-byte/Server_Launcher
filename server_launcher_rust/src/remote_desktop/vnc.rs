@@ -90,6 +90,7 @@ pub(crate) struct Connection {
     pub(crate) finished: bool,
     pub(crate) reconnect_at: Option<Instant>,
     pub(crate) receiving_frame: bool,
+    pub(crate) clipboard_too_large: bool,
     pub(crate) clipboard_sent: Arc<AtomicBool>,
     pub(crate) clipboard_text: Option<String>,
     pub(crate) vnc_screen: Option<[u8; 16]>,
@@ -127,6 +128,7 @@ impl Connection {
             finished: false,
             reconnect_at: None,
             receiving_frame: false,
+            clipboard_too_large: false,
             clipboard_sent: Arc::new(AtomicBool::new(false)),
             clipboard_text: None,
             vnc_screen: None,
@@ -157,6 +159,7 @@ impl Connection {
                 state.input = None;
                 state.clipboard_sent = Arc::new(AtomicBool::new(false));
                 state.clipboard_text = None;
+                state.clipboard_too_large = false;
                 state.vnc_screen = None;
                 state.resize_request = None;
                 state.rdp_resize_supported = false;
@@ -376,15 +379,19 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
                 let mut header = [0; 7];
                 stream.read_exact(&mut header)?;
                 let size = u32::from_be_bytes(header[3..7].try_into().unwrap());
-                if size as usize > CLIPBOARD_LIMIT {
-                    return Err(error("The VNC clipboard message exceeds the viewer limit."));
-                }
-                let mut text = vec![0; size as usize];
-                stream.read_exact(&mut text)?;
-                if matches!(
+                let receive = matches!(
                     profile.clipboard,
                     Clipboard::Both | Clipboard::RemoteToLocal
-                ) {
+                );
+                if !receive || size as usize > CLIPBOARD_LIMIT {
+                    discard_clipboard(&mut stream, size)?;
+                    if receive {
+                        state.lock().unwrap().clipboard_too_large = true;
+                        ctx.request_repaint();
+                    }
+                } else {
+                    let mut text = vec![0; size as usize];
+                    stream.read_exact(&mut text)?;
                     state.lock().unwrap().clipboard_text =
                         Some(text.into_iter().map(char::from).collect());
                     ctx.request_repaint();
@@ -393,6 +400,29 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
             _ => return Err(error("The VNC server sent an unsupported message.")),
         }
     }
+}
+
+fn discard_clipboard(stream: &mut impl Read, mut remaining: u32) -> io::Result<()> {
+    // Bound the work spent skipping an unwanted clipboard message from the server.
+    if remaining > 16 * 1024 * 1024 {
+        return Err(error(
+            "The VNC server sent an excessively large clipboard message.",
+        ));
+    }
+    let deadline = Instant::now() + TIMEOUT;
+    let mut buffer = [0; 8192];
+    while remaining != 0 {
+        if Instant::now() >= deadline {
+            return Err(error("Timed out skipping a VNC clipboard message."));
+        }
+        let length = (remaining as usize).min(buffer.len());
+        let read = stream.read(&mut buffer[..length])?;
+        if read == 0 {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
+        remaining -= read as u32;
+    }
+    Ok(())
 }
 
 struct CountReads<R> {
@@ -695,6 +725,14 @@ mod tests {
         reader.read_to_end(&mut bytes).unwrap();
         assert_eq!(bytes, b"frame");
         assert_eq!(received_bytes.load(Ordering::Relaxed), 5);
+    }
+
+    #[test]
+    fn discard_leaves_following_message_unread() {
+        let mut stream = &b"skipnext"[..];
+        discard_clipboard(&mut stream, 4).unwrap();
+        assert_eq!(stream, b"next");
+        assert!(discard_clipboard(&mut stream, 5).is_err());
     }
 
     struct Transcript {

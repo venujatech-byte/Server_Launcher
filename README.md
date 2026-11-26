@@ -59,6 +59,33 @@ Engineered for modern developer cockpits, server orchestrators, and technical to
 - **Remote Files**: Browse folders, transfer files, and manage files on the selected SSH host.
 - **Remote Apps & Packages**: Browse and filter installed packages. **Uninstall** opens the host's package manager in an SSH terminal for supported packages. Refresh the Apps tab after the package manager finishes.
 
+#### Remote Desktop (RDP and VNC)
+
+The Rust desktop app can open an RDP or VNC viewer from an SSH host's **GUI**
+menu. Configure each protocol with the gear button beside its menu item. RDP
+credentials and VNC passwords are stored in the operating system credential
+store; protocol passwords are not saved in `servers.json`.
+
+- RDP supports NLA by default, explicit TLS, certificate fingerprint prompts,
+  keyboard and mouse input, text clipboard sync, screenshots, recording, and
+  dynamic resize when the server supports Display Control.
+- VNC supports classic password authentication, Raw and CopyRect framebuffer
+  updates, keyboard and mouse input, text clipboard sync, screenshots,
+  recording, and server-supported resolution changes. Classic VNC is not
+  encrypted; the viewer warns before a direct connection to public or unknown
+  hosts. Use the SSH tunnel option on untrusted networks.
+- Both viewers offer Fit, native-size, and Fill scaling, a live framebuffer
+  update-rate display, and a statistics menu. Local clipboard text is read only
+  while the connected viewer window is focused. Classic VNC text is limited to
+  Latin-1; clipboard images and file contents are not supported.
+
+RDP audio, microphone, drive redirection, Microsoft RD Gateway, RDP multi-monitor,
+and keyboard-layout-specific IME are not implemented. VNC Tight and ZRLE
+encodings, username-based authentication, and remote cursor shapes are not
+implemented. SSH desktop tunnels currently require Unix; Windows can use direct
+RDP/VNC connections. Protocol interoperation and performance still need testing
+against real servers on Windows, Linux X11, and Linux Wayland.
+
 ### Local Apps & Packages
 
 Browse and filter the installed apps and packages on **This PC**. The list
@@ -125,6 +152,7 @@ Server_Launcher/
 │       ├── commands.rs            # Saved command vault & integrated terminal sessions
 │       ├── scanner.rs             # Local port scanner & sysinfo monitor
 │       ├── remote.rs              # Remote SSH connector & port inspector
+│       ├── remote_desktop/         # RDP/VNC profiles, viewers, input, clipboard, capture, tunnels
 │       ├── modals.rs              # Add/edit dialogs, SSH modal, Command Palette
 │       ├── autostart.rs           # System boot/login autostart (XDG & Windows)
 │       └── config.rs              # Configuration schema & JSON persistence

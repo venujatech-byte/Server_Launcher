@@ -81,23 +81,24 @@ route only when explicitly configured. Tunnel and gateway checks require their
 respective transport implementations. The system DNS resolver runs on the
 probe worker and controls resolution time independently of the socket deadline.
 
-## VNC viewer milestone
+## VNC transport and current limits
 
-The first live viewer transport is a bounded Raw RFB implementation based on
-[RFC 6143](https://www.rfc-editor.org/rfc/rfc6143.html). It validates display
-dimensions and rectangle lengths before allocating and asks for incremental
-updates after the first frame. This establishes the native rendering and
-worker-to-viewer path without depending on compressed decoders yet. The
-loopback smoke test verified the RFB handshake, Raw frame rendering and
-incremental request on X11. Production VNC authentication, secure tunneling,
-input, and additional encodings still need implementation. This milestone
-accepts only an explicitly configured direct private endpoint and refuses
-connections that would ignore configured credentials.
+The live RFB implementation validates display dimensions and rectangle lengths
+before allocating and requests incremental updates. It supports Raw and
+CopyRect rectangles, classic VNC password authentication, SSH stdio forwarding
+on Unix, keyboard and pointer input, clipboard text, and server-supported
+resolution changes. Quality selects 16-bit or 32-bit pixels. Direct VNC to a
+public or unknown address requires an explicit warning confirmation. The
+configured encoding priority is not yet applied: Tight and ZRLE are unsupported,
+as are username-based authentication and remote cursor shapes. Classic RFB
+clipboard text is Latin-1. Only the earlier loopback Raw handshake/rendering
+smoke test is recorded; current end-to-end input, tunnel, authentication, and
+encoding interoperability need real-server validation.
 
 Classic VNC password negotiation uses the [RFB security handshake](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.2.2)
 and [RustCrypto DES 0.8.1](https://docs.rs/des/0.8.1/des/) with its zeroize feature.
-DES is used only for this legacy challenge response. The session itself is
-unencrypted on a direct connection, and public endpoints remain blocked.
+DES is used only for this legacy challenge response. A direct session itself is
+unencrypted, so public or unknown endpoints trigger a confirmation before use.
 A configured password requires VNC authentication and rules out unauthenticated
 negotiation. Username-based security modes need a separate implementation.
 
@@ -122,9 +123,9 @@ disconnects on overflow so a key release cannot silently disappear. Pointer
 coordinates follow the displayed canvas and are clamped during a drag.
 Classic RFB currently forwards the primary three buttons and both scroll
 axes. Extra buttons, IME, host-key shortcuts and platform keyboard capture
-are pending. Input mapping and focus release were tested in-process.
-Synthetic desktop input did not reach the loopback peer in the X11 smoke
-test, so end-to-end input behavior remains unverified.
+are pending. Input mapping and focus release were tested in-process. Synthetic
+desktop input did not reach the loopback peer in the X11 smoke test, so
+end-to-end input behavior remains unverified.
 
 ## Clipboard text
 
@@ -152,7 +153,8 @@ its own working copy and does not log connector errors or credentials.
 
 Initial dimensions are validated before allocating the decoded framebuffer.
 Damage from the graphics stage feeds the common partial texture renderer.
-Input and display control are wired separately from graphics. Redirection channels remain pending.
+Input and display control are wired separately from graphics. Audio, microphone,
+drive redirection, and RD Gateway remain unsupported.
 IronRDP and its blocking adapter are available under MIT or Apache-2.0.
 
 RDP keyboard and pointer events use IronRDP fast-path input on the worker that

@@ -721,6 +721,26 @@ impl LauncherApp {
                                         ui.add_space(4.0);
                                         ui.checkbox(&mut self.remote_desktop_settings.show_live_fps, "Show live FPS by default");
                                         ui.label(RichText::new("Displays the recent rate of framebuffer updates in each new viewer window.").size(10.5).color(palette.text_muted));
+                                        ui.add_space(8.0);
+                                        ui.label(RichText::new("RDP H.264 decoder").size(12.0).strong().color(palette.text_primary));
+                                        ui.horizontal(|ui| {
+                                            if ui.button("Choose Cisco OpenH264 library…").clicked() {
+                                                if let Some(path) = rfd::FileDialog::new().pick_file() {
+                                                    self.remote_desktop_settings.h264_library_path = Some(path);
+                                                }
+                                            }
+                                            if self.remote_desktop_settings.h264_library_path.is_some()
+                                                && ui.button("Clear").clicked()
+                                            {
+                                                self.remote_desktop_settings.h264_library_path = None;
+                                            }
+                                        });
+                                        ui.label(
+                                            RichText::new(self.remote_desktop_settings.h264_library_path.as_ref()
+                                                .map_or_else(|| "Not configured; RDP uses its other supported codecs.".to_owned(), |path| path.display().to_string()))
+                                                .size(10.5).monospace().color(palette.text_muted),
+                                        );
+                                        ui.label(RichText::new("Select an official Cisco OpenH264 library. The loader checks supported release hashes; the app does not bundle the decoder.").size(10.5).color(palette.text_muted));
                                         ui.checkbox(
                                             &mut self.remote_desktop_settings.copy_screenshots_to_clipboard,
                                             "Copy screenshots to the clipboard by default",

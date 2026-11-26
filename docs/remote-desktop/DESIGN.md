@@ -73,14 +73,19 @@ been completed. Record results here only after a runnable viewer is measured.
 
 ## Display profiles and input controls
 
-RDP profiles expose Automatic, GFX RFX, GFX RFX Progressive, legacy RemoteFX,
-32/24-bit true color, 16/15-bit high color, and 256-color (8 bpp) bitmap mode.
+RDP profiles expose Automatic, GFX RFX, GFX RFX Progressive, GFX AVC420,
+GFX AVC444, legacy RemoteFX, 32/24-bit true color, 16/15-bit high color, and
+256-color (8 bpp) bitmap mode. AVC profiles use the optional OpenH264 decoder
+loaded from Settings → Remote Desktop. The app does not bundle this library;
+the loader accepts supported Cisco release hashes. If no path is configured,
+IronRDP does not advertise AVC and the server can use another supported codec.
 The 8 bpp profile disables EGFX so the server uses the palette-aware legacy
 bitmap path. The EGFX path supports
 IronRDP's ClearCodec and RFX decoders. Explicit GFX RFX profile choices limit
-the advertised capability version, while Automatic lets the server choose
-among supported paths. AVC/H.264 remains disabled because the app has no H.264
-decoder, so those Remmina entries remain unavailable. The legacy RemoteFX
+the advertised capability version. GFX AVC420 advertises AVC420-capable
+capabilities; GFX AVC444 advertises AVC444 and AVC420 capability sets, each
+with lower-version fallbacks. Automatic lets the server choose among paths
+supported by the configured decoder. The legacy RemoteFX
 bitmap codec is advertised but cannot be forced: the server selects the codec
 during negotiation. Older `quality` and `color_depth` fields remain intact and
 are used when no explicit `color_profile` is saved.
@@ -214,10 +219,12 @@ The RDP viewer now registers IronRDP's EGFX dynamic channel before advertising
 `SUPPORT_DYN_VC_GFX_PROTOCOL`. IronRDP composites supported EGFX updates into
 the same persistent framebuffer as legacy bitmap updates, so both paths feed
 the existing incremental upload and live display-update counter. The client
-uses IronRDP's built-in ClearCodec/RFX decoders; AVC/H.264 is not enabled because
-this app does not supply an H.264 decoder. Servers can still fall back to the
-supported codec sets. Smooth/Fast filtering and incremental/full-frame painting
-remain local rendering choices and cannot create additional server frames.
+uses IronRDP's built-in ClearCodec/RFX decoders and can load its OpenH264
+decoder from an official supported Cisco library selected in Remote Desktop
+settings. Without that library the client does not advertise AVC and the
+server can fall back to supported codec sets. Smooth/Fast filtering and
+incremental/full-frame painting remain local rendering choices and cannot
+create additional server frames.
 Direct RDP and the Windows tunnel socket already enable TCP_NODELAY.
 
 The screenshot reference is a live desktop framebuffer: received remote

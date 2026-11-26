@@ -33,6 +33,7 @@ use ironrdp::{
 };
 use ironrdp_blocking::Framed;
 use ironrdp_egfx::client::{GraphicsPipelineClient, GraphicsPipelineHandler};
+use ironrdp_egfx::decode::H264Decoder;
 use std::{
     io,
     net::{SocketAddr, TcpStream, ToSocketAddrs},
@@ -95,6 +96,24 @@ fn run(
             "Microsoft RD Gateway is not supported yet. No connection was attempted.",
         ));
     }
+    let use_egfx = bitmap_quality(profile).0 != 8;
+    let h264_decoder = if use_egfx {
+        crate::config::ConfigFile::load_from_file(config_path)
+            .remote_desktop
+            .h264_library_path
+            .map(|path| {
+                ironrdp_egfx::decode::OpenH264Decoder::from_library_path(&path)
+                    .map(|decoder| Box::new(decoder) as Box<dyn H264Decoder>)
+                    .map_err(|_| {
+                        error(
+                            "The selected OpenH264 library is unsupported or could not be loaded.",
+                        )
+                    })
+            })
+            .transpose()?
+    } else {
+        None
+    };
     let password = credentials::load(host, DesktopProtocol::Rdp)
         .map_err(|message| error(&message))?
         .ok_or_else(|| error("Save an RDP password in the host settings before connecting."))?;
@@ -128,7 +147,6 @@ fn run(
     let resize_state = state.clone();
     let resize_ctx = ctx.clone();
     let multi_monitor = profile.multi_monitor;
-    let use_egfx = bitmap_quality(profile).0 != 8;
     let [desktop_width, desktop_height] = initial_dimensions(profile, monitor_size).map(u32::from);
     let mut drdynvc = DrdynvcClient::new();
     if use_egfx {
@@ -136,7 +154,7 @@ fn run(
             Box::new(EgfxHandler {
                 color_profile: profile.color_profile.unwrap_or_default(),
             }),
-            None,
+            h264_decoder,
         ));
     }
     drdynvc = drdynvc.with_dynamic_channel(DisplayControlClient::new(move |capabilities| {
@@ -572,6 +590,27 @@ impl GraphicsPipelineHandler for EgfxHandler {
             RdpColorProfile::GfxRfx => vec![Cap::V8 {
                 flags: CapabilitiesV8Flags::SMALL_CACHE,
             }],
+            RdpColorProfile::GfxAvc420 => vec![
+                Cap::V8_1 {
+                    flags: ironrdp_egfx::pdu::CapabilitiesV81Flags::AVC420_ENABLED
+                        | ironrdp_egfx::pdu::CapabilitiesV81Flags::SMALL_CACHE,
+                },
+                Cap::V8 {
+                    flags: CapabilitiesV8Flags::SMALL_CACHE,
+                },
+            ],
+            RdpColorProfile::GfxAvc444 => vec![
+                Cap::V10_7 {
+                    flags: CapabilitiesV107Flags::SMALL_CACHE,
+                },
+                Cap::V8_1 {
+                    flags: ironrdp_egfx::pdu::CapabilitiesV81Flags::AVC420_ENABLED
+                        | ironrdp_egfx::pdu::CapabilitiesV81Flags::SMALL_CACHE,
+                },
+                Cap::V8 {
+                    flags: CapabilitiesV8Flags::SMALL_CACHE,
+                },
+            ],
             RdpColorProfile::GfxRfxProgressive => vec![Cap::V10_7 {
                 flags: CapabilitiesV107Flags::AVC_DISABLED | CapabilitiesV107Flags::SMALL_CACHE,
             }],
@@ -782,6 +821,8 @@ fn bitmap_quality(profile: &RdpProfile) -> (u32, bool) {
             RdpColorProfile::Automatic
             | RdpColorProfile::GfxRfx
             | RdpColorProfile::GfxRfxProgressive
+            | RdpColorProfile::GfxAvc420
+            | RdpColorProfile::GfxAvc444
             | RdpColorProfile::RemoteFx
             | RdpColorProfile::TrueColor32 => (32, false),
             RdpColorProfile::TrueColor24 => (24, false),

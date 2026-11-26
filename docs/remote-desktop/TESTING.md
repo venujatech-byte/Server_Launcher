@@ -60,7 +60,11 @@ network or the host's configured SSH tunnel.
    frame; Full-frame repaint may use more client CPU and does not change server
    capture FPS, codec negotiation, or network latency.
 6. Connect with the 256 colors (8 bpp) profile and confirm a palette update
-   renders correctly. Confirm other profiles continue to negotiate EGFX.
+   renders correctly. To check AVC, configure a supported Cisco OpenH264
+   library in Settings → Remote Desktop, then try GFX AVC420 and GFX AVC444
+   against a server that supports them. Clear the library path and confirm the
+   session falls back without advertising AVC. Confirm other profiles continue
+   to negotiate EGFX.
 7. Test clipboard directions separately with Unicode text and an image under
    the configured size cap. Confirm received content is not echoed back.
 8. Test TLS-only explicitly against a server configured for TLS. Auto must not
@@ -73,11 +77,12 @@ network or the host's configured SSH tunnel.
    while input keys are held. Confirm all remote keys/buttons are released on
    focus loss and close.
 
-The renderer accepts legacy bitmap updates and EGFX updates. EGFX AVC/H.264
-decoding is not enabled, so confirm the server negotiates one of the supported
-ClearCodec/RFX paths. Audio, microphone, drive redirection, RD Gateway, IME, and
-multi-monitor behavior are not fully implemented; mark these unsupported rather
-than passing them based on UI controls alone.
+The renderer accepts legacy bitmap updates and EGFX updates. AVC decoding is
+available only when a supported Cisco OpenH264 library is configured. Without
+one, confirm the server negotiates a supported ClearCodec/RFX path. Audio,
+microphone, drive redirection, RD Gateway, IME, and multi-monitor behavior are
+not fully implemented; mark these unsupported rather than passing them based
+on UI controls alone.
 
 ## VNC checks
 

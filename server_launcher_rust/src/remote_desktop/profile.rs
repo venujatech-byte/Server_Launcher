@@ -35,6 +35,8 @@ choices!(RdpColorProfile {
     Automatic,
     GfxRfx,
     GfxRfxProgressive,
+    GfxAvc420,
+    GfxAvc444,
     RemoteFx,
     TrueColor32,
     TrueColor24,

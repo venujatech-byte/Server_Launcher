@@ -213,6 +213,8 @@ pub struct RemoteDesktopSettings {
     pub show_live_fps: bool,
     pub warn_unencrypted_vnc: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub h264_library_path: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub screenshot_folder: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recording_folder: Option<PathBuf>,
@@ -226,6 +228,7 @@ impl Default for RemoteDesktopSettings {
         Self {
             show_live_fps: false,
             warn_unencrypted_vnc: true,
+            h264_library_path: None,
             screenshot_folder: None,
             recording_folder: None,
             recording_fps: 30,

@@ -51,6 +51,8 @@ fn rdp_color_profile(ui: &mut Ui, value: &mut Option<RdpColorProfile>) {
             RdpColorProfile::GfxRfxProgressive,
             "GFX RFX Progressive (32 bpp)",
         ),
+        (RdpColorProfile::GfxAvc444, "GFX AVC444 (32 bpp)"),
+        (RdpColorProfile::GfxAvc420, "GFX AVC420 (32 bpp)"),
         (RdpColorProfile::RemoteFx, "RemoteFX (32 bpp)"),
         (RdpColorProfile::TrueColor32, "True color (32 bpp)"),
         (RdpColorProfile::TrueColor24, "True color (24 bpp)"),
@@ -72,11 +74,11 @@ fn rdp_color_profile(ui: &mut Ui, value: &mut Option<RdpColorProfile>) {
                 for &(profile, label) in SUPPORTED {
                     ui.selectable_value(value, Some(profile), label);
                 }
-                ui.separator();
-                ui.add_enabled(false, egui::Button::new("GFX AVC444 (32 bpp)"));
-                ui.add_enabled(false, egui::Button::new("GFX AVC420 (32 bpp)"));
             });
     });
+    ui.label(
+        "AVC profiles require a Cisco OpenH264 library selected in Settings → Remote Desktop.",
+    );
 }
 
 pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {

@@ -64,6 +64,8 @@ The checked app revision was `8ec3a0d`.
    test left/right/middle plus side mouse buttons and both wheel axes.
    Confirm that a continuously changing desktop stays live over EGFX, and
    check that the viewer's FPS counter changes with received display updates.
+   Enable View only and confirm the display remains live while keyboard,
+   pointer, and outgoing clipboard input are suppressed.
 4. Resize the viewer with dynamic resolution enabled. Check for correct aspect
    ratio and no stale pixels after the server changes resolution.
 5. Compare Incremental and Full-frame repaint. They should show the same remote
@@ -91,7 +93,9 @@ The checked app revision was `8ec3a0d`.
    forwards to the configured RDP host and port, and an untrusted gateway
    certificate blocks the connection. Confirm the editor rejects combining
    RD Gateway with Tunnel via SSH. The probe checks the RDP handshake after
-   gateway sign-in but does not log in to the desktop.
+   gateway sign-in but does not log in to the desktop. Change the gateway host
+   or port and confirm the old saved RDP password is not reused; equivalent
+   default-port spellings should preserve the credential binding.
 10. Start with the server unavailable, then make it available during the retry
    window and confirm the initial connection is retried. Confirm an
    auto-reconnecting session makes at most five attempts after a failure, then
@@ -122,12 +126,16 @@ Platform keyboard capture remains unsupported.
    and the Show remote cursor setting. Test a server that sends only one cursor
    shape encoding as well as a server that sends neither.
 4. Test keyboard, pointer buttons, drag, and vertical/horizontal wheel. Check
-   that view-only mode sends no input and focus loss releases held keys.
+   that view-only mode sends no input and focus loss releases held keys. Type a
+   non-Latin-1 character into a remote text field and confirm keyboard Unicode
+   input works independently of the Latin-1 clipboard limit.
 5. Test clipboard text in both directions, including non-Latin-1 content and
    data above the limit. Classic RFB does not support image clipboard here.
 6. Test direct public-address confirmation and SSH tunneling. Use Test
    Connection through the tunnel and confirm the RFB banner/security offer is
-   reported. Verify closing or crashing the viewer cleans up the tunnel process.
+   reported. On Windows, verify a key- or agent-authenticated SSH profile
+   opens the requested local forward. Verify closing or crashing the viewer
+   cleans up the tunnel process.
 7. Enable Close on connection failure and verify an exhausted retry sequence
    closes the viewer. With the option disabled, the final error stays visible.
 8. Request a supported and unsupported remote resolution; confirm rejection

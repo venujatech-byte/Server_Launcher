@@ -52,7 +52,10 @@ the final versions.
 - Keep a protocol profile distinct from credentials. The existing credential
   helper uses Secret Service on Linux and DPAPI on Windows. Preserve SSH's
   current lookup binding. Use protocol-specific target bindings for new
-  secrets. Surface lookup failures in the viewer.
+  secrets, including the normalized RD Gateway endpoint in RDP bindings.
+  Changing a gateway requires saving a new credential; legacy unscoped
+  credentials are not retried for gateway profiles. Surface lookup failures in
+  the viewer.
 - Identify sessions by host ID and protocol. Start the same executable in
   session mode with those identifiers only. Use a bounded control channel,
   send Close on parent exit, and treat EOF as teardown. Prove tunnel lifetime

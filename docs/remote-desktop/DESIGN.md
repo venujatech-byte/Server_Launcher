@@ -173,11 +173,14 @@ disconnects on overflow so a key release cannot silently disappear. Pointer
 coordinates follow the displayed canvas and are clamped during a drag.
 Classic RFB forwards left, middle, and right buttons plus both scroll axes;
 side buttons have no distinct classic RFB event and are ignored. RDP forwards
-the two extended side buttons with MouseEventEx. IME, host-key
-shortcuts and platform keyboard capture are pending. Input mapping and focus
-release were tested in-process. Synthetic desktop input did not reach the
-loopback peer in the X11 smoke test, so end-to-end input behavior remains
-unverified.
+the two extended side buttons with MouseEventEx. The viewer forwards committed
+non-ASCII egui IME text where the platform backend provides commit events;
+preedit candidates are not sent. Linux egui-winit 0.29 drops IME events, so
+Linux composition still depends on text events delivered by its keyboard
+backend. Host-key shortcuts and platform keyboard capture remain pending.
+Input mapping and focus release were tested in-process. Synthetic desktop input
+did not reach the loopback peer in the X11 smoke test, so end-to-end input
+behavior remains unverified.
 
 ## Clipboard sync
 

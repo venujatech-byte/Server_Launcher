@@ -42,11 +42,15 @@ impl Capture {
         let visible = canvas.intersect(clip);
         for event in events {
             if self.active {
-                if let Event::Text(text) = event {
-                    for ch in text.chars().filter(|ch| !ch.is_ascii()) {
-                        send(Input::UnicodeText(ch));
+                match event {
+                    Event::Text(text) | Event::Ime(egui::ImeEvent::Commit(text)) => {
+                        for ch in text.chars().filter(|ch| !ch.is_ascii()) {
+                            send(Input::UnicodeText(ch));
+                        }
+                        continue;
                     }
-                    continue;
+                    Event::Ime(_) => continue,
+                    _ => {}
                 }
             }
             match *event {
@@ -302,6 +306,37 @@ mod tests {
             |event| packets.push(event),
         );
         assert_eq!(packets, [Input::UnicodeText('é'), Input::UnicodeText('界')]);
+    }
+
+    #[test]
+    fn forwards_committed_ime_text_but_not_preedit_candidates() {
+        let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(100.0, 50.0));
+        let mut capture = Capture {
+            active: true,
+            ..Default::default()
+        };
+        let mut packets = Vec::new();
+        capture.events(
+            &[
+                Event::Ime(egui::ImeEvent::Preedit("に".into())),
+                Event::Ime(egui::ImeEvent::Commit("日本語".into())),
+            ],
+            Modifiers::NONE,
+            true,
+            rect,
+            rect,
+            [100, 50],
+            None,
+            |event| packets.push(event),
+        );
+        assert_eq!(
+            packets,
+            [
+                Input::UnicodeText('日'),
+                Input::UnicodeText('本'),
+                Input::UnicodeText('語')
+            ]
+        );
     }
 
     #[test]

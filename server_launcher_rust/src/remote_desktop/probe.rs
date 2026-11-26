@@ -88,19 +88,12 @@ fn rdp(stream: &mut (impl Read + Write), security: RdpSecurity) -> io::Result<St
     let offered: u8 = match security {
         RdpSecurity::Auto | RdpSecurity::Nla => 2,
         RdpSecurity::Tls => 1,
-        RdpSecurity::Rdp => 0,
+        RdpSecurity::Rdp => return Err(invalid("select NLA or TLS in the RDP tab")),
     };
-    let mut request = [
+    let request = [
         3, 0, 0, 19, 14, 0xe0, 0, 0, 0, 0, 0, 1, 0, 8, 0, offered, 0, 0, 0,
     ];
-    let size = if security == RdpSecurity::Rdp {
-        request[3] = 11;
-        request[4] = 6;
-        11
-    } else {
-        19
-    };
-    stream.write_all(&request[..size])?;
+    stream.write_all(&request)?;
     let mut header = [0; 4];
     stream.read_exact(&mut header)?;
     let size = u16::from_be_bytes([header[2], header[3]]);
@@ -114,13 +107,9 @@ fn rdp(stream: &mut (impl Read + Write), security: RdpSecurity) -> io::Result<St
         return Err(invalid("expected an X.224 connection confirmation"));
     }
     if size == 11 {
-        return if security == RdpSecurity::Rdp {
-            Ok("Legacy RDP endpoint confirmed".into())
-        } else {
-            Err(invalid(
-                "the server did not negotiate encrypted RDP security",
-            ))
-        };
+        return Err(invalid(
+            "the server did not negotiate encrypted RDP security",
+        ));
     }
     if body[9..11] != [8, 0] {
         return Err(invalid("invalid RDP negotiation length"));

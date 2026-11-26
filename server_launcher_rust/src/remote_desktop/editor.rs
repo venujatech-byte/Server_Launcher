@@ -64,11 +64,10 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
                 (RdpSecurity::Auto, "Auto"),
                 (RdpSecurity::Nla, "NLA"),
                 (RdpSecurity::Tls, "TLS"),
-                (RdpSecurity::Rdp, "Legacy RDP"),
             ],
         );
         if profile.security == RdpSecurity::Rdp {
-            ui.label("Legacy RDP security can expose this session. Prefer NLA or TLS.");
+            ui.label("This profile uses legacy RDP security. Select NLA or TLS to connect.");
         }
         color_depth(ui, &mut profile.color_depth);
         choice(

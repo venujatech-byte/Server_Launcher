@@ -3,7 +3,7 @@ use super::{
     framebuffer::{Framebuffer, Region},
     input::Capture,
     profile::{Resolution, Scaling},
-    vnc::Connection,
+    vnc::{Connection, Input},
 };
 use crate::{config::ConfigFile, theme::ThemeMode};
 use std::{
@@ -210,6 +210,20 @@ impl Viewer {
         }
     }
 
+    fn send_keys(&mut self, keys: &[u32]) {
+        let Some(connection) = &self.connection else {
+            return;
+        };
+        let connection = connection.lock().unwrap();
+        if !connection.connected || self.view_only {
+            return;
+        }
+        self.capture.release(|event| connection.send_input(event));
+        for (keysym, pressed) in key_sequence(keys) {
+            connection.send_input(Input::Key { keysym, pressed });
+        }
+    }
+
     fn send_input(
         &mut self,
         ctx: &egui::Context,
@@ -361,6 +375,37 @@ impl eframe::App for Viewer {
                 {
                     self.take_screenshot(ctx);
                 }
+                ui.add_enabled_ui(connected && !self.view_only, |ui| {
+                    ui.menu_button("Send keys", |ui| {
+                        let shortcuts: &[(&str, &[u32])] = &[
+                            ("Ctrl+Alt+Del", &[0xffe3, 0xffe9, 0xffff]),
+                            ("Alt+Tab", &[0xffe9, 0xff09]),
+                            ("Alt+F4", &[0xffe9, 0xffc1]),
+                            ("Windows key", &[0xffeb]),
+                            ("Win+L", &[0xffeb, b'l' as u32]),
+                            ("Win+D", &[0xffeb, b'd' as u32]),
+                            ("Ctrl+Shift+Esc", &[0xffe3, 0xffe1, 0xff1b]),
+                            ("Print Screen", &[0xff61]),
+                            ("Escape", &[0xff1b]),
+                            ("Ctrl+C", &[0xffe3, b'c' as u32]),
+                            ("Ctrl+V", &[0xffe3, b'v' as u32]),
+                        ];
+                        for &(label, keys) in shortcuts {
+                            if ui.button(label).clicked() {
+                                self.send_keys(keys);
+                                ui.close_menu();
+                            }
+                        }
+                        ui.menu_button("Function keys", |ui| {
+                            for number in 1..=12 {
+                                if ui.button(format!("F{number}")).clicked() {
+                                    self.send_keys(&[0xffbd + number]);
+                                    ui.close_menu();
+                                }
+                            }
+                        });
+                    });
+                });
                 if self.view_only && connected {
                     ui.label("View only");
                 }
@@ -414,6 +459,26 @@ impl eframe::App for Viewer {
             self.send_input(ctx, screen, clip, pixels, ui.layer_id());
         });
     }
+}
+
+fn key_sequence(keys: &[u32]) -> impl Iterator<Item = (u32, bool)> + '_ {
+    keys.iter()
+        .map(|&key| (key, true))
+        .chain(keys.iter().rev().map(|&key| (key, false)))
+}
+
+#[cfg(test)]
+#[test]
+fn shortcut_releases_keys_in_reverse_order() {
+    assert_eq!(
+        key_sequence(&[0xffe3, 0xffff]).collect::<Vec<_>>(),
+        [
+            (0xffe3, true),
+            (0xffff, true),
+            (0xffff, false),
+            (0xffe3, false)
+        ]
+    );
 }
 
 fn scale_label(scale: Scaling) -> &'static str {

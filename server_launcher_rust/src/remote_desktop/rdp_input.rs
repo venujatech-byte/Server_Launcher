@@ -69,6 +69,7 @@ impl Encoder {
 
 fn scancode(keysym: u32) -> Option<(u8, bool)> {
     let result = match keysym {
+        0xff61 => (0x37, true),
         0xff08 => (0x0e, false),
         0xff09 => (0x0f, false),
         0xff0d => (0x1c, false),

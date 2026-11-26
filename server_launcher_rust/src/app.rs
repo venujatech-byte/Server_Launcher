@@ -307,6 +307,7 @@ pub enum SettingsTab {
     Autostart,
     Backup,
     Shortcuts,
+    RemoteDesktop,
     About,
 }
 
@@ -317,6 +318,7 @@ impl SettingsTab {
             SettingsTab::Autostart,
             SettingsTab::Backup,
             SettingsTab::Shortcuts,
+            SettingsTab::RemoteDesktop,
             SettingsTab::About,
         ]
     }
@@ -327,6 +329,7 @@ impl SettingsTab {
             SettingsTab::Autostart => "Startup",
             SettingsTab::Backup => "Data & Backup",
             SettingsTab::Shortcuts => "Shortcuts",
+            SettingsTab::RemoteDesktop => "Remote Desktop",
             SettingsTab::About => "About",
         }
     }
@@ -337,6 +340,7 @@ impl SettingsTab {
             SettingsTab::Autostart => crate::lucide::ROCKET,
             SettingsTab::Backup => crate::lucide::PACKAGE,
             SettingsTab::Shortcuts => crate::lucide::KEYBOARD,
+            SettingsTab::RemoteDesktop => crate::lucide::MONITOR,
             SettingsTab::About => crate::lucide::INFO,
         }
     }
@@ -437,6 +441,7 @@ pub struct LauncherApp {
     remote_command_activity: Arc<Mutex<HashMap<String, RemoteCommandActivity>>>,
     ssh_idle: crate::config::SshIdleSettings,
     ssh_probe_timeouts: crate::config::SshProbeTimeouts,
+    remote_desktop_settings: crate::config::RemoteDesktopSettings,
     remote_terminal_inputs: HashMap<String, String>,
     remote_connection_status: Arc<Mutex<HashMap<String, Result<String, String>>>>,
     remote_connecting: Arc<Mutex<BTreeSet<String>>>,
@@ -986,6 +991,7 @@ impl LauncherApp {
             remote_command_activity: Arc::default(),
             ssh_idle: config_file.ssh_idle,
             ssh_probe_timeouts: config_file.ssh_probe_timeouts,
+            remote_desktop_settings: config_file.remote_desktop,
             remote_terminal_inputs,
             remote_connection_status,
             remote_connecting,
@@ -1425,6 +1431,7 @@ impl LauncherApp {
             journal_refresh_interval: Some(self.journal_refresh_interval),
             ssh_idle: self.ssh_idle,
             ssh_probe_timeouts: self.ssh_probe_timeouts,
+            remote_desktop: self.remote_desktop_settings,
         }
     }
 

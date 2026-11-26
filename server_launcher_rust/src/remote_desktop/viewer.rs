@@ -24,6 +24,8 @@ pub(crate) fn run(
     test_pattern: bool,
 ) -> eframe::Result<()> {
     let config = ConfigFile::load_from_file(path);
+    let show_fps = config.remote_desktop.show_live_fps;
+    let warn_unencrypted_vnc = config.remote_desktop.warn_unencrypted_vnc;
     let profile = config.ssh_hosts.iter().find(|host| host.id == host_id);
     let name = profile.map_or("Remote Desktop", |host| host.name.as_str());
     let title = format!("{name} - {}", protocol.label());
@@ -42,9 +44,10 @@ pub(crate) fn run(
         .as_ref()
         .filter(|_| protocol == DesktopProtocol::Vnc)
         .is_some_and(|host| {
-            host.vnc.as_ref().is_some_and(|profile| {
-                !profile.tunnel_via_ssh && super::vnc::needs_unencrypted_warning(&host.host)
-            })
+            warn_unencrypted_vnc
+                && host.vnc.as_ref().is_some_and(|profile| {
+                    !profile.tunnel_via_ssh && super::vnc::needs_unencrypted_warning(&host.host)
+                })
         });
     let view_only = viewer_host
         .as_ref()
@@ -132,7 +135,7 @@ pub(crate) fn run(
                 recording: None,
                 recording_result: None,
                 screenshot_result: None,
-                show_fps: false,
+                show_fps,
                 fps_sample: None,
                 fps: 0.0,
             }))

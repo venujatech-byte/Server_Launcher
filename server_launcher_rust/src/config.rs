@@ -201,6 +201,22 @@ impl Default for SshIdleSettings {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+pub struct RemoteDesktopSettings {
+    pub show_live_fps: bool,
+    pub warn_unencrypted_vnc: bool,
+}
+
+impl Default for RemoteDesktopSettings {
+    fn default() -> Self {
+        Self {
+            show_live_fps: false,
+            warn_unencrypted_vnc: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SshProbeTimeouts {
     pub connection_test_seconds: u32,
     pub port_scan_seconds: u32,
@@ -237,6 +253,8 @@ pub struct ConfigFile {
     pub ssh_idle: SshIdleSettings,
     #[serde(default)]
     pub ssh_probe_timeouts: SshProbeTimeouts,
+    #[serde(default)]
+    pub remote_desktop: RemoteDesktopSettings,
 }
 
 impl ConfigFile {
@@ -485,6 +503,13 @@ pub fn parse_server_json_value(key: &str, val: &serde_json::Value) -> Option<Ser
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_config_defaults_remote_desktop_safety_settings() {
+        let config: ConfigFile = serde_json::from_str(r#"{"servers":[]}"#).unwrap();
+        assert!(!config.remote_desktop.show_live_fps);
+        assert!(config.remote_desktop.warn_unencrypted_vnc);
+    }
 
     #[test]
     fn test_parse_stitch_mcp_schema() {

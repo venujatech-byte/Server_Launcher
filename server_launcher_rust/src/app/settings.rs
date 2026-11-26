@@ -704,6 +704,26 @@ impl LauncherApp {
                                         }
                                     });
                             }
+                            SettingsTab::RemoteDesktop => {
+                                let previous = self.remote_desktop_settings;
+                                Frame::none()
+                                    .fill(palette.bg_subtle)
+                                    .stroke(Stroke::NONE)
+                                    .rounding(Rounding::same(12.0))
+                                    .inner_margin(egui::Margin::same(16.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new("Remote desktop viewer").size(14.0).strong().color(palette.text_primary));
+                                        ui.add_space(4.0);
+                                        ui.checkbox(&mut self.remote_desktop_settings.show_live_fps, "Show live FPS by default");
+                                        ui.label(RichText::new("Displays the recent rate of framebuffer updates in each new viewer window.").size(10.5).color(palette.text_muted));
+                                        ui.add_space(8.0);
+                                        ui.checkbox(&mut self.remote_desktop_settings.warn_unencrypted_vnc, "Warn before direct VNC connections to public or unknown hosts");
+                                        ui.label(RichText::new("Direct classic VNC does not encrypt screen updates or input. The warning offers an SSH tunnel before connecting.").size(10.5).color(palette.text_muted));
+                                    });
+                                if previous != self.remote_desktop_settings {
+                                    self.persist_config();
+                                }
+                            }
                             SettingsTab::About => {
                                 crate::updater::render(ui, palette);
                                 ui.add_space(12.0);

@@ -297,9 +297,9 @@ By default files are saved to the system Pictures folder under `ServerLauncher`.
 The writer publishes a completed PNG without overwriting an existing file.
 The viewer reports the result with open-file and show-folder actions.
 The user can choose a screenshot folder in Remote Desktop settings; leaving it
-unset uses Pictures/ServerLauncher. Screenshot clipboard copies and host-key
-can be enabled as a viewer default or toggled per session. Host-key shortcuts
-remain pending.
+unset uses Pictures/ServerLauncher. Screenshot clipboard copying can be enabled
+as a viewer default or toggled per session. Host-key shortcuts and platform
+keyboard capture are not implemented; the Send keys menu remains the fallback.
 
 Recordings use FFmpeg H.264 at 30 fps when available and fall back to a PNG
 sequence when FFmpeg is missing. The recording destination and frame rate

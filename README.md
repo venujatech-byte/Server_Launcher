@@ -115,9 +115,10 @@ Windows uses IronRDP's native drive backend. This needs real-server validation.
 RDP profiles can route through Microsoft RD Gateway over HTTPS. The gateway
 uses the saved RDP username/password, requires a system-trusted gateway
 certificate, and cannot be combined with Tunnel via SSH. This path still needs
-live gateway validation. Platform keyboard capture and keyboard-layout-specific
-IME are not implemented; committed non-ASCII IME text is forwarded on platforms that provide egui commit
-events, while Linux relies on its keyboard text events. Linux source builds
+live gateway validation. Host-key shortcuts, platform keyboard capture, and
+keyboard-layout-specific IME are not implemented; committed non-ASCII IME text
+is forwarded on platforms that provide egui commit events, while Linux relies
+on its keyboard text events. Linux source builds
 need the ALSA development package
 (`libasound2-dev` on Ubuntu/Debian, `alsa-lib-devel` on Fedora/RHEL) for local
 RDP audio playback. RDP dual-display layout is best-effort: the server must

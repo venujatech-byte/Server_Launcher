@@ -3237,80 +3237,86 @@ impl eframe::App for LauncherApp {
                                 egui::popup::PopupCloseBehavior::CloseOnClick,
                                 |ui| {
                                     use crate::remote_desktop::{credentials::DesktopProtocol, probe};
-                                    // Reserve a stable width so the protocol action, status, and settings gear never wrap.
-                                    ui.set_min_width(310.0);
-                                    ui.vertical(|ui| {
-                                        ui.spacing_mut().item_spacing.y = 5.0;
-                                        for protocol in DesktopProtocol::ALL {
-                                            let (status, detail) = probe::menu_status(ui.ctx(), host, protocol);
-                                            let label = protocol.label();
-                                            let action_hint = if status == "○ Not configured" {
-                                                format!("Set up {label}")
-                                            } else {
-                                                format!("Connect via {label}")
-                                            };
-                                            let (color, fill) = match status {
-                                                "● Reachable" => (p.success, p.success_subtle),
-                                                "◐ Unreachable" => (p.danger, p.danger_subtle),
-                                                _ => (p.text_muted, p.bg_button),
-                                            };
-
-                                            Frame::none()
-                                                .fill(p.bg_subtle)
-                                                .stroke(Stroke::new(1.0_f32, p.border))
-                                                .rounding(Rounding::same(9.0))
-                                                .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                                                .show(ui, |ui| {
-                                                    ui.horizontal(|ui| {
-                                                        ui.spacing_mut().item_spacing.x = 7.0;
-                                                        let action = egui::Button::new(
-                                                            RichText::new(format!("{}  {label}", crate::lucide::MONITOR))
-                                                                .size(11.5)
-                                                                .strong()
-                                                                .color(p.text_primary),
-                                                        )
-                                                        .fill(p.bg_button)
-                                                        .stroke(Stroke::NONE)
-                                                        .rounding(Rounding::same(7.0))
-                                                        .min_size(egui::vec2(96.0, 30.0));
-                                                        let connect = ui.add(action).hover_tip(action_hint).clicked();
-
-                                                        let badge = Frame::none()
-                                                            .fill(fill)
-                                                            .rounding(Rounding::same(999.0))
-                                                            .inner_margin(egui::Margin::symmetric(8.0, 5.0))
-                                                            .show(ui, |ui| {
-                                                                ui.label(RichText::new(status).size(10.0).color(color));
-                                                            });
-                                                        if let Some(detail) = detail {
-                                                            badge.response.hover_tip(detail);
-                                                        }
-
-                                                        // A labeled tooltip and high-contrast surface keep profile editing discoverable.
-                                                        let settings = egui::Button::new(
-                                                            RichText::new(crate::lucide::SETTINGS)
-                                                                .size(14.0)
-                                                                .color(p.text_secondary),
-                                                        )
-                                                        .fill(p.bg_card)
-                                                        .stroke(Stroke::new(1.0_f32, p.border))
-                                                        .rounding(Rounding::same(7.0))
-                                                        .min_size(egui::vec2(32.0, 30.0));
-                                                        let edit = ui
-                                                            .add(settings)
-                                                            .hover_tip(format!("Edit {label} settings"))
-                                                            .clicked();
-                                                        if edit {
-                                                            self.ssh_host_modal.open_desktop(host, protocol);
-                                                            ui.memory_mut(|memory| memory.close_popup());
-                                                        } else if connect {
-                                                            self.open_remote_desktop(ctx, host, protocol);
-                                                            ui.memory_mut(|memory| memory.close_popup());
-                                                        }
-                                                    });
+                                        ui.set_min_width(300.0);
+                                        Frame::none()
+                                            .fill(p.bg_card)
+                                            .rounding(Rounding::same(10.0))
+                                            .inner_margin(egui::Margin::same(8.0))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new(crate::lucide::MONITOR).size(12.0).color(p.info));
+                                                    ui.label(RichText::new("REMOTE DESKTOP").size(10.0).strong().color(p.text_muted));
+                                                    if open_count > 0 {
+                                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                            ui.label(RichText::new(format!("{open_count} OPEN")).size(9.0).color(p.info));
+                                                        });
+                                                    }
                                                 });
-                                        }
-                                    });
+                                                ui.add_space(6.0);
+                                                for protocol in DesktopProtocol::ALL {
+                                                    let (status, detail) = probe::menu_status(ui.ctx(), host, protocol);
+                                                    let label = protocol.label();
+                                                    let action_hint = if status == "○ Not configured" {
+                                                        format!("Configure {label} to connect")
+                                                    } else {
+                                                        format!("Connect via {label}")
+                                                    };
+                                                    let (color, fill) = match status {
+                                                        "● Reachable" => (p.success, p.success_subtle),
+                                                        "◐ Unreachable" => (p.danger, p.danger_subtle),
+                                                        _ => (p.text_muted, p.bg_button),
+                                                    };
+                                                    Frame::none()
+                                                        .fill(p.bg_subtle)
+                                                        .rounding(Rounding::same(8.0))
+                                                        .inner_margin(egui::Margin::symmetric(7.0, 6.0))
+                                                        .show(ui, |ui| {
+                                                            ui.horizontal(|ui| {
+                                                                ui.spacing_mut().item_spacing.x = 6.0;
+                                                                let action = egui::Button::new(
+                                                                    RichText::new(format!("{}  {label}", crate::lucide::MONITOR))
+                                                                        .size(11.0).strong().color(p.text_primary),
+                                                                )
+                                                                .fill(p.bg_button)
+                                                                .stroke(Stroke::NONE)
+                                                                .rounding(Rounding::same(7.0))
+                                                                .min_size(egui::vec2(88.0, 29.0));
+                                                                let connect = ui.add(action).hover_tip(action_hint).clicked();
+
+                                                                let badge = Frame::none()
+                                                                    .fill(fill)
+                                                                    .rounding(Rounding::same(999.0))
+                                                                    .inner_margin(egui::Margin::symmetric(7.0, 5.0))
+                                                                    .show(ui, |ui| {
+                                                                        ui.label(RichText::new(status).size(9.5).color(color));
+                                                                    });
+                                                                if let Some(detail) = detail {
+                                                                    badge.response.hover_tip(detail);
+                                                                }
+
+                                                                let settings = egui::Button::new(
+                                                                    RichText::new(format!("{} Edit", crate::lucide::SETTINGS))
+                                                                        .size(10.0).color(p.text_secondary),
+                                                                )
+                                                                .fill(p.bg_button)
+                                                                .stroke(Stroke::NONE)
+                                                                .rounding(Rounding::same(7.0))
+                                                                .min_size(egui::vec2(54.0, 29.0));
+                                                                let edit = ui.add(settings)
+                                                                    .hover_tip(format!("Edit {label} connection settings"))
+                                                                    .clicked();
+                                                                if edit {
+                                                                    self.ssh_host_modal.open_desktop(host, protocol);
+                                                                    ui.memory_mut(|memory| memory.close_popup());
+                                                                } else if connect {
+                                                                    self.open_remote_desktop(ctx, host, protocol);
+                                                                    ui.memory_mut(|memory| memory.close_popup());
+                                                                }
+                                                            });
+                                                        });
+                                                    ui.add_space(4.0);
+                                                }
+                                            });
                                 },
                             );
 

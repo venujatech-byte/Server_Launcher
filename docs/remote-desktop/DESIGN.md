@@ -167,9 +167,9 @@ and disables fit-to-window resize to preserve the layout. IronRDP exposes the
 server's aggregate display-area limit but not its monitor-count limit, so the
 server may still reject the two-monitor request. Audio, microphone, drive
 redirection, and RD Gateway remain unsupported.
-The editor keeps audio, microphone, and drive-sharing profile values for
-compatibility, but presents those controls as unsupported and read-only until
-their channels are implemented.
+The editor keeps audio, microphone, drive-sharing, RDP gateway/admin, and VNC
+username profile values for compatibility, but presents those controls as
+unsupported and read-only until their protocol support is implemented.
 IronRDP and its blocking adapter are available under MIT or Apache-2.0.
 
 The optional live FPS value counts received display-update batches per second

@@ -176,8 +176,10 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
             ui.checkbox(&mut profile.animations, "Animations");
             ui.checkbox(&mut profile.themes, "Themes");
         });
-        ui.checkbox(&mut profile.admin_session, "Administrative session");
-        text(ui, "RD Gateway host", &mut profile.gateway);
+        ui.add_enabled(false, egui::Checkbox::new(&mut profile.admin_session, "Administrative session"));
+        ui.label("Administrative sessions are not supported by this RDP client.");
+        ui.add_enabled_ui(false, |ui| text(ui, "RD Gateway host", &mut profile.gateway));
+        ui.label("RD Gateway connections are not supported by this RDP client.");
         ui.checkbox(&mut profile.tunnel_via_ssh, "Tunnel via SSH");
         ui.checkbox(&mut profile.auto_reconnect, "Auto-reconnect");
     });
@@ -211,11 +213,14 @@ pub(crate) fn vnc(ui: &mut Ui, draft: &mut Option<VncProfile>, port_text: &mut S
         if let Some(port) = vnc_port(port_text, host) {
             profile.port = port;
         }
-        text(
-            ui,
-            "Username (only if required by server)",
-            &mut profile.username,
-        );
+        ui.add_enabled_ui(false, |ui| {
+            text(
+                ui,
+                "Username (not supported by this client)",
+                &mut profile.username,
+            );
+        });
+        ui.label("Only classic VNC password authentication is supported.");
         choice(
             ui,
             "Quality",

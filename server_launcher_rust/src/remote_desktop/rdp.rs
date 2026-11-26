@@ -875,6 +875,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn security_modes_never_enable_legacy_rdp_security() {
+        let host = SshRemoteHost {
+            id: "test".into(),
+            name: "Test".into(),
+            host: "host.example".into(),
+            port: 22,
+            user: "user".into(),
+            key_path: String::new(),
+            password: String::new(),
+            credential_ref: None,
+            remote_cwd: String::new(),
+            use_agent: true,
+            strict_host_key: false,
+            rdp: None,
+            vnc: None,
+        };
+
+        for (security, tls, credssp) in [
+            (RdpSecurity::Auto, true, true),
+            (RdpSecurity::Nla, false, true),
+            (RdpSecurity::Tls, true, false),
+        ] {
+            let profile = RdpProfile {
+                security,
+                ..Default::default()
+            };
+            let config = config(&host, &profile, "test-password", None);
+            assert_eq!((config.enable_tls, config.enable_credssp), (tls, credssp));
+            assert!(!config.enable_standard_rdp_security);
+        }
+    }
+
+    #[test]
     fn matches_monitor_dimensions_and_handles_missing_monitor_info() {
         let profile = RdpProfile {
             resolution: Resolution::MatchLocalScreen,

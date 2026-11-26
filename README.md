@@ -68,7 +68,8 @@ store; protocol passwords are not saved in `servers.json`.
 
 - RDP supports NLA by default, explicit TLS, certificate fingerprint prompts,
   keyboard and mouse input, text clipboard sync, screenshots, recording, and
-  dynamic resize when the server supports Display Control.
+  dynamic resize when the server supports Display Control. Saved certificate
+  fingerprints can be reviewed or removed in Settings → Remote Desktop.
 - VNC supports classic password authentication, Raw and CopyRect framebuffer
   updates, keyboard and mouse input, text clipboard sync, screenshots,
   recording, and server-supported resolution changes. Classic VNC is not

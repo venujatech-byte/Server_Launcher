@@ -8,13 +8,13 @@ launcher but will need its own integration and native validation before it can
 ship the viewer. The Python launchers share the host store. Keep the current
 keys and omit unset protocol profiles when saving.
 
-The current UI already has a disabled GUI control in the SSH header in
-`app.rs`. `modals.rs` owns the host editor and command palette, `config.rs`
-owns host JSON, and `main.rs` dispatches the existing separate Android Cockpit
-mode before opening the main window. `remote.rs` provides SSH arguments and
-the port inspector. Reuse the active `ThemePalette` from `theme.rs`. The
-baseline repository has rustfmt drift, so check new files individually and
-avoid repository-wide formatting churn.
+The SSH header in `app.rs` has a GUI menu with separate RDP and VNC connection
+actions and profile-settings buttons. `modals.rs` owns the tabbed host editor
+and command palette, `config.rs` owns host JSON, and `main.rs` dispatches the
+existing separate Android Cockpit mode before opening the main window.
+`remote.rs` provides SSH arguments and the port inspector. Reuse the active
+`ThemePalette` from `theme.rs`. The baseline repository has rustfmt drift, so
+check new files individually and avoid repository-wide formatting churn.
 
 ## Product references
 
@@ -172,7 +172,9 @@ certificates continue to use the platform trust store. Always trust records
 the leaf fingerprint after TLS succeeds and before credentials are sent. The
 store is scoped to the saved config, host, port, and connection route. A
 changed saved fingerprint blocks the connection even if the new certificate
-is signed by a trusted CA. Settings-based pin removal is pending.
+is signed by a trusted CA. The Remote Desktop settings tab lists saved pins by
+host and lets the user remove one; the next connection then shows the trust
+prompt again.
 
 ## Screenshot capture
 

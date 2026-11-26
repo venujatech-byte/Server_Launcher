@@ -242,9 +242,9 @@ pub(crate) fn run(request: &ProbeRequest, timeout: Duration) -> Result<String, S
         .map(|info| format!("{info}. Authentication was not tested."))
 }
 
-fn check_handshake(
+fn check_handshake<S: Read + Write + ?Sized>(
     request: &ProbeRequest,
-    stream: &mut (impl Read + Write),
+    stream: &mut S,
 ) -> Result<String, String> {
     let hint = match request.protocol {
         DesktopProtocol::Rdp => "Check that Remote Desktop or xrdp is listening.",
@@ -296,7 +296,7 @@ fn invalid(reason: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, reason.to_owned())
 }
 
-fn rdp(stream: &mut (impl Read + Write), security: RdpSecurity) -> io::Result<String> {
+fn rdp<S: Read + Write + ?Sized>(stream: &mut S, security: RdpSecurity) -> io::Result<String> {
     let offered: u8 = match security {
         RdpSecurity::Auto => 1 | 2 | 8,
         RdpSecurity::Nla => 2 | 8,
@@ -340,7 +340,7 @@ fn rdp(stream: &mut (impl Read + Write), security: RdpSecurity) -> io::Result<St
     }
 }
 
-fn vnc(stream: &mut (impl Read + Write)) -> io::Result<String> {
+fn vnc<S: Read + Write + ?Sized>(stream: &mut S) -> io::Result<String> {
     let mut banner = [0; 12];
     stream.read_exact(&mut banner)?;
     let version = match &banner {

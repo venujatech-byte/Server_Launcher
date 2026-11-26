@@ -111,10 +111,7 @@ fn run(
     let mut framed = Framed::new(socket);
     let mut connector =
         connector::ClientConnector::new(config(host, profile, &password, monitor_size), local_addr);
-    if matches!(
-        profile.clipboard,
-        Clipboard::Both | Clipboard::RemoteToLocal
-    ) {
+    if profile.clipboard != Clipboard::Off {
         connector.attach_static_channel(CliprdrClient::new(Box::new(
             super::rdp_clipboard::ClipboardBackend::new(matches!(
                 profile.clipboard,

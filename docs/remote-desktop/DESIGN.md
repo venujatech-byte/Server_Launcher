@@ -74,15 +74,13 @@ the final versions.
   protocol channel wiring. Exercise X11 and Wayland modifier handling and use
   an explicit Send keys action where the desktop reserves shortcuts.
 
-Compile checks on 2026-11-26 passed for Linux (`cargo check --locked
---all-targets` on the SSH test PC) and Windows x86_64 MSVC (`cargo check
---locked --all-targets --target x86_64-pc-windows-msvc` in GitHub Actions) at
-`8862062`. The Linux test PC pulled that commit from `vnc/rdp`; Windows CI run
-[45858003619](https://github.com/venujatech-byte/Server_Launcher/actions/runs/45858003619)
-also checked all targets. These checks do not prove that either viewer connects
-or that clipboard behavior works. No connection, platform interoperability, or
-performance measurements have been completed. Record those results here only
-after a runnable viewer is measured.
+Compile checks on 2026-11-27 passed at `d458031`: Linux
+(`cargo check --locked --all-targets` on the SSH test PC), plus Linux and
+Windows x86_64 MSVC in [GitHub Actions run 45908637651](https://github.com/venujatech-byte/Server_Launcher/actions/runs/45908637651).
+The Linux test PC pulled the commit from `vnc/rdp`. These checks do not prove
+that either viewer connects or that clipboard behavior works. No connection,
+platform interoperability, or performance measurements have been completed.
+Record those results here only after a runnable viewer is measured.
 
 ## Display profiles and input controls
 
@@ -340,7 +338,9 @@ typing does not require a click inside the remote canvas. On Linux/X11 it also
 grabs keyboard input for that focused viewer, so system shortcuts such as Super
 and Alt+Tab can reach the remote. The grab is released while focus is away and
 resumes when the viewer regains focus; it also ends when capture is disabled or
-the session closes. Windows uses a low-level keyboard hook scoped to the
+the session closes. Native capture starts when the connection is ready, even
+before the first framebuffer is available; egui forwards keys during that
+loading interval as a fallback. Windows uses a low-level keyboard hook scoped to the
 foreground viewer process, forwards physical scan codes to RDP, and releases
 held keys when focus moves away. The toolbar Keyboard toggle opts out. The
 Windows secure-attention sequence Ctrl+Alt+Delete cannot be intercepted by an

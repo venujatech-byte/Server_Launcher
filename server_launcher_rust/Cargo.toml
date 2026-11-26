@@ -6,7 +6,7 @@ authors = ["Venuka Silva"]
 description = "Cross-platform developer server launcher for Linux & Windows written in Rust"
 
 [dependencies]
-ironrdp = { git = "https://github.com/Devolutions/IronRDP.git", rev = "5eb8c371baf0cd5db9943c1109efa703c6aacce4", default-features = false, features = ["cliprdr", "connector", "core", "displaycontrol", "dvc", "graphics", "pdu", "rdpdr", "rdpsnd", "session"] }
+ironrdp = { git = "https://github.com/Devolutions/IronRDP.git", rev = "5eb8c371baf0cd5db9943c1109efa703c6aacce4", default-features = false, features = ["cliprdr", "connector", "core", "displaycontrol", "dvc", "graphics", "pdu", "rdpdr", "rdpsnd", "session", "svc"] }
 ironrdp-blocking = { git = "https://github.com/Devolutions/IronRDP.git", rev = "5eb8c371baf0cd5db9943c1109efa703c6aacce4" }
 ironrdp-bulk = { git = "https://github.com/Devolutions/IronRDP.git", rev = "5eb8c371baf0cd5db9943c1109efa703c6aacce4" }
 ironrdp-egfx = { git = "https://github.com/Devolutions/IronRDP.git", rev = "5eb8c371baf0cd5db9943c1109efa703c6aacce4", features = ["openh264-libloading"] }

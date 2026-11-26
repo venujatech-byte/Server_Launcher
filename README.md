@@ -70,11 +70,13 @@ store; protocol passwords are not saved in `servers.json`.
   keyboard and mouse input, text and bounded image clipboard sync, screenshots,
   recording, and dynamic resize when the server supports Display Control. Saved certificate
   fingerprints can be reviewed or removed in Settings → Remote Desktop. The RDP profile can
-  request two side-by-side remote displays using the selected combined resolution.
-  Its profile also has **Painting** (smooth or fast filtering), **Frame painting**
-  (incremental damage regions or full-frame compatibility), and **Quality**
-  (Auto/manual depth, Best, Good, or Fast) options. Good and Fast allow adaptive
-  color fidelity/subsampling; actual speed depends on the server and connection.
+  request two side-by-side remote displays using the selected combined resolution, and it
+  composites the remote pointer into the displayed framebuffer. Display controls include
+  smooth/fast texture filtering, incremental/full-frame repainting, Automatic and RemoteFX
+  profiles, 32/24-bit true color, 16/15-bit high color, left-handed mouse mapping, and an
+  option to disable smooth scrolling. GFX AVC/RFX Progressive and 8-bit color profiles are
+  unavailable in the current renderer. The server negotiates the codec; these options do not
+  guarantee a specific frame rate or speedup.
 - VNC supports classic password authentication, Raw, CopyRect, and ZRLE framebuffer
   updates, keyboard and mouse input, text clipboard sync, screenshots,
   recording, and server-supported resolution changes. Classic VNC is not
@@ -85,7 +87,8 @@ store; protocol passwords are not saved in `servers.json`.
   delivered by the remote server; it is not the server's capture rate or the
   local display's rendered frame rate. Local clipboard text is read only
   while the connected viewer window is focused. Classic VNC text is limited to
-  Latin-1; VNC clipboard images and file contents are not supported.
+  Latin-1; VNC clipboard images and file contents are not supported. Smooth-scroll
+  accumulation can be disabled in either protocol's profile.
 - Screenshot and recording folders can be set separately under Settings →
   Remote Desktop. Recording supports MP4 (H.264) or PNG sequence, at 15, 24,
   30, or 60 FPS. Screenshot clipboard copying can be set as the viewer default.

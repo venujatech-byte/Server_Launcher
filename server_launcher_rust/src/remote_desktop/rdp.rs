@@ -197,9 +197,12 @@ fn run(
         .ok_or_else(|| error("RDP is disabled for this host."))?;
     let _ = rustls::crypto::ring::default_provider().install_default();
     let use_egfx = bitmap_quality(profile).0 != 8;
+    let desktop_settings = crate::config::ConfigFile::load_from_file(config_path).remote_desktop;
+    let max_clipboard_image_bytes = usize::from(desktop_settings.clipboard_image_limit_mb.clamp(1, 64))
+        * 1024
+        * 1024;
     let h264_decoder = if use_egfx {
-        crate::config::ConfigFile::load_from_file(config_path)
-            .remote_desktop
+        desktop_settings
             .h264_library_path
             .map(|path| {
                 ironrdp_egfx::decode::OpenH264Decoder::from_library_path(&path)
@@ -264,10 +267,10 @@ fn run(
     let drives_attached = super::rdp_drives::attach(&mut connector, profile)?;
     if profile.clipboard != Clipboard::Off {
         connector.attach_static_channel(CliprdrClient::new(Box::new(
-            super::rdp_clipboard::ClipboardBackend::new(matches!(
-                profile.clipboard,
-                Clipboard::Both | Clipboard::RemoteToLocal
-            )),
+            super::rdp_clipboard::ClipboardBackend::new(
+                matches!(profile.clipboard, Clipboard::Both | Clipboard::RemoteToLocal),
+                max_clipboard_image_bytes,
+            ),
         )));
     }
     let playback = if profile.audio == Audio::Local {
@@ -518,7 +521,10 @@ fn run(
                     profile.clipboard,
                     Clipboard::Both | Clipboard::LocalToRemote
                 ) {
-                    if let Ok(image) = super::clipboard_image::encode_dibv5(image) {
+                    if let Ok(image) = super::clipboard_image::encode_dibv5_with_limit(
+                        image,
+                        max_clipboard_image_bytes,
+                    ) {
                         if let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() {
                             if let Some(clipboard) = channel
                                 .downcast_backend_mut::<super::rdp_clipboard::ClipboardBackend>()

@@ -771,6 +771,14 @@ impl LauncherApp {
                                                 });
                                         });
                                         ui.horizontal(|ui| {
+                                            ui.label("Clipboard image size limit");
+                                            ui.add(egui::Slider::new(
+                                                &mut self.remote_desktop_settings.clipboard_image_limit_mb,
+                                                1..=64,
+                                            ).suffix(" MB"));
+                                        });
+                                        ui.label(RichText::new("Limits images sent or received through RDP clipboard sharing.").size(10.5).color(palette.text_muted));
+                                        ui.horizontal(|ui| {
                                             ui.label("New viewer scaling");
                                             egui::ComboBox::from_id_salt("remote_desktop_default_scaling")
                                                 .selected_text(match self.remote_desktop_settings.default_scaling {

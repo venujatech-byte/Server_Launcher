@@ -33,6 +33,9 @@ pub(crate) fn run(
     let recording_fps = config.remote_desktop.recording_fps;
     let recording_format = config.remote_desktop.recording_format;
     let copy_screenshots_to_clipboard = config.remote_desktop.copy_screenshots_to_clipboard;
+    let clipboard_image_limit_bytes = usize::from(
+        config.remote_desktop.clipboard_image_limit_mb.clamp(1, 64),
+    ) * 1024 * 1024;
     let warn_unencrypted_vnc = config.remote_desktop.warn_unencrypted_vnc;
     let default_scaling = config.remote_desktop.default_scaling;
     let profile = config.ssh_hosts.iter().find(|host| host.id == host_id);
@@ -162,7 +165,11 @@ pub(crate) fn run(
                 framebuffer,
                 connection: None,
                 clipboard_sync: clipboard_enabled.then(|| {
-                    super::clipboard_sync::ClipboardSync::start(ctx.clone(), send_clipboard)
+                    super::clipboard_sync::ClipboardSync::start(
+                        ctx.clone(),
+                        send_clipboard,
+                        clipboard_image_limit_bytes,
+                    )
                 }),
                 session_host: viewer_host,
                 upload: None,

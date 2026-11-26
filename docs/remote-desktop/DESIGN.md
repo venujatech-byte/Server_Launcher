@@ -205,8 +205,9 @@ behavior remains unverified.
 The clipboard worker reads local content only when the configured direction
 allows it and the connected viewer is focused. Clipboard access stays off the
 egui thread. Remote text and images are written to the local clipboard and
-fingerprinted to prevent sending them back. Text over 1 MiB and images over
-16 MiB are skipped. Native clipboard initialization retries once per second if
+fingerprinted to prevent sending them back. Text over 1 MiB is skipped; the
+RDP image limit is configurable from 1 to 64 MiB (16 MiB by default) and applies
+in both directions. Native clipboard initialization retries once per second if
 the OS clipboard is temporarily unavailable. Remote clipboard values remain
 queued when a local clipboard write fails and are retried while the viewer is
 focused; a newer remote value takes priority over an older retry. RDP supports

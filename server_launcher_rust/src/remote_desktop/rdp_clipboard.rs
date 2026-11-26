@@ -5,6 +5,7 @@ use std::collections::VecDeque;
 pub(super) struct ClipboardBackend {
     offered: VecDeque<ClipboardFormatId>,
     pub(super) receive_enabled: bool,
+    max_image_bytes: usize,
     pub(super) local_text: Option<String>,
     pub(super) local_image: Option<Vec<u8>>,
     pub(super) reply: Option<OwnedFormatDataResponse>,
@@ -23,9 +24,10 @@ impl std::fmt::Debug for ClipboardBackend {
 ironrdp::core::impl_as_any!(ClipboardBackend);
 
 impl ClipboardBackend {
-    pub(super) fn new(receive_enabled: bool) -> Self {
+    pub(super) fn new(receive_enabled: bool, max_image_bytes: usize) -> Self {
         Self {
             receive_enabled,
+            max_image_bytes,
             ..Default::default()
         }
     }
@@ -105,9 +107,13 @@ impl CliprdrBackend for ClipboardBackend {
                 }
             }
             ClipboardFormatId::CF_DIB | ClipboardFormatId::CF_DIBV5
-                if response.data().len() <= super::clipboard_image::MAX_BYTES =>
+                if response.data().len() <= self.max_image_bytes =>
             {
-                self.received_image = super::clipboard_image::decode_dib(response.data()).ok();
+                self.received_image = super::clipboard_image::decode_dib_with_limit(
+                    response.data(),
+                    self.max_image_bytes,
+                )
+                .ok();
                 if self.received_image.is_some() {
                     self.offered.clear();
                 }
@@ -127,7 +133,7 @@ mod tests {
 
     #[test]
     fn failed_request_can_be_followed_by_a_new_offer() {
-        let mut backend = ClipboardBackend::new(true);
+        let mut backend = ClipboardBackend::new(true, super::clipboard_image::MAX_BYTES);
         let formats = [ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT)];
         backend.on_remote_copy(&formats);
         assert_eq!(
@@ -169,7 +175,7 @@ mod tests {
 
     #[test]
     fn rejected_image_format_falls_back_to_text_from_same_offer() {
-        let mut backend = ClipboardBackend::new(true);
+        let mut backend = ClipboardBackend::new(true, super::clipboard_image::MAX_BYTES);
         let formats = [
             ClipboardFormat::new(ClipboardFormatId::CF_DIBV5),
             ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT),

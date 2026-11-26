@@ -36,7 +36,7 @@ fn report_notice(slot: &Mutex<Option<&'static str>>, notice: &'static str) {
 }
 
 impl ClipboardSync {
-    pub(crate) fn start(ctx: egui::Context, read_local: bool) -> Self {
+    pub(crate) fn start(ctx: egui::Context, read_local: bool, max_image_bytes: usize) -> Self {
         let focused = Arc::new(AtomicBool::new(false));
         let stopped = Arc::new(AtomicBool::new(false));
         let remote = Arc::new(Mutex::new(None::<PendingClipboard>));
@@ -152,7 +152,7 @@ impl ClipboardSync {
                                 .checked_mul(image.height)
                                 .and_then(|pixels| pixels.checked_mul(4))
                                 == Some(image.rgba.len())
-                                && image.rgba.len() <= super::clipboard_image::MAX_BYTES - 124
+                                && image.rgba.len() <= max_image_bytes.saturating_sub(124)
                             {
                                 let fingerprint = image_fingerprint(&image.rgba);
                                 if last_image != Some(fingerprint) {

@@ -9,8 +9,11 @@ pub(crate) struct ClipboardImage {
     pub rgba: Vec<u8>,
 }
 
-pub(crate) fn encode_dibv5(image: &ClipboardImage) -> Result<Vec<u8>, &'static str> {
-    validate_image(image.width, image.height, image.rgba.len())?;
+pub(crate) fn encode_dibv5_with_limit(
+    image: &ClipboardImage,
+    max_bytes: usize,
+) -> Result<Vec<u8>, &'static str> {
+    validate_image(image.width, image.height, image.rgba.len(), max_bytes)?;
     let pixels_len = image.rgba.len();
     let mut dib = vec![0; V5_HEADER_SIZE + pixels_len];
     dib[0..4].copy_from_slice(&(V5_HEADER_SIZE as u32).to_le_bytes());
@@ -36,8 +39,11 @@ pub(crate) fn encode_dibv5(image: &ClipboardImage) -> Result<Vec<u8>, &'static s
     Ok(dib)
 }
 
-pub(crate) fn decode_dib(dib: &[u8]) -> Result<ClipboardImage, &'static str> {
-    if dib.len() < 40 || dib.len() > MAX_BYTES {
+pub(crate) fn decode_dib_with_limit(
+    dib: &[u8],
+    max_bytes: usize,
+) -> Result<ClipboardImage, &'static str> {
+    if dib.len() < 40 || dib.len() > max_bytes {
         return Err("The remote clipboard image exceeds the supported size.");
     }
     let header = read_u32(dib, 0)? as usize;
@@ -61,7 +67,7 @@ pub(crate) fn decode_dib(dib: &[u8]) -> Result<ClipboardImage, &'static str> {
     }
     let area = width
         .checked_mul(height)
-        .filter(|area| *area <= MAX_BYTES / 4)
+        .filter(|area| area.saturating_mul(4) <= max_bytes)
         .ok_or("The remote clipboard image dimensions exceed the limit.")?;
     let byte_count = area
         .checked_mul(4)
@@ -113,7 +119,7 @@ pub(crate) fn decode_dib(dib: &[u8]) -> Result<ClipboardImage, &'static str> {
         .and_then(|size| data_offset.checked_add(size))
         .filter(|end| *end <= dib.len())
         .ok_or("The remote clipboard image data is incomplete.")?;
-    if source_len > MAX_BYTES {
+    if source_len > max_bytes {
         return Err("The remote clipboard image exceeds the supported size.");
     }
     let mut rgba = vec![0; byte_count];
@@ -158,17 +164,22 @@ pub(crate) fn decode_dib(dib: &[u8]) -> Result<ClipboardImage, &'static str> {
     })
 }
 
-fn validate_image(width: usize, height: usize, byte_count: usize) -> Result<(), &'static str> {
+fn validate_image(
+    width: usize,
+    height: usize,
+    byte_count: usize,
+    max_bytes: usize,
+) -> Result<(), &'static str> {
     let expected = width
         .checked_mul(height)
-        .filter(|area| width <= MAX_SIDE && height <= MAX_SIDE && *area <= MAX_BYTES / 4)
+        .filter(|area| width <= MAX_SIDE && height <= MAX_SIDE && area.saturating_mul(4) <= max_bytes)
         .and_then(|area| area.checked_mul(4))
         .ok_or("The clipboard image dimensions exceed the limit.")?;
     if byte_count != expected {
         return Err("The clipboard image pixel data is invalid.");
     }
-    if V5_HEADER_SIZE + byte_count > MAX_BYTES {
-        return Err("The clipboard image exceeds the 16 MiB limit.");
+    if V5_HEADER_SIZE + byte_count > max_bytes {
+        return Err("The clipboard image exceeds the configured size limit.");
     }
     Ok(())
 }
@@ -215,8 +226,8 @@ mod tests {
             height: 1,
             rgba: vec![255, 0, 0, 255, 0, 20, 240, 128],
         };
-        let dib = encode_dibv5(&image).unwrap();
-        assert_eq!(decode_dib(&dib).unwrap(), image);
+        let dib = encode_dibv5_with_limit(&image, MAX_BYTES).unwrap();
+        assert_eq!(decode_dib_with_limit(&dib, MAX_BYTES).unwrap(), image);
     }
 
     #[test]
@@ -229,25 +240,38 @@ mod tests {
         dib[14..16].copy_from_slice(&24_u16.to_le_bytes());
         dib[40..44].copy_from_slice(&[0, 0, 255, 0]);
         dib[44..48].copy_from_slice(&[255, 0, 0, 0]);
-        let image = decode_dib(&dib).unwrap();
+        let image = decode_dib_with_limit(&dib, MAX_BYTES).unwrap();
         assert_eq!(image.rgba, [0, 0, 255, 255, 255, 0, 0, 255]);
     }
 
     #[test]
     fn rejects_oversized_and_truncated_dibs() {
-        assert!(decode_dib(&vec![0; MAX_BYTES + 1]).is_err());
-        assert!(decode_dib(&[0; 40]).is_err());
+        assert!(decode_dib_with_limit(&vec![0; MAX_BYTES + 1], MAX_BYTES).is_err());
+        assert!(decode_dib_with_limit(&[0; 40], MAX_BYTES).is_err());
+    }
+
+    #[test]
+    fn applies_the_configured_limit_to_encode_and_decode() {
+        let image = ClipboardImage {
+            width: 1,
+            height: 1,
+            rgba: vec![0, 0, 0, 255],
+        };
+        assert!(encode_dibv5_with_limit(&image, 127).is_err());
+        let encoded = encode_dibv5_with_limit(&image, 128).unwrap();
+        assert!(decode_dib_with_limit(&encoded, 127).is_err());
+        assert_eq!(decode_dib_with_limit(&encoded, 128).unwrap(), image);
     }
 
     #[test]
     fn rejects_overlapping_bitfield_masks() {
-        let mut dib = encode_dibv5(&ClipboardImage {
+        let mut dib = encode_dibv5_with_limit(&ClipboardImage {
             width: 1,
             height: 1,
             rgba: vec![1, 2, 3, 255],
-        })
+        }, MAX_BYTES)
         .unwrap();
         dib[44..48].copy_from_slice(&0x00ff_0000_u32.to_le_bytes());
-        assert!(decode_dib(&dib).is_err());
+        assert!(decode_dib_with_limit(&dib, MAX_BYTES).is_err());
     }
 }

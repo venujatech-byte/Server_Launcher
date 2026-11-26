@@ -216,6 +216,7 @@ pub struct RemoteDesktopSettings {
     pub default_scaling: crate::remote_desktop::profile::Scaling,
     pub default_auto_reconnect: bool,
     pub show_live_fps: bool,
+    pub clipboard_image_limit_mb: u8,
     pub warn_unencrypted_vnc: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub h264_library_path: Option<PathBuf>,
@@ -238,6 +239,7 @@ impl Default for RemoteDesktopSettings {
             default_scaling: crate::remote_desktop::profile::Scaling::Fit,
             default_auto_reconnect: true,
             show_live_fps: false,
+            clipboard_image_limit_mb: 16,
             warn_unencrypted_vnc: true,
             h264_library_path: None,
             screenshot_folder: None,
@@ -556,6 +558,7 @@ mod tests {
         );
         assert!(config.remote_desktop.default_auto_reconnect);
         assert!(!config.remote_desktop.show_live_fps);
+        assert_eq!(config.remote_desktop.clipboard_image_limit_mb, 16);
         assert!(config.remote_desktop.warn_unencrypted_vnc);
         assert!(config.remote_desktop.screenshot_folder.is_none());
         assert!(config.remote_desktop.recording_folder.is_none());

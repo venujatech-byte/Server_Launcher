@@ -82,6 +82,8 @@ The checked app revision was `8ec3a0d`.
    test a clipboard source that advertises DIBV5 before Unicode text but rejects
    or returns invalid DIBV5 data; the client should still receive the text
    offered in that same clipboard update.
+   Change the image cap in Settings → Remote Desktop and verify images larger
+   than the selected 1–64 MiB limit are not sent or accepted.
 8. Test NLA-only and TLS-only explicitly against matching servers. Auto must
    accept either encrypted mode and must reject legacy unencrypted RDP.
    Also test Administrative session against a Windows account allowed to use

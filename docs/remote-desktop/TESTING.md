@@ -67,9 +67,12 @@ The checked app revision was `8ec3a0d`.
    With Keyboard enabled by default, type while the viewer is focused without
    clicking the remote canvas first. On Linux/X11, confirm Super and Alt+Tab
    reach the remote. On Wayland with a reachable `DISPLAY`, confirm the viewer
-   uses XWayland and test those shortcuts there. On Windows or Wayland without
-   a reachable XWayland display, check whether the OS reserves those shortcuts;
-   use Send keys when it does. Turn Keyboard off and confirm input stays local.
+   uses XWayland and test those shortcuts there. On Windows, test Super,
+   Alt+Tab, focus loss while a modifier is held, and Keyboard off; confirm
+   Ctrl+Alt+Delete is sent using **Send keys** because Windows reserves it.
+   On Wayland without a reachable XWayland display, check whether the OS keeps
+   system shortcuts local and use **Send keys** as the fallback. Turn Keyboard
+   off and confirm input stays local.
    On Linux/X11, verify Right Ctrl+F, +S, +R, +D, and +K, then disable the host
    key in Settings → Remote Desktop and confirm those chords are forwarded
    normally. Confirm Right Ctrl alone and unknown Right Ctrl combinations are
@@ -131,8 +134,10 @@ microphone, drive redirection, committed IME input, and multi-monitor behavior
 have not been verified against real servers; do not mark them complete based on
 UI controls or compile checks alone. RD Gateway, including trusted-certificate
 handling and gateway authentication, still requires live-server validation.
-Native keyboard grabbing is currently Linux/X11-only. Windows and Wayland rely
-on egui input and cannot guarantee capture of OS-reserved shortcuts.
+Native keyboard capture is supported on Linux/X11 and Windows. Wayland without
+a reachable XWayland display relies on egui input and cannot guarantee capture
+of OS-reserved shortcuts. Windows reserves Ctrl+Alt+Delete; send it through
+the viewer's **Send keys** menu.
 
 ## VNC checks
 

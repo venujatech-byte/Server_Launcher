@@ -215,6 +215,10 @@ pub(crate) fn run(
                 native_keyboard: None,
                 #[cfg(target_os = "linux")]
                 native_keyboard_attempted: false,
+                #[cfg(target_os = "windows")]
+                native_keyboard: None,
+                #[cfg(target_os = "windows")]
+                native_keyboard_attempted: false,
                 #[cfg(target_os = "linux")]
                 native_shortcut_tx,
                 #[cfg(target_os = "linux")]
@@ -335,6 +339,10 @@ struct Viewer {
     #[cfg(target_os = "linux")]
     native_keyboard: Option<super::x11_keyboard::NativeKeyboardCapture>,
     #[cfg(target_os = "linux")]
+    native_keyboard_attempted: bool,
+    #[cfg(target_os = "windows")]
+    native_keyboard: Option<super::windows_keyboard::NativeKeyboardCapture>,
+    #[cfg(target_os = "windows")]
     native_keyboard_attempted: bool,
     #[cfg(target_os = "linux")]
     native_shortcut_tx: mpsc::Sender<super::x11_keyboard::HostShortcut>,
@@ -479,6 +487,8 @@ impl Viewer {
         let keyboard_capture = self.capture.keyboard_capture();
         #[cfg(target_os = "linux")]
         self.native_keyboard.take();
+        #[cfg(target_os = "windows")]
+        self.native_keyboard.take();
         let connection = connection.lock().unwrap();
         if !connection.connected || self.view_only {
             return;
@@ -493,6 +503,11 @@ impl Viewer {
         }
         self.capture.set_keyboard_capture(keyboard_capture, |_| {});
         #[cfg(target_os = "linux")]
+        {
+            self.native_keyboard_attempted = false;
+            self.keyboard_capture_feedback = None;
+        }
+        #[cfg(target_os = "windows")]
         {
             self.native_keyboard_attempted = false;
             self.keyboard_capture_feedback = None;
@@ -591,7 +606,15 @@ impl Viewer {
     ) {
         let Some(connection) = &self.connection else {
             #[cfg(target_os = "linux")]
-            self.native_keyboard.take();
+            {
+                self.native_keyboard.take();
+                self.native_keyboard_attempted = false;
+            }
+            #[cfg(target_os = "windows")]
+            {
+                self.native_keyboard.take();
+                self.native_keyboard_attempted = false;
+            }
             return;
         };
         let connection = connection.lock().unwrap();
@@ -599,7 +622,15 @@ impl Viewer {
             self.capture.release(|event| connection.send_input(event));
             drop(connection);
             #[cfg(target_os = "linux")]
-            self.native_keyboard.take();
+            {
+                self.native_keyboard.take();
+                self.native_keyboard_attempted = false;
+            }
+            #[cfg(target_os = "windows")]
+            {
+                self.native_keyboard.take();
+                self.native_keyboard_attempted = false;
+            }
             return;
         }
         let _focused = ctx.input(|input| {
@@ -655,12 +686,43 @@ impl Viewer {
                 "System shortcuts may stay local; use Send keys if needed. {error}"
             ));
         }
+        #[cfg(target_os = "windows")]
+        if !self.capture.keyboard_capture() {
+            self.native_keyboard.take();
+            self.native_keyboard_attempted = false;
+            self.keyboard_capture_feedback = None;
+        } else if _focused && self.native_keyboard.is_none() && !self.native_keyboard_attempted {
+            self.native_keyboard_attempted = true;
+            if let Some(connection) = &self.connection {
+                self.native_keyboard = Some(super::windows_keyboard::NativeKeyboardCapture::start(
+                    connection.clone(),
+                    self.protocol,
+                ));
+            }
+        }
+        #[cfg(target_os = "windows")]
+        if let Some(capture) = &self.native_keyboard {
+            capture.set_focused(_focused);
+        }
+        #[cfg(target_os = "windows")]
+        if let Some(Err(error)) = self
+            .native_keyboard
+            .as_mut()
+            .and_then(|capture| capture.poll_ready())
+        {
+            self.native_keyboard.take();
+            self.keyboard_capture_feedback = Some(format!(
+                "System shortcuts may stay local; use Send keys if needed. {error}"
+            ));
+        }
     }
 }
 
 impl Drop for Viewer {
     fn drop(&mut self) {
         #[cfg(target_os = "linux")]
+        self.native_keyboard.take();
+        #[cfg(target_os = "windows")]
         self.native_keyboard.take();
     }
 }
@@ -1263,7 +1325,7 @@ impl eframe::App for Viewer {
                         format!("{} Keyboard", crate::lucide::KEYBOARD),
                     );
                     if keyboard_button
-                        .on_hover_text("Keyboard input goes to the remote while this viewer is focused. Turn off to type locally.")
+                        .on_hover_text("Keyboard input, including system shortcuts when supported, goes to the remote while this viewer is focused. Turn off to type locally; use Send keys for secure system shortcuts.")
                         .clicked()
                     {
                         if let Some(connection) = &self.connection {
@@ -1280,7 +1342,13 @@ impl eframe::App for Viewer {
                                 self.native_keyboard_attempted = false;
                                 self.keyboard_capture_feedback = None;
                             }
-                            #[cfg(not(target_os = "linux"))]
+                            #[cfg(target_os = "windows")]
+                            {
+                                self.native_keyboard = None;
+                                self.native_keyboard_attempted = false;
+                                self.keyboard_capture_feedback = None;
+                            }
+                            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
                             {
                                 self.keyboard_capture_feedback = enable.then(|| {
                                     "System shortcuts may stay local; use Send keys to forward them."
@@ -1329,6 +1397,11 @@ impl eframe::App for Viewer {
                 );
                 if view_only_response.changed() {
                     #[cfg(target_os = "linux")]
+                    {
+                        self.native_keyboard.take();
+                        self.native_keyboard_attempted = false;
+                    }
+                    #[cfg(target_os = "windows")]
                     {
                         self.native_keyboard.take();
                         self.native_keyboard_attempted = false;

@@ -119,9 +119,10 @@ RDP profiles can route through Microsoft RD Gateway over HTTPS. The gateway
 uses the saved RDP username/password, requires a system-trusted gateway
 certificate, and cannot be combined with Tunnel via SSH. This path still needs
 live gateway validation. Right Ctrl host-key shortcuts (fullscreen, screenshot,
-recording, disconnect, and Send keys) are available on Linux/X11. Native
-keyboard grabs outside Linux/X11 and keyboard-layout-specific IME are not
-implemented; committed
+recording, disconnect, and Send keys) are available on Linux/X11. Focused
+keyboard capture supports Linux/X11 and Windows; Windows reserves
+Ctrl+Alt+Delete, which remains available from Send keys. Wayland without
+XWayland cannot guarantee capture of system-reserved shortcuts. Keyboard-layout-specific IME is not implemented; committed
 non-ASCII IME text is forwarded on platforms that provide egui commit events,
 while Linux relies on its keyboard text events. Linux source builds
 need the ALSA development package

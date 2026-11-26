@@ -208,9 +208,11 @@ thread support before starting its event loop and keyboard-capture workers.
 On Linux/X11, Right Ctrl is configurable as a host-key prefix. Right Ctrl+F
 toggles fullscreen, +S takes a screenshot, +R starts/stops recording, +D closes
 the viewer, and +K opens the Send keys window. Other Right Ctrl combinations
-are forwarded normally. Native grabs are unavailable on Windows and Wayland
-sessions without a reachable XWayland server; those platforms keep the direct
-egui input path.
+are forwarded normally. On Windows a low-level keyboard hook forwards physical
+scan codes while the viewer is the foreground window, including Super and
+Alt+Tab; Ctrl+Alt+Delete remains reserved by Windows. Wayland sessions without
+a reachable XWayland server keep the direct egui input path, where system-
+reserved shortcuts may stay local.
 Input mapping and focus release were tested in-process. Synthetic desktop input
 did not reach the loopback peer in the X11 smoke test, so end-to-end input
 behavior remains unverified.
@@ -320,9 +322,13 @@ typing does not require a click inside the remote canvas. On Linux/X11 it also
 grabs keyboard input for that focused viewer, so system shortcuts such as Super
 and Alt+Tab can reach the remote. The grab is released while focus is away and
 resumes when the viewer regains focus; it also ends when capture is disabled or
-the session closes. The toolbar Keyboard toggle opts out. Wayland and Windows
-use egui capture; system-reserved shortcuts may stay local there, and Send keys
-remains the fallback.
+the session closes. Windows uses a low-level keyboard hook scoped to the
+foreground viewer process, forwards physical scan codes to RDP, and releases
+held keys when focus moves away. The toolbar Keyboard toggle opts out. The
+Windows secure-attention sequence Ctrl+Alt+Delete cannot be intercepted by an
+application; use **Send keys** for the remote sequence. Wayland without an
+available XWayland display uses egui capture, so system-reserved shortcuts may
+stay local there.
 
 Unknown-issuer RDP certificates can now be explicitly trusted from the
 viewer after comparing the SHA-256 fingerprint. Validity dates and TLS

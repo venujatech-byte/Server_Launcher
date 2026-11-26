@@ -48,6 +48,12 @@ pub(crate) enum Input {
         physical_key: Option<egui::Key>,
         pressed: bool,
     },
+    #[cfg(target_os = "windows")]
+    RdpKey {
+        scan_code: u8,
+        extended: bool,
+        pressed: bool,
+    },
     Pointer {
         x: u16,
         y: u16,
@@ -93,6 +99,8 @@ impl Input {
             Self::ClipboardImage(_) | Self::ClipboardFiles(_) | Self::DownloadClipboardFiles(_) => {
                 Ok(false)
             }
+            #[cfg(target_os = "windows")]
+            Self::RdpKey { .. } => Ok(false),
             Self::UnicodeText(ch) => {
                 let codepoint = u32::from(ch);
                 let keysym = if codepoint <= 0xff {
@@ -156,6 +164,20 @@ fn enqueue_input(sender: &mpsc::SyncSender<Input>, overflow: &AtomicBool, event:
             // Disconnect rather than lose key releases when the network is stalled.
             overflow.store(true, Ordering::Release);
         }
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone)]
+pub(crate) struct InputHandle {
+    sender: mpsc::SyncSender<Input>,
+    overflow: Arc<AtomicBool>,
+}
+
+#[cfg(target_os = "windows")]
+impl InputHandle {
+    pub(crate) fn send(&self, event: Input) {
+        enqueue_input(&self.sender, &self.overflow, event);
     }
 }
 
@@ -325,6 +347,14 @@ impl Connection {
         if let Some(input) = &self.input {
             enqueue_input(input, &self.input_overflow, event);
         }
+    }
+
+    #[cfg(target_os = "windows")]
+    pub(crate) fn input_handle(&self) -> Option<InputHandle> {
+        self.input.as_ref().map(|sender| InputHandle {
+            sender: sender.clone(),
+            overflow: self.input_overflow.clone(),
+        })
     }
 }
 

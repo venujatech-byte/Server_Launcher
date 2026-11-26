@@ -19,6 +19,17 @@ impl Encoder {
             | Input::ClipboardImage(_)
             | Input::ClipboardFiles(_)
             | Input::DownloadClipboardFiles(_) => {}
+            #[cfg(target_os = "windows")]
+            Input::RdpKey {
+                scan_code,
+                extended,
+                pressed,
+            } => {
+                let mut flags = KeyboardFlags::empty();
+                flags.set(KeyboardFlags::RELEASE, !pressed);
+                flags.set(KeyboardFlags::EXTENDED, extended);
+                out.push(FastPathInputEvent::KeyboardEvent(flags, scan_code));
+            }
             Input::PointerExtra {
                 x,
                 y,
@@ -283,6 +294,28 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn encodes_native_windows_scan_codes_without_keysym_remapping() {
+        let mut encoder = Encoder::default();
+        let mut out = Vec::new();
+        encoder.encode(
+            Input::RdpKey {
+                scan_code: 0x1d,
+                extended: true,
+                pressed: true,
+            },
+            &mut out,
+        );
+        assert_eq!(
+            out,
+            [FastPathInputEvent::KeyboardEvent(
+                KeyboardFlags::EXTENDED,
+                0x1d
+            )]
+        );
     }
 
     #[test]

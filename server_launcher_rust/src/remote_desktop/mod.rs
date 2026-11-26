@@ -20,6 +20,8 @@ pub(crate) mod viewer;
 pub(crate) mod vnc;
 #[cfg(target_os = "linux")]
 mod x11_keyboard;
+#[cfg(target_os = "windows")]
+mod windows_keyboard;
 
 #[cfg(target_os = "linux")]
 pub(crate) fn prepare_viewer_display_backend() {

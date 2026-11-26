@@ -27,6 +27,7 @@ const RAW: i32 = 0;
 const COPY_RECT: i32 = 1;
 const ZRLE: i32 = 16;
 const RICH_CURSOR: i32 = -239;
+const X_CURSOR: i32 = -240;
 const POINTER_POS: [i32; 2] = [-225, -232];
 const DESKTOP_SIZE: i32 = -223;
 const EXTENDED_DESKTOP_SIZE: i32 = -308;
@@ -408,7 +409,7 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
         enabled_encodings.push(RAW);
     }
     let cursor_encodings: &[i32] = if profile.show_remote_cursor {
-        &[RICH_CURSOR, POINTER_POS[0], POINTER_POS[1]]
+        &[RICH_CURSOR, X_CURSOR, POINTER_POS[0], POINTER_POS[1]]
     } else {
         &[]
     };
@@ -785,6 +786,23 @@ fn read_rectangle(
         state.vnc_cursor_revision = state.vnc_cursor_revision.wrapping_add(1);
         return Ok(None);
     }
+    if encoding == X_CURSOR {
+        let cursor = if w == 0 || h == 0 {
+            None
+        } else {
+            if w > 256 || h > 256 || x >= w || y >= h {
+                return Err(error("The VNC server sent an invalid cursor shape."));
+            }
+            Some(Arc::new(read_x_cursor(stream, w, h)?))
+        };
+        let mut state = state.lock().unwrap();
+        state.vnc_cursor = cursor;
+        if w != 0 && h != 0 {
+            state.vnc_cursor_hotspot = [x, y];
+        }
+        state.vnc_cursor_revision = state.vnc_cursor_revision.wrapping_add(1);
+        return Ok(None);
+    }
     if POINTER_POS.contains(&encoding) {
         let mut state = state.lock().unwrap();
         state.vnc_cursor_position = (x <= size[0] && y <= size[1]).then_some([x, y]);
@@ -935,6 +953,42 @@ fn read_cursor(
     Ok(egui::ColorImage {
         size: [width, height],
         pixels: colors,
+    })
+}
+
+fn read_x_cursor(
+    stream: &mut impl Read,
+    width: usize,
+    height: usize,
+) -> io::Result<egui::ColorImage> {
+    let mut rgb = [0; 6];
+    stream.read_exact(&mut rgb)?;
+    let stride = width.div_ceil(8);
+    let bytes = stride * height;
+    let mut bitmap = vec![0; bytes];
+    let mut mask = vec![0; bytes];
+    stream.read_exact(&mut bitmap)?;
+    stream.read_exact(&mut mask)?;
+    let pixels = (0..width * height)
+        .map(|i| {
+            let bit = 0x80 >> (i % width % 8);
+            let row_byte = i / width * stride + (i % width) / 8;
+            let color = if bitmap[row_byte] & bit != 0 {
+                &rgb[..3]
+            } else {
+                &rgb[3..]
+            };
+            egui::Color32::from_rgba_unmultiplied(
+                color[0],
+                color[1],
+                color[2],
+                if mask[row_byte] & bit != 0 { 255 } else { 0 },
+            )
+        })
+        .collect();
+    Ok(egui::ColorImage {
+        size: [width, height],
+        pixels,
     })
 }
 
@@ -1179,6 +1233,14 @@ mod tests {
     fn decodes_rich_cursor_mask_and_rgb_pixels() {
         let mut wire = &[255, 0, 0, 0, 0, 255, 0, 0, 0b1000_0000][..];
         let image = read_cursor(&mut wire, 2, 1, false).unwrap();
+        assert_eq!(image.pixels[0], egui::Color32::RED);
+        assert_eq!(image.pixels[1].a(), 0);
+    }
+
+    #[test]
+    fn decodes_x_cursor_colors_and_transparency_mask() {
+        let mut wire = &[255, 0, 0, 0, 0, 255, 0b1000_0000, 0b1000_0000][..];
+        let image = read_x_cursor(&mut wire, 2, 1).unwrap();
         assert_eq!(image.pixels[0], egui::Color32::RED);
         assert_eq!(image.pixels[1].a(), 0);
     }

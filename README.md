@@ -101,7 +101,7 @@ IME are not implemented. RDP dual-display layout is best-effort: the server must
 monitors, and the viewer presents their combined desktop in one window. VNC Tight
 encodings and username-based authentication are not implemented. VNC cursor
 shapes can be toggled in the VNC profile; they are enabled by default and need
-server support for RichCursor and PointerPos. SSH desktop tunnels support Unix
+server support for RichCursor or XCursor shapes and PointerPos. SSH desktop tunnels support Unix
 and Windows key/agent credentials; Windows password-only
 SSH tunnels are not supported. Protocol interoperation and performance still
 need testing against real servers on Windows, Linux X11, and Linux Wayland.

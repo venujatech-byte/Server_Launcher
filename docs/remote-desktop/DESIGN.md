@@ -82,8 +82,8 @@ fields remain intact and are used when no explicit `color_profile` is saved.
 RDP and VNC can disable fractional wheel accumulation; RDP can also swap the
 primary and secondary pointer buttons for left-handed use. These are local
 input/display settings, not protocol performance modes. The VNC profile can turn
-remote cursor display off; by default, the viewer requests RichCursor and
-PointerPos updates and draws the cursor over the scaled framebuffer.
+remote cursor display off; by default, the viewer requests RichCursor or
+XCursor shapes plus PointerPos updates and draws the cursor over the scaled framebuffer.
 Remmina's server-side local-input lock is not exposed. VNC continues to skip
 Tight encoding, and its default bell handling ignores bell messages.
 
@@ -109,8 +109,8 @@ Fast quality selects RGB565; Auto follows the configured color depth. Direct
 VNC to a public or unknown address requires an explicit warning confirmation. The
 configured encoding priority is applied for the supported encodings; Tight is
 shown as unsupported and skipped. Username-based authentication is unsupported.
-Rich cursor shapes are drawn locally when the server supports RichCursor and a
-PointerPos extension. ZRLE uses one bounded persistent zlib stream per
+Rich and X cursor shapes are drawn locally when the server supports either
+cursor encoding and a PointerPos extension. ZRLE uses one bounded persistent zlib stream per
 connection. Classic RFB clipboard text is Latin-1; outgoing Unicode text and
 images outside that support show a notice in the viewer. Only the earlier
 loopback Raw handshake/rendering smoke test is recorded; current end-to-end

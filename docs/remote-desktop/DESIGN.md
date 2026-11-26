@@ -233,10 +233,14 @@ selected local regular files through CLIPRDR, where they can be pasted on the
 remote PC. File data is served in bounded 1 MiB ranges on the RDP worker; at
 most 256 files, each under 4 GiB, are offered. Clipboard lock snapshots keep an
 in-flight paste tied to the original file list. This is an explicit picker
-action rather than automatic OS file-clipboard detection. Remote-to-local file
-clipboard download and VNC file clipboard are not implemented. End-to-end
-clipboard behavior still needs testing against real RDP and VNC servers and on
-Wayland, X11, and Windows.
+action rather than automatic OS file-clipboard detection. For remote-to-local
+transfer, the viewer offers a **Download files** action when the remote RDP
+clipboard advertises files. Files are saved flat into a user-selected existing
+folder, without overwriting existing names; unsafe names, duplicate names, and
+directories are skipped. Transfers use bounded 1 MiB ranges and cap each file
+at 4 GiB. VNC file clipboard is not implemented. End-to-end clipboard behavior
+still needs testing against real RDP and VNC servers and on Wayland, X11, and
+Windows.
 
 ## Native RDP transport
 

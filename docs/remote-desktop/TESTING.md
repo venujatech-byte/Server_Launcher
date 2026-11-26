@@ -97,7 +97,11 @@ The checked app revision was `8ec3a0d`.
 8. On RDP, use **Share files**, choose local files, and paste them on the remote
    desktop. Include a file larger than 1 MiB to exercise multiple range
    requests. Confirm changing the offered file list does not change an
-   in-progress paste. File clipboard transfer is local-to-remote only.
+   in-progress paste. For remote-to-local, copy files on the remote desktop,
+   choose **Download files**, and save into a new empty local folder. Verify
+   multiple files, names with spaces, files larger than 1 MiB, existing-name
+   conflicts, directory entries, and traversal-like names. Transfers are flat
+   and must never overwrite existing files. VNC file clipboard is unsupported.
 9. Test NLA-only and TLS-only explicitly against matching servers. Auto must
    accept either encrypted mode and must reject legacy unencrypted RDP.
    Also test Administrative session against a Windows account allowed to use

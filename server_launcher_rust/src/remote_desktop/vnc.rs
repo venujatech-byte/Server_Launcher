@@ -68,6 +68,7 @@ pub(crate) enum Input {
     ClipboardText(String),
     ClipboardImage(super::clipboard_image::ClipboardImage),
     ClipboardFiles(Vec<PathBuf>),
+    DownloadClipboardFiles(PathBuf),
     VncResize {
         size: [u16; 2],
         screen: [u8; 16],
@@ -89,7 +90,9 @@ impl Input {
                 stream.write_all(&[6, 0, 0, 0, a, b, c, d])?;
                 stream.write_all(&text).map(|()| true)
             }
-            Self::ClipboardImage(_) | Self::ClipboardFiles(_) => Ok(false),
+            Self::ClipboardImage(_) | Self::ClipboardFiles(_) | Self::DownloadClipboardFiles(_) => {
+                Ok(false)
+            }
             Self::UnicodeText(ch) => {
                 let codepoint = u32::from(ch);
                 let keysym = if codepoint <= 0xff {
@@ -140,6 +143,9 @@ fn clipboard_unsupported_reason(event: &Input) -> Option<&'static str> {
         }
         Input::ClipboardImage(_) => Some("Classic VNC does not support clipboard images"),
         Input::ClipboardFiles(_) => Some("Classic VNC does not support clipboard files"),
+        Input::DownloadClipboardFiles(_) => {
+            Some("Classic VNC does not support clipboard file downloads")
+        }
         _ => None,
     }
 }
@@ -169,6 +175,8 @@ pub(crate) struct Connection {
     pub(crate) clipboard_unsupported: Arc<AtomicBool>,
     pub(crate) clipboard_text: Option<String>,
     pub(crate) clipboard_image: Option<super::clipboard_image::ClipboardImage>,
+    pub(crate) remote_clipboard_file_count: usize,
+    pub(crate) clipboard_file_download: Option<String>,
     pub(crate) vnc_screen: Option<[u8; 16]>,
     pub(crate) vnc_cursor: Option<Arc<egui::ColorImage>>,
     pub(crate) vnc_cursor_hotspot: [usize; 2],
@@ -222,6 +230,8 @@ impl Connection {
             clipboard_unsupported: Arc::new(AtomicBool::new(false)),
             clipboard_text: None,
             clipboard_image: None,
+            remote_clipboard_file_count: 0,
+            clipboard_file_download: None,
             vnc_screen: None,
             vnc_cursor: None,
             vnc_cursor_hotspot: [0; 2],
@@ -263,6 +273,8 @@ impl Connection {
                 state.clipboard_unsupported = Arc::new(AtomicBool::new(false));
                 state.clipboard_text = None;
                 state.clipboard_image = None;
+                state.remote_clipboard_file_count = 0;
+                state.clipboard_file_download = None;
                 state.clipboard_too_large = false;
                 state.vnc_screen = None;
                 state.vnc_cursor = None;

@@ -113,6 +113,13 @@ pub(crate) fn run(
             DesktopProtocol::Rdp => host.rdp.as_ref().map(|profile| profile.clipboard),
         })
         .is_some_and(|direction| matches!(direction, Clipboard::Both | Clipboard::LocalToRemote));
+    let receive_clipboard = viewer_host
+        .as_ref()
+        .and_then(|host| match protocol {
+            DesktopProtocol::Vnc => host.vnc.as_ref().map(|profile| profile.clipboard),
+            DesktopProtocol::Rdp => host.rdp.as_ref().map(|profile| profile.clipboard),
+        })
+        .is_some_and(|direction| matches!(direction, Clipboard::Both | Clipboard::RemoteToLocal));
     let clipboard_enabled = viewer_host
         .as_ref()
         .and_then(|host| match protocol {
@@ -202,6 +209,7 @@ pub(crate) fn run(
                 view_only,
                 close_on_failure,
                 send_clipboard,
+                receive_clipboard,
                 capture: Capture::new(left_handed_mouse, disable_smooth_scrolling),
                 #[cfg(target_os = "linux")]
                 native_keyboard: None,
@@ -322,6 +330,7 @@ struct Viewer {
     view_only: bool,
     close_on_failure: bool,
     send_clipboard: bool,
+    receive_clipboard: bool,
     capture: Capture,
     #[cfg(target_os = "linux")]
     native_keyboard: Option<super::x11_keyboard::NativeKeyboardCapture>,
@@ -775,6 +784,8 @@ impl eframe::App for Viewer {
             received_bytes,
             display_updates,
             remote_cursor,
+            remote_clipboard_file_count,
+            clipboard_file_download,
         ) = if let Some(connection) = &self.connection {
             let mut connection = connection.lock().unwrap();
             if connection.clipboard_sent.swap(false, Ordering::Relaxed) {
@@ -828,6 +839,8 @@ impl eframe::App for Viewer {
                         connection.vnc_cursor_revision,
                     )
                 }),
+                connection.remote_clipboard_file_count,
+                connection.clipboard_file_download.take(),
             )
         } else {
             (
@@ -841,8 +854,13 @@ impl eframe::App for Viewer {
                 0,
                 0,
                 None,
+                0,
+                None,
             )
         };
+        if let Some(result) = clipboard_file_download {
+            self.clipboard_notice = Some((Instant::now(), result));
+        }
         if should_close_after_failure(self.close_on_failure, finished, connected) && !password_retry
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1147,6 +1165,31 @@ impl eframe::App for Viewer {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
                 }
                 if self.protocol == DesktopProtocol::Rdp {
+                    let response = ui.add_enabled(
+                        connected
+                            && !self.view_only
+                            && self.receive_clipboard
+                            && remote_clipboard_file_count > 0,
+                        egui::Button::new(format!(
+                            "Download files ({remote_clipboard_file_count})"
+                        )),
+                    );
+                    if response
+                        .on_hover_text("Save files currently offered by the remote clipboard.")
+                        .clicked()
+                    {
+                        if let Some(directory) = rfd::FileDialog::new()
+                            .set_title("Choose a folder for remote clipboard files")
+                            .pick_folder()
+                        {
+                            if let Some(connection) = &self.connection {
+                                connection
+                                    .lock()
+                                    .unwrap()
+                                    .send_input(Input::DownloadClipboardFiles(directory));
+                            }
+                        }
+                    }
                     let response = ui.add_enabled(
                         connected && !self.view_only && self.send_clipboard,
                         egui::Button::new("Share files"),

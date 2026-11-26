@@ -17,7 +17,8 @@ impl Encoder {
             Input::VncResize { .. }
             | Input::ClipboardText(_)
             | Input::ClipboardImage(_)
-            | Input::ClipboardFiles(_) => {}
+            | Input::ClipboardFiles(_)
+            | Input::DownloadClipboardFiles(_) => {}
             Input::PointerExtra {
                 x,
                 y,

@@ -1,13 +1,24 @@
 use ironrdp::cliprdr::{backend::CliprdrBackend, pdu::*};
 use std::{
-    collections::{HashMap, VecDeque},
-    fs::{self, File},
-    io::{Read, Seek, SeekFrom},
+    collections::{HashMap, HashSet, VecDeque},
+    fs::{self, File, OpenOptions},
+    io::{Read, Seek, SeekFrom, Write},
     path::PathBuf,
 };
 
 const MAX_SHARED_FILES: usize = 256;
 const MAX_FILE_CHUNK: usize = 1024 * 1024;
+const MAX_REMOTE_FILE_SIZE: u64 = u32::MAX as u64;
+
+struct RemoteDownload {
+    stream_id: u32,
+    index: i32,
+    data_id: Option<u32>,
+    path: PathBuf,
+    file: File,
+    size: Option<u64>,
+    position: u64,
+}
 
 #[derive(Default)]
 pub(super) struct ClipboardBackend {
@@ -25,6 +36,15 @@ pub(super) struct ClipboardBackend {
     pub(super) local_files: Vec<PathBuf>,
     locked_files: HashMap<u32, Vec<PathBuf>>,
     file_responses: VecDeque<FileContentsResponse<'static>>,
+    remote_files: Vec<FileDescriptor>,
+    remote_file_data_id: Option<u32>,
+    remote_download_queue: VecDeque<(i32, PathBuf, Option<u32>)>,
+    active_remote_download: Option<RemoteDownload>,
+    remote_file_requests: VecDeque<FileContentsRequest>,
+    next_remote_stream_id: u32,
+    completed_remote_files: usize,
+    failed_remote_files: usize,
+    remote_download_result: Option<String>,
 }
 
 impl std::fmt::Debug for ClipboardBackend {
@@ -49,8 +69,186 @@ impl ClipboardBackend {
         }
     }
 
+    pub(super) fn remote_file_count(&self) -> usize {
+        let mut names = HashSet::new();
+        self.remote_files
+            .iter()
+            .take(MAX_SHARED_FILES)
+            .filter(|file| {
+                !file.attributes.is_some_and(|attributes| {
+                    attributes.contains(ClipboardFileAttributes::DIRECTORY)
+                })
+            })
+            .filter_map(|file| safe_remote_filename(&file.name))
+            .filter(|name| names.insert(name.to_ascii_lowercase()))
+            .count()
+    }
+
     pub(super) fn take_file_response(&mut self) -> Option<FileContentsResponse<'static>> {
         self.file_responses.pop_front()
+    }
+
+    pub(super) fn take_remote_file_request(&mut self) -> Option<FileContentsRequest> {
+        self.remote_file_requests.pop_front()
+    }
+
+    pub(super) fn take_remote_download_result(&mut self) -> Option<String> {
+        self.remote_download_result.take()
+    }
+
+    pub(super) fn start_remote_download(&mut self, directory: PathBuf) {
+        if self.active_remote_download.is_some() || !self.remote_download_queue.is_empty() {
+            self.remote_download_result =
+                Some("A remote file transfer is already in progress.".into());
+            return;
+        }
+        self.remote_download_queue.clear();
+        self.active_remote_download = None;
+        self.remote_file_requests.clear();
+        self.completed_remote_files = 0;
+        self.failed_remote_files = 0;
+        self.remote_download_result = None;
+        if !directory.is_dir() {
+            self.remote_download_result = Some("Choose an existing local folder.".into());
+            return;
+        }
+        let mut names = HashSet::new();
+        for (index, file) in self.remote_files.iter().take(MAX_SHARED_FILES).enumerate() {
+            if file
+                .attributes
+                .is_some_and(|attributes| attributes.contains(ClipboardFileAttributes::DIRECTORY))
+            {
+                continue;
+            }
+            let Some(name) = safe_remote_filename(&file.name) else {
+                self.failed_remote_files += 1;
+                continue;
+            };
+            if !names.insert(name.to_ascii_lowercase()) {
+                self.failed_remote_files += 1;
+                continue;
+            }
+            let Ok(index) = i32::try_from(index) else {
+                self.failed_remote_files += 1;
+                continue;
+            };
+            self.remote_download_queue.push_back((
+                index,
+                directory.join(name),
+                self.remote_file_data_id,
+            ));
+        }
+        self.advance_remote_download();
+    }
+
+    fn advance_remote_download(&mut self) {
+        while let Some((index, path, data_id)) = self.remote_download_queue.pop_front() {
+            let Ok(file) = OpenOptions::new().write(true).create_new(true).open(&path) else {
+                self.failed_remote_files += 1;
+                continue;
+            };
+            self.active_remote_download = Some(RemoteDownload {
+                stream_id: 0,
+                index,
+                data_id,
+                path,
+                file,
+                size: None,
+                position: 0,
+            });
+            self.queue_remote_file_request(FileContentsFlags::SIZE, 0, 8);
+            return;
+        }
+        let total = self.completed_remote_files + self.failed_remote_files;
+        self.remote_download_result = Some(if total == 0 {
+            "No safe remote files were available to download.".into()
+        } else if self.failed_remote_files == 0 {
+            format!("Downloaded {} remote file(s).", self.completed_remote_files)
+        } else {
+            format!(
+                "Downloaded {} remote file(s); {} could not be saved.",
+                self.completed_remote_files, self.failed_remote_files
+            )
+        });
+    }
+
+    fn queue_remote_file_request(&mut self, flags: FileContentsFlags, position: u64, size: u32) {
+        let Some(active) = &mut self.active_remote_download else {
+            return;
+        };
+        self.next_remote_stream_id = self.next_remote_stream_id.wrapping_add(1).max(1);
+        active.stream_id = self.next_remote_stream_id;
+        self.remote_file_requests.push_back(FileContentsRequest {
+            stream_id: active.stream_id,
+            index: active.index,
+            flags,
+            position,
+            requested_size: size,
+            data_id: active.data_id,
+        });
+    }
+
+    fn handle_remote_file_response(&mut self, response: FileContentsResponse<'_>) {
+        let Some(active) = self.active_remote_download.as_mut() else {
+            return;
+        };
+        if active.stream_id != response.stream_id() {
+            return;
+        }
+        if response.is_error() {
+            self.fail_active_remote_download();
+            return;
+        }
+        if active.size.is_none() {
+            let Ok(size) = response.data_as_size() else {
+                self.fail_active_remote_download();
+                return;
+            };
+            if size > MAX_REMOTE_FILE_SIZE {
+                self.fail_active_remote_download();
+                return;
+            }
+            active.size = Some(size);
+            if size == 0 {
+                self.active_remote_download = None;
+                self.completed_remote_files += 1;
+                self.advance_remote_download();
+            } else {
+                let size = size.min(MAX_FILE_CHUNK as u64) as u32;
+                self.queue_remote_file_request(FileContentsFlags::RANGE, 0, size);
+            }
+            return;
+        }
+
+        let size = active.size.unwrap_or_default();
+        let remaining = size.saturating_sub(active.position);
+        if response.data().is_empty()
+            || response.data().len() > MAX_FILE_CHUNK
+            || response.data().len() as u64 > remaining
+            || active.file.write_all(response.data()).is_err()
+        {
+            self.fail_active_remote_download();
+            return;
+        }
+        active.position += response.data().len() as u64;
+        if active.position == size {
+            self.active_remote_download = None;
+            self.completed_remote_files += 1;
+            self.advance_remote_download();
+        } else {
+            let next = (size - active.position).min(MAX_FILE_CHUNK as u64) as u32;
+            let position = active.position;
+            self.queue_remote_file_request(FileContentsFlags::RANGE, position, next);
+        }
+    }
+
+    fn fail_active_remote_download(&mut self) {
+        if let Some(active) = self.active_remote_download.take() {
+            drop(active.file);
+            let _ = fs::remove_file(active.path);
+            self.failed_remote_files += 1;
+        }
+        self.advance_remote_download();
     }
 
     pub(super) fn cancel_request(&mut self) {
@@ -74,7 +272,7 @@ impl CliprdrBackend for ClipboardBackend {
     }
     fn client_capabilities(&self) -> ClipboardGeneralCapabilityFlags {
         ClipboardGeneralCapabilityFlags::USE_LONG_FORMAT_NAMES
-            | if self.share_files_enabled {
+            | if self.receive_enabled || self.share_files_enabled {
                 ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED
                     | ClipboardGeneralCapabilityFlags::CAN_LOCK_CLIPDATA
             } else {
@@ -88,18 +286,25 @@ impl CliprdrBackend for ClipboardBackend {
         self.superseded = self.pending.is_some();
         self.received = None;
         self.received_image = None;
-        self.offered = if self.receive_enabled {
-            [
-                ClipboardFormatId::CF_DIBV5,
-                ClipboardFormatId::CF_DIB,
-                ClipboardFormatId::CF_UNICODETEXT,
-            ]
-            .into_iter()
-            .filter(|preferred| formats.iter().any(|format| format.id() == *preferred))
-            .collect()
-        } else {
-            VecDeque::new()
-        };
+        self.remote_files.clear();
+        self.remote_file_data_id = None;
+        self.offered.clear();
+        if self.receive_enabled {
+            if let Some(file_list) = formats.iter().find(|format| {
+                format.name() == Some(&ClipboardFormatName::FILE_LIST)
+            }) {
+                self.offered.push_back(file_list.id());
+            }
+            self.offered.extend(
+                [
+                    ClipboardFormatId::CF_DIBV5,
+                    ClipboardFormatId::CF_DIB,
+                    ClipboardFormatId::CF_UNICODETEXT,
+                ]
+                .into_iter()
+                .filter(|preferred| formats.iter().any(|format| format.id() == *preferred)),
+            );
+        }
     }
     fn on_format_data_request(&mut self, request: FormatDataRequest) {
         self.reply = Some(match (&self.local_text, &self.local_image) {
@@ -163,7 +368,9 @@ impl CliprdrBackend for ClipboardBackend {
             self.file_responses.push_back(file_contents_response(files, request));
         }
     }
-    fn on_file_contents_response(&mut self, _: FileContentsResponse<'_>) {}
+    fn on_file_contents_response(&mut self, response: FileContentsResponse<'_>) {
+        self.handle_remote_file_response(response);
+    }
     fn on_lock(&mut self, data_id: LockDataId) {
         if self.locked_files.len() < 16 || self.locked_files.contains_key(&data_id.0) {
             self.locked_files.insert(data_id.0, self.local_files.clone());
@@ -171,6 +378,18 @@ impl CliprdrBackend for ClipboardBackend {
     }
     fn on_unlock(&mut self, data_id: LockDataId) {
         self.locked_files.remove(&data_id.0);
+    }
+
+    fn on_remote_file_list(&mut self, files: &[FileDescriptor], clip_data_id: Option<u32>) {
+        if self.superseded {
+            self.pending = None;
+            self.superseded = false;
+            return;
+        }
+        self.remote_files = files.iter().take(MAX_SHARED_FILES).cloned().collect();
+        self.remote_file_data_id = clip_data_id;
+        self.pending = None;
+        self.offered.clear();
     }
 }
 
@@ -244,9 +463,47 @@ pub(super) fn file_contents_response(
     FileContentsResponse::new_data_response(request.stream_id, data)
 }
 
+fn safe_remote_filename(name: &str) -> Option<String> {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.len() > 240
+        || name
+            .chars()
+            .any(|ch| ch.is_control() || matches!(ch, '/' | '\\' | ':' | '<' | '>' | '"' | '|' | '?' | '*'))
+    {
+        return None;
+    }
+    let device = name
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .to_ascii_uppercase();
+    if matches!(
+        device.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "COM1" | "COM2" | "COM3" | "COM4" | "COM5"
+            | "COM6" | "COM7" | "COM8" | "COM9" | "LPT1" | "LPT2" | "LPT3" | "LPT4"
+            | "LPT5" | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+    ) {
+        return None;
+    }
+    Some(name.to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_file_names_cannot_escape_the_selected_folder() {
+        for name in ["../outside", r"..\outside", "C:outside", "NUL.txt"] {
+            assert_eq!(safe_remote_filename(name), None);
+        }
+        assert_eq!(
+            safe_remote_filename("report.txt").as_deref(),
+            Some("report.txt")
+        );
+    }
 
     #[test]
     fn failed_request_can_be_followed_by_a_new_offer() {

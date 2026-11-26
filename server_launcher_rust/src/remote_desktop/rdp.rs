@@ -494,7 +494,20 @@ fn run(
         }
         events.clear();
         for event in input.try_iter().take(32) {
-            if let Input::ClipboardFiles(paths) = &event {
+            if let Input::DownloadClipboardFiles(directory) = &event {
+                if matches!(profile.clipboard, Clipboard::Both | Clipboard::RemoteToLocal) {
+                    if let Some(clipboard) = stage
+                        .get_svc_processor_mut::<CliprdrClient>()
+                        .and_then(|channel| {
+                            channel.downcast_backend_mut::<
+                                super::rdp_clipboard::ClipboardBackend,
+                            >()
+                        })
+                    {
+                        clipboard.start_remote_download(directory.clone());
+                    }
+                }
+            } else if let Input::ClipboardFiles(paths) = &event {
                 if matches!(profile.clipboard, Clipboard::Both | Clipboard::LocalToRemote) {
                     let (shared_paths, descriptors) =
                         super::rdp_clipboard::shared_file_descriptors(paths);
@@ -579,58 +592,112 @@ fn run(
                 }
             }
         }
-        if let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() {
-            if let Some(clipboard) =
+        let clipboard_messages = stage
+            .get_svc_processor_mut::<CliprdrClient>()
+            .and_then(|channel| {
                 channel.downcast_backend_mut::<super::rdp_clipboard::ClipboardBackend>()
-            {
-                if let Some(text) = clipboard.received.take() {
-                    state.lock().unwrap().clipboard_text = Some(text);
-                    ctx.request_repaint();
-                }
-                if let Some(image) = clipboard.received_image.take() {
-                    state.lock().unwrap().clipboard_image = Some(image);
-                    ctx.request_repaint();
-                }
+            })
+            .map(|clipboard| {
+                let received = clipboard.received.take();
+                let received_image = clipboard.received_image.take();
                 let reply = clipboard.reply.take();
-                let sent_clipboard = reply.as_ref().is_some_and(|reply| !reply.is_error());
                 let file_response = clipboard.take_file_response();
+                let remote_file_request = clipboard.take_remote_file_request();
                 let request_format = clipboard.request_format();
-                let response = reply.and_then(|reply| channel.submit_format_data(reply).ok());
-                let file_response = file_response
-                    .and_then(|response| channel.submit_file_contents(response).ok());
-                let request = request_format.and_then(|format| channel.initiate_paste(format).ok());
-                if let Some(packet) =
-                    response.and_then(|message| stage.process_svc_processor_messages(message).ok())
-                {
-                    framed.write_all(&packet)?;
-                    if sent_clipboard {
-                        state
-                            .lock()
-                            .unwrap()
-                            .clipboard_sent
-                            .store(true, Ordering::Relaxed);
-                        ctx.request_repaint();
-                    }
+                (
+                    received,
+                    received_image,
+                    reply,
+                    file_response,
+                    remote_file_request,
+                    request_format,
+                    clipboard.remote_file_count(),
+                    clipboard.take_remote_download_result(),
+                )
+            });
+        if let Some((
+            received,
+            received_image,
+            reply,
+            file_response,
+            remote_file_request,
+            request_format,
+            remote_file_count,
+            download_result,
+        )) = clipboard_messages
+        {
+            if let Some(text) = received {
+                state.lock().unwrap().clipboard_text = Some(text);
+                ctx.request_repaint();
+            }
+            if let Some(image) = received_image {
+                state.lock().unwrap().clipboard_image = Some(image);
+                ctx.request_repaint();
+            }
+            let sent_clipboard = reply.as_ref().is_some_and(|reply| !reply.is_error());
+            let response = reply.and_then(|reply| {
+                stage
+                    .get_svc_processor_mut::<CliprdrClient>()?
+                    .submit_format_data(reply)
+                    .ok()
+            });
+            if let Some(packet) = response
+                .and_then(|message| stage.process_svc_processor_messages(message).ok())
+            {
+                framed.write_all(&packet)?;
+                if sent_clipboard {
+                    state
+                        .lock()
+                        .unwrap()
+                        .clipboard_sent
+                        .store(true, Ordering::Relaxed);
+                    ctx.request_repaint();
                 }
-                if let Some(packet) = file_response
+            }
+            let file_response = file_response.and_then(|response| {
+                stage
+                    .get_svc_processor_mut::<CliprdrClient>()?
+                    .submit_file_contents(response)
+                    .ok()
+            });
+            if let Some(packet) = file_response
+                .and_then(|message| stage.process_svc_processor_messages(message).ok())
+            {
+                framed.write_all(&packet)?;
+            }
+            let remote_file_request = remote_file_request.and_then(|request| {
+                stage
+                    .get_svc_processor_mut::<CliprdrClient>()?
+                    .request_file_contents(request)
+                    .ok()
+            });
+            if let Some(packet) = remote_file_request
+                .and_then(|message| stage.process_svc_processor_messages(message).ok())
+            {
+                framed.write_all(&packet)?;
+            }
+            if let Some(format) = request_format {
+                let request = stage
+                    .get_svc_processor_mut::<CliprdrClient>()
+                    .and_then(|channel| channel.initiate_paste(format).ok());
+                if let Some(packet) = request
                     .and_then(|message| stage.process_svc_processor_messages(message).ok())
                 {
                     framed.write_all(&packet)?;
+                } else if let Some(clipboard) = stage
+                    .get_svc_processor_mut::<CliprdrClient>()
+                    .and_then(|channel| {
+                        channel.downcast_backend_mut::<super::rdp_clipboard::ClipboardBackend>()
+                    })
+                {
+                    clipboard.cancel_request();
                 }
-                if request_format.is_some() {
-                    if let Some(packet) = request
-                        .and_then(|message| stage.process_svc_processor_messages(message).ok())
-                    {
-                        framed.write_all(&packet)?;
-                    } else if let Some(clipboard) = stage
-                        .get_svc_processor_mut::<CliprdrClient>()
-                        .and_then(|channel| {
-                            channel.downcast_backend_mut::<super::rdp_clipboard::ClipboardBackend>()
-                        })
-                    {
-                        clipboard.cancel_request();
-                    }
-                }
+            }
+            let mut state = state.lock().unwrap();
+            state.remote_clipboard_file_count = remote_file_count;
+            if download_result.is_some() {
+                state.clipboard_file_download = download_result;
+                ctx.request_repaint();
             }
         }
         let (action, payload) = match framed.read_pdu() {

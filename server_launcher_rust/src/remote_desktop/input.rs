@@ -361,8 +361,7 @@ mod tests {
     }
 
     #[test]
-    fn keyboard_capture_forwards_keys_without_a_canvas_click() {
-        let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(100.0, 50.0));
+    fn keyboard_capture_forwards_keys_without_a_canvas_or_framebuffer() {
         let mut capture = Capture::new(false, false);
         let mut packets = Vec::new();
         capture.events(
@@ -375,9 +374,9 @@ mod tests {
             }],
             Modifiers::NONE,
             true,
-            rect,
-            rect,
-            [100, 50],
+            Rect::NOTHING,
+            Rect::NOTHING,
+            [0, 0],
             None,
             |event| packets.push(event),
         );

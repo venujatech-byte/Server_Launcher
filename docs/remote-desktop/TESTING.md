@@ -64,7 +64,8 @@ The checked app revision was `8ec3a0d`.
    test left/right/middle plus side mouse buttons and both wheel axes.
    Confirm that a continuously changing desktop stays live over EGFX, and
    check that the viewer's FPS counter changes with received display updates.
-   While the screen updates continuously, type and move the pointer to check
+   Before the first framebuffer arrives and while the screen updates
+   continuously, type and move the pointer to check
    that framebuffer updates do not stall local viewer input.
    With Keyboard enabled by default, type while the viewer is focused without
    clicking the remote canvas first. On Linux/X11, confirm Super and Alt+Tab

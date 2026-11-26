@@ -622,20 +622,9 @@ impl Viewer {
         let connection = connection.lock().unwrap();
         if !connection.connected || self.view_only {
             self.capture.release(|event| connection.send_input(event));
-            drop(connection);
-            #[cfg(target_os = "linux")]
-            {
-                self.native_keyboard.take();
-                self.native_keyboard_attempted = false;
-            }
-            #[cfg(target_os = "windows")]
-            {
-                self.native_keyboard.take();
-                self.native_keyboard_attempted = false;
-            }
             return;
         }
-        let _focused = ctx.input(|input| {
+        ctx.input(|input| {
             self.capture.events(
                 &input.events,
                 input.modifiers,
@@ -657,59 +646,50 @@ impl Viewer {
                     }
                 },
             );
-            input.focused
         });
-        drop(connection);
-        #[cfg(target_os = "linux")]
-        if !self.capture.keyboard_capture() {
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    fn sync_native_keyboard_capture(
+        &mut self,
+        ctx: &egui::Context,
+        focused: bool,
+        connected: bool,
+    ) {
+        if !connected || self.view_only || !self.capture.keyboard_capture() {
             self.native_keyboard.take();
             self.native_keyboard_attempted = false;
             self.keyboard_capture_feedback = None;
-        } else if _focused && self.native_keyboard.is_none() && !self.native_keyboard_attempted {
+        } else if focused && self.native_keyboard.is_none() && !self.native_keyboard_attempted {
             self.native_keyboard_attempted = true;
             if let Some(connection) = &self.connection {
-                self.native_keyboard = Some(super::x11_keyboard::NativeKeyboardCapture::start(
-                    connection.clone(),
-                    ctx.clone(),
-                    format!("{} - {}", self.host_name, self.protocol.label()),
-                    self.native_shortcut_tx.clone(),
-                    self.host_key_enabled,
-                ));
-            }
-        }
-        #[cfg(target_os = "linux")]
-        if let Some(Err(error)) = self
-            .native_keyboard
-            .as_mut()
-            .and_then(|capture| capture.poll_ready())
-        {
-            self.native_keyboard.take();
-            self.keyboard_capture_feedback = Some(format!(
-                "System shortcuts may stay local; use Send keys if needed. {error}"
-            ));
-        }
-        #[cfg(target_os = "windows")]
-        if !self.capture.keyboard_capture() {
-            self.native_keyboard.take();
-            self.native_keyboard_attempted = false;
-            self.keyboard_capture_feedback = None;
-        } else if _focused && self.native_keyboard.is_none() && !self.native_keyboard_attempted {
-            self.native_keyboard_attempted = true;
-            if let Some(connection) = &self.connection {
-                self.native_keyboard = Some(super::windows_keyboard::NativeKeyboardCapture::start(
-                    connection.clone(),
-                    self.protocol,
-                    self.host_key_enabled,
-                    self.native_shortcut_tx.clone(),
-                    ctx.clone(),
-                ));
+                #[cfg(target_os = "linux")]
+                {
+                    self.native_keyboard = Some(super::x11_keyboard::NativeKeyboardCapture::start(
+                        connection.clone(),
+                        ctx.clone(),
+                        format!("{} - {}", self.host_name, self.protocol.label()),
+                        self.native_shortcut_tx.clone(),
+                        self.host_key_enabled,
+                    ));
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    self.native_keyboard =
+                        Some(super::windows_keyboard::NativeKeyboardCapture::start(
+                            connection.clone(),
+                            self.protocol,
+                            self.host_key_enabled,
+                            self.native_shortcut_tx.clone(),
+                            ctx.clone(),
+                        ));
+                }
             }
         }
         #[cfg(target_os = "windows")]
         if let Some(capture) = &self.native_keyboard {
-            capture.set_focused(_focused);
+            capture.set_focused(focused);
         }
-        #[cfg(target_os = "windows")]
         if let Some(Err(error)) = self
             .native_keyboard
             .as_mut()
@@ -720,6 +700,39 @@ impl Viewer {
                 "System shortcuts may stay local; use Send keys if needed. {error}"
             ));
         }
+    }
+
+    fn send_loading_keyboard(&mut self, ctx: &egui::Context) {
+        let Some(connection) = &self.connection else {
+            return;
+        };
+        let connection = connection.lock().unwrap();
+        if !connection.connected || self.view_only {
+            return;
+        }
+        ctx.input(|input| {
+            self.capture.events(
+                &input.events,
+                input.modifiers,
+                input.focused,
+                egui::Rect::NOTHING,
+                egui::Rect::NOTHING,
+                [0, 0],
+                None,
+                |event| {
+                    if self.send_clipboard
+                        || !matches!(
+                            event,
+                            Input::ClipboardText(_)
+                                | Input::ClipboardImage(_)
+                                | Input::ClipboardFiles(_)
+                        )
+                    {
+                        connection.send_input(event);
+                    }
+                },
+            );
+        });
     }
 }
 
@@ -932,6 +945,8 @@ impl eframe::App for Viewer {
                 None,
             )
         };
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        self.sync_native_keyboard_capture(ctx, ctx.input(|input| input.focused), connected);
         if let Some(result) = clipboard_file_download {
             self.clipboard_notice = Some((Instant::now(), result));
         }
@@ -1630,6 +1645,7 @@ impl eframe::App for Viewer {
                 }
             }
             let Some(texture) = &self.texture else {
+                self.send_loading_keyboard(ctx);
                 if password_retry && self.session_host.is_some() {
                     let mut retry = false;
                     ui.with_layout(

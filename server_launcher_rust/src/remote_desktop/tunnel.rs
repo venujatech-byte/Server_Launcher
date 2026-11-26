@@ -236,7 +236,9 @@ impl Tunnel {
             .stderr(Stdio::null())
             .creation_flags(0x0800_0000)
             .spawn()
-            .map_err(|error| io::Error::other(format!("Could not start the SSH tunnel: {error}")))?;
+            .map_err(|error| {
+                io::Error::other(format!("Could not start the SSH tunnel: {error}"))
+            })?;
         let job = match kill_on_close_job(&child) {
             Ok(job) => job,
             Err(error) => {

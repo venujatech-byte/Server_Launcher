@@ -25,6 +25,7 @@ impl Recording {
         connection: Arc<Mutex<Connection>>,
         ctx: egui::Context,
         folder: Option<PathBuf>,
+        fps: u32,
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let cancelled = stop.clone();
@@ -43,6 +44,7 @@ impl Recording {
                 &progress,
                 &worker_bytes,
                 folder,
+                fps,
             ));
             ctx.request_repaint();
         });
@@ -93,7 +95,11 @@ fn record(
     progress: &AtomicU64,
     output_bytes: &AtomicU64,
     folder: Option<PathBuf>,
+    fps: u32,
 ) -> Result<PathBuf, String> {
+    let fps = normalize_fps(fps);
+    let interval = Duration::from_secs_f64(1.0 / f64::from(fps));
+    let frame_micros = interval.as_micros() as u64;
     let deadline = Instant::now() + Duration::from_secs(8);
     let first_frame = loop {
         if stop.load(Ordering::Relaxed) {
@@ -118,6 +124,7 @@ fn record(
     let size = first_frame.0.size;
     let folder = recording_folder(folder)?;
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
+    let fps_arg = fps.to_string();
     let prefix = format!("remote-{}-", chrono::Local::now().format("%Y%m%d-%H%M%S"));
     let output = tempfile::Builder::new()
         .prefix(&prefix)
@@ -145,7 +152,7 @@ fn record(
             "-video_size",
             &resolution,
             "-framerate",
-            "30",
+            &fps_arg,
             "-i",
             "pipe:0",
             "-an",
@@ -160,7 +167,7 @@ fn record(
             "-movflags",
             "+empty_moov+frag_keyframe+default_base_moof",
             "-g",
-            "30",
+            &fps_arg,
             "-flush_packets",
             "1",
         ])
@@ -182,7 +189,7 @@ fn record(
                 stop,
                 paused,
                 first_frame,
-                Duration::from_millis(200),
+                interval,
                 |frame, _| {
                     let path = super::screenshot::save_in(
                         frame,
@@ -194,7 +201,7 @@ fn record(
                         output_bytes.fetch_add(metadata.len(), Ordering::Relaxed);
                     }
                     index += 1;
-                    progress.store(index * 200_000, Ordering::Relaxed);
+                    progress.store(index * frame_micros, Ordering::Relaxed);
                     Ok(())
                 },
             );
@@ -219,7 +226,7 @@ fn record(
         stop,
         paused,
         first_frame,
-        Duration::from_secs_f64(1.0 / 30.0),
+        interval,
         |frame, changed| {
             if changed {
                 pixels.clear();
@@ -228,12 +235,12 @@ fn record(
             pipe.write_all(&pixels)
                 .map_err(|error| format!("Could not write the recording: {error}"))?;
             frames += 1;
-            if frames % 30 == 0 {
+            if frames % u64::from(fps) == 0 {
                 if let Ok(metadata) = std::fs::metadata(&output) {
                     output_bytes.store(metadata.len(), Ordering::Relaxed);
                 }
             }
-            progress.store(frames * 1_000_000 / 30, Ordering::Relaxed);
+            progress.store(frames * frame_micros, Ordering::Relaxed);
             Ok(())
         },
     );
@@ -250,6 +257,13 @@ fn recording_folder(folder: Option<PathBuf>) -> Result<PathBuf, String> {
     match folder {
         Some(folder) => Ok(folder),
         None => super::screenshot::pictures().map(|path| path.join("ServerLauncher")),
+    }
+}
+
+fn normalize_fps(fps: u32) -> u32 {
+    match fps {
+        15 | 24 | 30 | 60 => fps,
+        _ => 30,
     }
 }
 
@@ -349,5 +363,14 @@ mod tests {
             recording_folder(Some(folder.path().to_owned())).unwrap(),
             folder.path()
         );
+    }
+
+    #[test]
+    fn recording_fps_is_limited_to_supported_presets() {
+        assert_eq!(normalize_fps(15), 15);
+        assert_eq!(normalize_fps(24), 24);
+        assert_eq!(normalize_fps(30), 30);
+        assert_eq!(normalize_fps(60), 60);
+        assert_eq!(normalize_fps(240), 30);
     }
 }

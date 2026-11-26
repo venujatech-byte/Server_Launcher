@@ -762,6 +762,20 @@ impl LauncherApp {
                                                 .map_or_else(|| "Default: Pictures/ServerLauncher".to_owned(), |path| path.display().to_string()))
                                                 .size(10.5).monospace().color(palette.text_muted),
                                         );
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("Recording frame rate").size(12.0).strong().color(palette.text_primary));
+                                            egui::ComboBox::from_id_salt("remote_recording_fps")
+                                                .selected_text(format!("{} FPS", self.remote_desktop_settings.recording_fps))
+                                                .show_ui(ui, |ui| {
+                                                    for fps in [15, 24, 30, 60] {
+                                                        ui.selectable_value(
+                                                            &mut self.remote_desktop_settings.recording_fps,
+                                                            fps,
+                                                            format!("{fps} FPS"),
+                                                        );
+                                                    }
+                                                });
+                                        });
                                         ui.add_space(12.0);
                                         ui.label(RichText::new("Trusted RDP certificates").size(13.0).strong().color(palette.text_primary));
                                         match &saved_pins {

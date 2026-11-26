@@ -27,6 +27,7 @@ pub(crate) fn run(
     let show_fps = config.remote_desktop.show_live_fps;
     let screenshot_folder = config.remote_desktop.screenshot_folder.clone();
     let recording_folder = config.remote_desktop.recording_folder.clone();
+    let recording_fps = config.remote_desktop.recording_fps;
     let warn_unencrypted_vnc = config.remote_desktop.warn_unencrypted_vnc;
     let profile = config.ssh_hosts.iter().find(|host| host.id == host_id);
     let name = profile.map_or("Remote Desktop", |host| host.name.as_str());
@@ -119,6 +120,7 @@ pub(crate) fn run(
                 config_path,
                 screenshot_folder,
                 recording_folder,
+                recording_fps,
                 texture: None,
                 scaling,
                 fullscreen: false,
@@ -185,6 +187,7 @@ struct Viewer {
     config_path: PathBuf,
     screenshot_folder: Option<PathBuf>,
     recording_folder: Option<PathBuf>,
+    recording_fps: u32,
     texture: Option<egui::TextureHandle>,
     scaling: Scaling,
     fullscreen: bool,
@@ -808,6 +811,7 @@ impl eframe::App for Viewer {
                             connection.clone(),
                             ctx.clone(),
                             self.recording_folder.clone(),
+                            self.recording_fps,
                         ));
                     }
                 }

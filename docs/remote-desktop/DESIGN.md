@@ -188,9 +188,10 @@ unset uses Pictures/ServerLauncher. Screenshot clipboard copies and host-key
 shortcuts remain pending.
 
 Recordings use FFmpeg H.264 at 30 fps when available and fall back to a PNG
-sequence when FFmpeg is missing. The recording destination is configurable in
-Remote Desktop settings, with Pictures/ServerLauncher as the default. Recording
-fps and format selection remain pending.
+sequence when FFmpeg is missing. The recording destination and frame rate
+(15, 24, 30, or 60 FPS) are configurable in Remote Desktop settings, with
+Pictures/ServerLauncher and 30 FPS as defaults. Choosing a video format and
+encoding other than H.264 MP4 remain pending.
 
 
 In Fit Window mode, RDP sends a single-monitor display request after the

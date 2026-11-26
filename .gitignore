@@ -1,4 +1,5 @@
 servers.json
+rdp-trust/
 **/__pycache__/
 *.pyc
 target/

@@ -95,7 +95,8 @@ configured encoding priority is applied for the supported encodings; Tight is
 shown as unsupported and skipped. Username-based authentication and remote
 cursor shapes are unsupported. ZRLE uses one bounded persistent zlib stream per
 connection. Classic RFB
-clipboard text is Latin-1. Only the earlier loopback Raw handshake/rendering
+clipboard text is Latin-1; outgoing Unicode text and images outside that support
+show a notice in the viewer. Only the earlier loopback Raw handshake/rendering
 smoke test is recorded; current end-to-end input, tunnel, authentication, and
 encoding interoperability need real-server validation.
 

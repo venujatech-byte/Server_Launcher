@@ -112,6 +112,16 @@ impl Input {
     }
 }
 
+fn clipboard_unsupported_reason(event: &Input) -> Option<&'static str> {
+    match event {
+        Input::ClipboardText(text) if text.chars().any(|ch| u32::from(ch) > 0xff) => {
+            Some("Classic VNC can send Latin-1 text only")
+        }
+        Input::ClipboardImage(_) => Some("Classic VNC does not support clipboard images"),
+        _ => None,
+    }
+}
+
 fn enqueue_input(sender: &mpsc::SyncSender<Input>, overflow: &AtomicBool, event: Input) {
     if let Err(mpsc::TrySendError::Full(event)) = sender.try_send(event) {
         if !matches!(event, Input::PointerMove { .. }) {
@@ -133,6 +143,7 @@ pub(crate) struct Connection {
     pub(crate) receiving_frame: bool,
     pub(crate) clipboard_too_large: bool,
     pub(crate) clipboard_sent: Arc<AtomicBool>,
+    pub(crate) clipboard_unsupported: Arc<AtomicBool>,
     pub(crate) clipboard_text: Option<String>,
     pub(crate) clipboard_image: Option<super::clipboard_image::ClipboardImage>,
     pub(crate) vnc_screen: Option<[u8; 16]>,
@@ -173,6 +184,7 @@ impl Connection {
             receiving_frame: false,
             clipboard_too_large: false,
             clipboard_sent: Arc::new(AtomicBool::new(false)),
+            clipboard_unsupported: Arc::new(AtomicBool::new(false)),
             clipboard_text: None,
             clipboard_image: None,
             vnc_screen: None,
@@ -202,6 +214,7 @@ impl Connection {
                 state.connected = false;
                 state.input = None;
                 state.clipboard_sent = Arc::new(AtomicBool::new(false));
+                state.clipboard_unsupported = Arc::new(AtomicBool::new(false));
                 state.clipboard_text = None;
                 state.clipboard_image = None;
                 state.clipboard_too_large = false;
@@ -395,6 +408,7 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
         let (pending, overflow) = state.lock().unwrap().open_input();
         let writer = writer.clone();
         let clipboard_sent = state.lock().unwrap().clipboard_sent.clone();
+        let clipboard_unsupported = state.lock().unwrap().clipboard_unsupported.clone();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             while let Ok(event) = pending.recv() {
@@ -403,9 +417,14 @@ fn run(host: &SshRemoteHost, state: &Mutex<Connection>, ctx: &egui::Context) -> 
                     writer.disconnect();
                     break;
                 }
+                let unsupported = clipboard_unsupported_reason(&event).is_some();
                 match event.write(&mut *writer) {
                     Ok(true) => {
                         clipboard_sent.store(true, Ordering::Relaxed);
+                        ctx.request_repaint();
+                    }
+                    Ok(false) if unsupported => {
+                        clipboard_unsupported.store(true, Ordering::Relaxed);
                         ctx.request_repaint();
                     }
                     Ok(false) => {}
@@ -1073,6 +1092,23 @@ mod tests {
         let mut wire = Vec::new();
         assert!(Input::ClipboardText("aé".into()).write(&mut wire).unwrap());
         assert_eq!(wire, [6, 0, 0, 0, 0, 0, 0, 2, b'a', 0xe9]);
+    }
+
+    #[test]
+    fn identifies_classic_clipboard_format_limits() {
+        assert_eq!(
+            clipboard_unsupported_reason(&Input::ClipboardText("hello é".into())),
+            None
+        );
+        assert!(clipboard_unsupported_reason(&Input::ClipboardText("hello ✓".into())).is_some());
+        assert!(clipboard_unsupported_reason(&Input::ClipboardImage(
+            super::super::clipboard_image::ClipboardImage {
+                width: 1,
+                height: 1,
+                rgba: vec![0; 4],
+            }
+        ))
+        .is_some());
     }
 
     #[test]

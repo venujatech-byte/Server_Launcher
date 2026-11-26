@@ -531,6 +531,12 @@ impl eframe::App for Viewer {
                 if connection.clipboard_sent.swap(false, Ordering::Relaxed) {
                     self.clipboard_notice = Some((Instant::now(), "Clipboard sent"));
                 }
+                if connection.clipboard_unsupported.swap(false, Ordering::Relaxed) {
+                    self.clipboard_notice = Some((
+                        Instant::now(),
+                        "Classic VNC supports Latin-1 text only; images are unsupported",
+                    ));
+                }
                 if std::mem::take(&mut connection.clipboard_too_large) {
                     self.clipboard_notice =
                         Some((Instant::now(), "Clipboard exceeds the 1 MiB limit"));

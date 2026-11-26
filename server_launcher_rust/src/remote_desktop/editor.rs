@@ -146,39 +146,28 @@ pub(crate) fn rdp(ui: &mut Ui, draft: &mut Option<RdpProfile>) {
             ],
         );
         profile.keyboard_layout = layout;
-        choice(
-            ui,
-            "Audio output",
-            &mut profile.audio,
-            &[(Audio::Local, "Play locally"), (Audio::Off, "Off")],
-        );
-        ui.checkbox(&mut profile.mic, "Share microphone");
+        ui.add_enabled_ui(false, |ui| {
+            choice(
+                ui,
+                "Audio output",
+                &mut profile.audio,
+                &[(Audio::Local, "Play locally"), (Audio::Off, "Off")],
+            );
+            ui.checkbox(&mut profile.mic, "Share microphone");
+        });
+        ui.label("RDP audio playback and microphone redirection are not supported yet.");
         clipboard(ui, &mut profile.clipboard);
-        ui.collapsing("Drive redirection", |ui| {
-            let mut remove = None;
-            for (index, drive) in profile.drives.iter_mut().enumerate() {
-                ui.push_id(index, |ui| {
-                    ui.label(drive.path.display().to_string());
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut drive.writable, "Allow remote writes");
-                        if ui.small_button("Remove").clicked() {
-                            remove = Some(index);
-                        }
-                    });
-                });
+        ui.collapsing("Drive redirection (unsupported)", |ui| {
+            ui.label("RDP drive sharing is not supported yet. Saved entries are preserved:");
+            if profile.drives.is_empty() {
+                ui.label("No folders configured.");
             }
-            if let Some(index) = remove {
-                profile.drives.remove(index);
-            }
-            if ui.button("Add folder").clicked() {
-                if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                    if !profile.drives.iter().any(|drive| drive.path == path) {
-                        profile.drives.push(DriveShare {
-                            path,
-                            writable: false,
-                        });
-                    }
-                }
+            for drive in &profile.drives {
+                ui.label(format!(
+                    "{} · {}",
+                    drive.path.display(),
+                    if drive.writable { "read/write" } else { "read-only" }
+                ));
             }
         });
         ui.collapsing("Experience", |ui| {

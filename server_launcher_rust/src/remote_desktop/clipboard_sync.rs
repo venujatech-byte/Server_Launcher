@@ -53,12 +53,19 @@ impl ClipboardSync {
                     let Some(clipboard) = clipboard.as_mut() else {
                         continue;
                     };
-                    if let Some(text) = worker_remote_text.lock().unwrap().take() {
+                    let remote_text = worker_remote_text.lock().unwrap().take();
+                    if let Some(text) = remote_text {
                         if clipboard.set_text(text.clone()).is_ok() {
                             last_text = Some(text);
+                        } else {
+                            let mut pending = worker_remote_text.lock().unwrap();
+                            if pending.is_none() {
+                                *pending = Some(text);
+                            }
                         }
                     }
-                    if let Some(image) = worker_remote_image.lock().unwrap().take() {
+                    let remote_image = worker_remote_image.lock().unwrap().take();
+                    if let Some(image) = remote_image {
                         let fingerprint = image_fingerprint(&image.rgba);
                         if clipboard
                             .set_image(arboard::ImageData {
@@ -69,6 +76,11 @@ impl ClipboardSync {
                             .is_ok()
                         {
                             last_image = Some(fingerprint);
+                        } else {
+                            let mut pending = worker_remote_image.lock().unwrap();
+                            if pending.is_none() {
+                                *pending = Some(image);
+                            }
                         }
                     }
                     if read_local {

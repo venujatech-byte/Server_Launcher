@@ -2,6 +2,20 @@
 
 Baseline `vnc/rdp` at `d8b64bb`. Scope is the native Rust edition, its packaging, and remote desktop documentation. Assume one operator with two simultaneous viewers, including an active 1080p desktop on a high-latency connection. Use `TESTING.md` for the platform matrix and `DESIGN.md` for decisions already made.
 
+## Execution status — 2026-11-27
+
+Current local revision is `4754177`, nine commits ahead of `origin/vnc/rdp`. The owner asked for commits without pushes, so the SSH test PC still has the upstream revision. `PKG_CONFIG_PATH=/tmp/server-launcher-pkgconfig cargo check --locked --all-targets` passed on Linux at `4754177`. Repository instructions allow `cargo check` only. The new regression tests compile but have not been run. No GUI, protocol interoperability, Windows, CI, release, or performance result is verified for these commits.
+
+| Stage | Evidence at `4754177` | Remaining work |
+| --- | --- | --- |
+| 1. Baseline | Source checked for the cursor setting. The local pointer setting is covered by a regression test. `rdp.rs` and `clipboard_sync.rs` all-target checks pass. | Run credential persistence, cursor/input, protocol connection and notification checks on current builds. |
+| 2. Rendering and performance | RDP damage conversion falls back to one full-frame update after 32 disjoint regions. Regression case added and compiled. | Reproduce stale regions on a real server. Compare full and changed-region uploads and record real latency and resource measurements. |
+| 3. Clipboard and files | Validate local clipboard image size before copying bytes. Include dimensions in image loop-prevention fingerprints. | Run both clipboard directions, clipboard fallback, and file transfer tests on supported desktops and servers. |
+| 4. Recorder and lifecycle | FFmpeg writes use a one-frame queue and a supervisor with a two-second stop grace period. Frame buffers are reused when available. Unix stuck-child regression test added and compiled. | Execute the regression test where permitted. Test normal/forced recording shutdown, output integrity, launcher close, tunnel cleanup, and Windows process behavior. |
+| 5. Interoperability | No new runtime evidence. | Run the RDP, VNC, gateway, certificate, audio, microphone, drive, multi-monitor, credential and Windows/Linux matrix in `TESTING.md`. |
+| 6. Release | No new CI or package evidence. | Run authorized CI and package checks on the current revision. Record results and check the packaged viewer process. |
+| 7. Follow-up | Direct VNC TLS, extended VNC clipboard and native Wayland shortcut capture remain unsupported or unverified. | Work these only after the core protocol and release gates pass. |
+
 ## Start here
 
 1. Run `git status --short --branch` and `git log -8 --oneline`. Stay on the remote desktop branch. At audit time `recording.rs` had an existing unstaged diff. Read it before editing that file and preserve it unless the owner has incorporated it.
@@ -15,11 +29,11 @@ Baseline `vnc/rdp` at `d8b64bb`. Scope is the native Rust edition, its packaging
 | Area | Current state | Finish in |
 | --- | --- | --- |
 | GUI menu, editor, palette, profiles, OS credentials, protocol probes and SSH listener scan | Wired. Latest real credential-save and restart matrix outstanding. Probes check reachability and negotiation. | 1, 5 |
-| RDP TLS/NLA, EGFX, bitmap, resize, keyboard and pointer | Wired. User reported stale display regions and local Super capture. Cursor suppression landed at baseline and needs live confirmation. | 1, 2 |
+| RDP TLS/NLA, EGFX, bitmap, resize, keyboard and pointer | Wired. User reported stale display regions and local Super capture. Cursor rendering is disabled in the connection settings and has a compile-checked regression test. Live confirmation is outstanding. | 1, 2 |
 | VNC Raw, Tight, CopyRect, ZRLE, resize, clipboard and SSH transport | Wired. Real-server encoding/interoperability matrix incomplete. Direct VNC TLS and extended clipboard are absent. | 1, 5, 7 |
 | RDP audio, microphone, drive redirection, multi-monitor and RD Gateway | Code exists in `rdp.rs` and `rdp_drives.rs`. Live validation is outstanding. | 5 |
 | Clipboard and files | RDP Unicode, DIB and explicit file share/download paths exist. Classic VNC uses Latin-1. Rich HTML, always-sync preference and broader native clipboard integration remain follow-ups. | 3, 5, 7 |
-| Viewer lifecycle, trust, screenshots and recording | Wired. Long-running shutdown, certificate rotation, recorder failure, and crash tests outstanding. | 4, 5 |
+| Viewer lifecycle, trust, screenshots and recording | Wired. Recorder shutdown is bounded in code and has a compile-checked Unix regression test. Certificate rotation, recorder runtime behavior and crash cleanup remain unverified. | 4, 5 |
 | Release and performance | Prior Linux and Windows compile results are documented. Comparable performance numbers and current package/runtime results are missing. FFmpeg is already recommended in Linux packaging. | 2, 6 |
 
 ## Stage 1 — Establish a reproducible baseline
@@ -80,4 +94,4 @@ Files `recording.rs`, `viewer.rs`, `session.rs`, `tunnel.rs`.
 
 ## Audit limits
 
-This is a source and documentation audit. No fresh compile, CI, live protocol tests, or measurements were run for this roadmap. Prior results in `DESIGN.md` and `TESTING.md` apply to their recorded revisions. The audit excludes Python, the separate Windows crate, Android Cockpit, and unrelated launcher features. No dependencies or source files changed.
+The execution status above is based on the source and compile output at the listed revision. No runtime protocol tests, CI, package checks, or performance measurements were run for this roadmap execution. Prior results in `DESIGN.md` and `TESTING.md` apply only to their recorded revisions. The audit excludes Python, the separate Windows crate, Android Cockpit, and unrelated launcher features. No dependencies were added.

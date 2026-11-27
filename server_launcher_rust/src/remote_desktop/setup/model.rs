@@ -21,6 +21,21 @@ pub(crate) enum ServiceState {
     Unknown,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Readiness {
+    NotInstalled,
+    InstalledStopped,
+    Failed,
+    RunningSystemd,
+    RunningManual,
+    RunningNotReachable,
+    NotReachable,
+    HandshakeSucceededUnconfirmed,
+    Ready,
+    LimitedDetection,
+    Unknown,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Exposure {
     LocalhostOnly,
@@ -154,6 +169,32 @@ impl ServiceInventoryReport {
         match protocol {
             DesktopProtocol::Rdp => self.rdp_handshake.as_ref(),
             DesktopProtocol::Vnc => self.vnc_handshake.as_ref(),
+        }
+    }
+
+    pub(crate) fn readiness(&self, protocol: DesktopProtocol) -> Readiness {
+        let service = self.service(protocol);
+        let state = service.state();
+        let running = matches!(state, ServiceState::RunningSystemd | ServiceState::RunningManual);
+        match self.handshake(protocol) {
+            Some(Ok(_)) if running => Readiness::Ready,
+            Some(Ok(_)) => Readiness::HandshakeSucceededUnconfirmed,
+            Some(Err(_)) if running => Readiness::RunningNotReachable,
+            Some(Err(_)) => Readiness::NotReachable,
+            None => match state {
+                ServiceState::NotInstalled => Readiness::NotInstalled,
+                ServiceState::InstalledStopped => Readiness::InstalledStopped,
+                ServiceState::Failed => Readiness::Failed,
+                ServiceState::RunningSystemd => Readiness::RunningSystemd,
+                ServiceState::RunningManual => Readiness::RunningManual,
+                ServiceState::Unknown
+                    if self.os_id.is_none()
+                        || !matches!(self.init_system, Some(InitSystem::Systemd)) =>
+                {
+                    Readiness::LimitedDetection
+                }
+                ServiceState::Unknown => Readiness::Unknown,
+            },
         }
     }
 }
@@ -459,6 +500,63 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(ambiguous.state(), ServiceState::Unknown);
+    }
+
+    #[test]
+    fn derives_each_service_readiness_from_scan_and_handshake_evidence() {
+        use super::Readiness;
+
+        let mut report = ServiceInventoryReport {
+            os_id: Some("ubuntu".into()),
+            init_system: Some(InitSystem::Systemd),
+            ..Default::default()
+        };
+        report.rdp.installed = Some(false);
+        assert_eq!(report.readiness(DesktopProtocol::Rdp), Readiness::NotInstalled);
+
+        report.rdp.installed = Some(true);
+        report.rdp.unit_present = Some(true);
+        report.rdp.unit_active = Some(false);
+        assert_eq!(report.readiness(DesktopProtocol::Rdp), Readiness::InstalledStopped);
+
+        report.rdp.unit_failed = Some(true);
+        assert_eq!(report.readiness(DesktopProtocol::Rdp), Readiness::Failed);
+
+        report.rdp.unit_failed = Some(false);
+        report.rdp.unit_active = Some(true);
+        assert_eq!(report.readiness(DesktopProtocol::Rdp), Readiness::RunningSystemd);
+
+        report.rdp.unit_active = Some(false);
+        report.rdp.manual_process = Some(true);
+        assert_eq!(report.readiness(DesktopProtocol::Rdp), Readiness::RunningManual);
+
+        report.rdp_handshake = Some(Err("Connection timed out".into()));
+        assert_eq!(report.readiness(DesktopProtocol::Rdp), Readiness::RunningNotReachable);
+        report.rdp_handshake = Some(Ok("X.224 negotiation succeeded".into()));
+        assert_eq!(report.readiness(DesktopProtocol::Rdp), Readiness::Ready);
+
+        report.rdp.manual_process = None;
+        report.rdp.installed = None;
+        report.rdp.unit_present = None;
+        report.rdp_handshake = Some(Ok("X.224 negotiation succeeded".into()));
+        assert_eq!(
+            report.readiness(DesktopProtocol::Rdp),
+            Readiness::HandshakeSucceededUnconfirmed
+        );
+
+        report.rdp_handshake = Some(Err("Connection refused".into()));
+        assert_eq!(report.readiness(DesktopProtocol::Rdp), Readiness::NotReachable);
+
+        report.rdp_handshake = None;
+        report.init_system = Some(InitSystem::Unknown);
+        assert_eq!(report.readiness(DesktopProtocol::Rdp), Readiness::LimitedDetection);
+
+        report.init_system = Some(InitSystem::Systemd);
+        assert_eq!(report.readiness(DesktopProtocol::Rdp), Readiness::Unknown);
+        assert_eq!(
+            ServiceInventoryReport::default().readiness(DesktopProtocol::Rdp),
+            Readiness::LimitedDetection
+        );
     }
 
     #[test]

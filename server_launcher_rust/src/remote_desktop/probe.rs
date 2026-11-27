@@ -639,29 +639,44 @@ fn show_service_inventory_card(
     configured_port: u16,
     request_manual_scan: &mut bool,
 ) -> Option<super::setup::plan::Intent> {
-    use super::setup::model::{Exposure, InitSystem, ServiceState};
+    use super::setup::model::{Exposure, InitSystem, Readiness, ServiceState};
 
     let service = report.service(protocol);
-    let (label, color) = match service.state() {
-        ServiceState::NotInstalled => ("Not installed", ui.visuals().weak_text_color()),
-        ServiceState::InstalledStopped => ("Installed, not running", ui.visuals().warn_fg_color),
-        ServiceState::RunningSystemd => ("Service running", ui.visuals().hyperlink_color),
-        ServiceState::RunningManual => ("Running process", ui.visuals().hyperlink_color),
-        ServiceState::Failed => ("Service failed", ui.visuals().error_fg_color),
-        ServiceState::Unknown => ("Status unknown", ui.visuals().weak_text_color()),
-    };
     let handshake = report.handshake(protocol);
-    let running = matches!(
-        service.state(),
-        ServiceState::RunningSystemd | ServiceState::RunningManual
-    );
-    let (label, color) = match handshake {
-        Some(Ok(_)) if running => ("OK · running and protocol handshake succeeded", ui.visuals().hyperlink_color),
-        Some(Ok(_)) => ("Handshake succeeded; service state is unconfirmed", ui.visuals().warn_fg_color),
-        Some(Err(_)) if matches!(service.state(), ServiceState::RunningSystemd | ServiceState::RunningManual) => {
+    let (label, color) = match report.readiness(protocol) {
+        Readiness::NotInstalled => ("Not installed", ui.visuals().weak_text_color()),
+        Readiness::InstalledStopped => {
+            ("Installed, not running", ui.visuals().warn_fg_color)
+        }
+        Readiness::Failed => ("Service failed", ui.visuals().error_fg_color),
+        Readiness::RunningSystemd => (
+            "Service running · handshake not tested",
+            ui.visuals().warn_fg_color,
+        ),
+        Readiness::RunningManual => (
+            "Running process · handshake not tested",
+            ui.visuals().warn_fg_color,
+        ),
+        Readiness::RunningNotReachable => {
             ("Running, not reachable", ui.visuals().warn_fg_color)
         }
-        _ => (label, color),
+        Readiness::NotReachable => {
+            ("Connection check failed", ui.visuals().warn_fg_color)
+        }
+        Readiness::HandshakeSucceededUnconfirmed => {
+            (
+                "Handshake succeeded; service state is unconfirmed",
+                ui.visuals().warn_fg_color,
+            )
+        }
+        Readiness::Ready => (
+            "OK · running and protocol handshake succeeded",
+            ui.visuals().hyperlink_color,
+        ),
+        Readiness::LimitedDetection => {
+            ("Limited detection", ui.visuals().weak_text_color())
+        }
+        Readiness::Unknown => ("Status unknown", ui.visuals().weak_text_color()),
     };
     ui.horizontal(|ui| {
         ui.colored_label(color, format!("● {label}"));

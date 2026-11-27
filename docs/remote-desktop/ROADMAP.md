@@ -18,7 +18,7 @@ At the start of this status update, local `HEAD` was `e14e31a`, two commits ahea
 
 ### Test PC listener probe — 2026-11-27
 
-The authorized SSH test PC answered a read-only TCP listener check. No listener was found on TCP 3389 or 5900–5910. The process list showed `xrdp-sesman`, an Xorg `:10` session, and `xrdp-chansrv`, but no RDP listener process; this host is not currently a usable RDP/VNC interoperability target. No services or files were changed. Use a verified xrdp/VNC server before running stage 5 protocol checks.
+The authorized SSH test PC answered a read-only TCP listener check. No listener was found on TCP 3389 or 5900–5910. The `xrdp` unit is installed but failed with a systemd start timeout; its recent logs include TLS accept failures. The process list showed `xrdp-sesman`, an Xorg `:10` session, and `xrdp-chansrv`, but no RDP listener process. This host is not currently a usable RDP/VNC interoperability target. No services or files were changed. Resolve the server-side xrdp failure, or use a verified xrdp/VNC server, before running stage 5 protocol checks.
 
 ## Start here
 

@@ -795,38 +795,72 @@ fn show_service_inventory_card(
         }
     });
 
-    let ssh_user = report.user.as_deref().unwrap_or("SSH user unknown");
-    ui.label(format!("✓ SSH reachable as {ssh_user}"));
-    if let Some(installed) = service.installed {
-        ui.label(if installed {
-            "✓ Service executable detected"
-        } else {
-            "– Service executable not detected"
+    egui::Grid::new(("service_checks", protocol as u8))
+        .num_columns(3)
+        .spacing([8.0, 3.0])
+        .show(ui, |ui| {
+            let ok_color = ui.visuals().hyperlink_color;
+            let text_color = ui.visuals().text_color();
+            let mut row = |icon: &str, title: &str, detail: String, color| {
+                ui.colored_label(color, icon);
+                ui.weak(title);
+                ui.label(detail);
+                ui.end_row();
+            };
+            row(
+                "✓",
+                "SSH",
+                format!(
+                    "reachable as {}",
+                    report.user.as_deref().unwrap_or("unknown user")
+                ),
+                ok_color,
+            );
+            row(
+                if service.installed == Some(true) {
+                    "✓"
+                } else {
+                    "–"
+                },
+                "Installed",
+                match (service.installed, service.version.as_deref()) {
+                    (Some(true), Some(version)) => version.to_owned(),
+                    (Some(true), None) => "executable detected".into(),
+                    (Some(false), _) => "not detected".into(),
+                    (None, _) => "could not be determined".into(),
+                },
+                text_color,
+            );
+            if service.unit_present.is_some() || service.manual_process == Some(true) {
+                row(
+                    if service.unit_active == Some(true) {
+                        "✓"
+                    } else {
+                        "–"
+                    },
+                    "Service",
+                    if service.manual_process == Some(true) {
+                        "running as a manual process".into()
+                    } else if service.unit_active == Some(true) {
+                        format!(
+                            "systemd active{}",
+                            service.unit_enabled.map_or(String::new(), |enabled| {
+                                if enabled {
+                                    " · enabled at boot".into()
+                                } else {
+                                    " · not enabled at boot".into()
+                                }
+                            })
+                        )
+                    } else if service.unit_active == Some(false) {
+                        "systemd inactive".into()
+                    } else {
+                        "state unavailable".into()
+                    },
+                    text_color,
+                );
+            }
         });
-    } else {
-        ui.label("– Installation could not be determined");
-    }
-    if service.unit_present == Some(true) {
-        ui.label("✓ systemd service units found");
-    } else if service.unit_present == Some(false) {
-        ui.label("– systemd service units not found");
-    }
-    if service.unit_active == Some(true) {
-        ui.label(format!(
-            "✓ systemd unit active{}",
-            service.unit_enabled.map_or(String::new(), |enabled| if enabled {
-                " · enabled at boot".into()
-            } else {
-                " · not enabled at boot".into()
-            })
-        ));
-    } else if service.manual_process == Some(true) {
-        ui.label("✓ Running as a process outside the detected systemd unit");
-    } else if service.unit_active == Some(false) {
-        ui.label("– systemd unit inactive");
-    } else {
-        ui.label("– Service manager state unavailable");
-    }
     if service.unit_failed == Some(true) {
         ui.colored_label(ui.visuals().error_fg_color, "Service unit reports a failed state");
         let prefix = match protocol {

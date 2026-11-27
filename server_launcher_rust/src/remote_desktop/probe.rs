@@ -613,9 +613,8 @@ impl ServerDetection {
                             );
                             let res = crate::remote::ssh_probe_output_with_stdin(
                                 command,
-                                pw.as_bytes(),
                                 timeout,
-                                None,
+                                pw.as_bytes(),
                             )
                             .and_then(|out| {
                                 if out.status.success() {

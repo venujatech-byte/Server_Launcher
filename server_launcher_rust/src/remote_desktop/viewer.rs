@@ -1729,14 +1729,6 @@ impl eframe::App for Viewer {
                 );
                 screen
             };
-            if self.protocol == DesktopProtocol::Rdp {
-                ui.interact(
-                    screen,
-                    ui.id().with("remote-desktop-cursor"),
-                    egui::Sense::hover(),
-                )
-                .on_hover_cursor(egui::CursorIcon::None);
-            }
             if self.protocol == DesktopProtocol::Vnc && self.show_vnc_cursor {
                 if let (Some(texture), Some((_, hotspot, Some(position), _))) =
                     (&self.vnc_cursor_texture, &remote_cursor)

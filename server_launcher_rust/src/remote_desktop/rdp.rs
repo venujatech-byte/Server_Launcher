@@ -1529,14 +1529,14 @@ fn config(
         } else {
             MajorPlatformType::UNIX
         },
-        enable_server_pointer: true,
+        enable_server_pointer: false,
         request_data: None,
         autologon: true,
         enable_audio_playback: profile.audio == Audio::Local,
         enable_audio_capture: profile.mic,
         audio_playback_mode: None,
         compression_type: Some(CompressionType::Rdp61),
-        pointer_software_rendering: true,
+        pointer_software_rendering: false,
         multitransport_flags: None,
         support_dyn_vc_gfx_protocol: color_depth != 8,
         rdp_version: ironrdp::pdu::gcc::RdpVersion::V5_PLUS,

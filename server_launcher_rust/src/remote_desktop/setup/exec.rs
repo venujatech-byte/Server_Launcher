@@ -18,11 +18,17 @@ pub(crate) fn run_approved_plan(
     cancel: &AtomicBool,
     mut report: impl FnMut(ActionEvent),
 ) -> Result<usize, String> {
-    if host.user != "root" {
-        if let Some(password) = password.as_ref() {
-            validate_sudo_password(host, password)?;
+    let password = if host.user != "root" {
+        match password {
+            Some(password) if !sudo_is_passwordless(host)? => {
+                validate_sudo_password(host, &password)?;
+                Some(password)
+            }
+            _ => None,
         }
-    }
+    } else {
+        None
+    };
     let total = plan.steps.len();
     let mut completed = 0;
     for (index, step) in plan.steps.iter().enumerate() {
@@ -79,7 +85,7 @@ fn validate_sudo_password(
 ) -> Result<(), String> {
     let mut input = Zeroizing::new(password.as_bytes().to_vec());
     input.push(b'\n');
-    let command = crate::remote::build_ssh_command(host, "sudo -S -p '' -- true");
+    let command = crate::remote::build_ssh_command(host, "sudo -k -S -p '' -- true");
     let result = crate::remote::ssh_probe_output_with_stdin(command, Duration::from_secs(20), &input)
         .map_err(|error| format!("Could not validate sudo access: {error}"));
     input.zeroize();
@@ -96,6 +102,13 @@ fn validate_sudo_password(
     } else {
         format!("Sudo access could not be validated: {}", detail.trim())
     })
+}
+
+fn sudo_is_passwordless(host: &SshRemoteHost) -> Result<bool, String> {
+    let command = crate::remote::build_ssh_command(host, "sudo -n -p '' -- true");
+    crate::remote::ssh_probe_output(command, Duration::from_secs(20))
+        .map(|result| result.status.success())
+        .map_err(|error| format!("Could not check sudo access: {error}"))
 }
 
 fn output_tail(output: &str, max_chars: usize) -> String {
@@ -117,7 +130,7 @@ pub(crate) fn command_for_step(
         .join(" ");
     Ok(if step.needs_root && !ssh_as_root {
         if has_sudo_password {
-            format!("sudo -S -p '' -- {quoted}")
+            format!("sudo -k -S -p '' -- {quoted}")
         } else {
             format!("sudo -n -- {quoted}")
         }
@@ -177,7 +190,7 @@ mod tests {
         };
         assert_eq!(command_for_step(&step, true, false).unwrap(), "'systemctl' 'start' 'xrdp.service'");
         assert_eq!(command_for_step(&step, false, false).unwrap(), "sudo -n -- 'systemctl' 'start' 'xrdp.service'");
-        assert_eq!(command_for_step(&step, false, true).unwrap(), "sudo -S -p '' -- 'systemctl' 'start' 'xrdp.service'");
+        assert_eq!(command_for_step(&step, false, true).unwrap(), "sudo -k -S -p '' -- 'systemctl' 'start' 'xrdp.service'");
     }
 
     #[test]

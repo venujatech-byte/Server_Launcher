@@ -2,7 +2,7 @@
 
 ## Current boundary
 
-The current implementation performs a read-only SSH inventory scan and a client-side protocol handshake. It does not install, start, stop, enable, edit configuration, or change firewall rules. A detected process or open port is not shown as ready unless the protocol handshake succeeds. Authentication is reported as untested.
+The current implementation performs a read-only SSH inventory scan and a client-side protocol handshake. It can show copyable install/start/verify commands for documented Debian and Ubuntu hosts, but it never executes those commands. It does not install, start, stop, enable, edit configuration, or change firewall rules. A detected process or open port is not shown as ready unless the protocol handshake succeeds. Authentication is reported as untested.
 
 The inventory script emits bounded `SLD/1` tab-separated records. Raw output remains available in the UI for troubleshooting. The RDP and VNC views filter their protocol records independently; shared host facts are shown in both.
 
@@ -44,5 +44,6 @@ Rust keeps `ssh_hosts` and all existing keys; new protocol fields must remain se
 ## Validation record
 
 - Parser fixtures cover the supplied 3389 listener without process metadata, a manual TigerVNC process on `:1`/5901, percent-escaped owner data, malformed records, duplicate singleton fields, localhost/wildcard exposure, and unknown service state.
+- Manual command generation is limited to `ID=debian` and `ID=ubuntu`; unknown distributions receive no guessed package/service commands. The VNC start command includes localhost binding and the selected numeric port.
 - `cargo check --locked --all-targets` passed on the authorized SSH build PC after syncing the read-only inventory implementation.
-- Unit tests were type-checked as targets but not executed. No live service install/start or distro runtime test was performed.
+- Parser and manual-command unit tests were type-checked as targets but not executed. No live service install/start or distro runtime test was performed.

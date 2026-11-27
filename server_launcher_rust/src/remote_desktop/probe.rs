@@ -81,7 +81,13 @@ impl ServerDetection {
         });
         if let Some((_, result, _)) = self.last.as_ref().filter(|(tested, _, _)| tested == &key) {
             match result {
-                Ok(report) => show_service_inventory(ui, report, protocol),
+                Ok(report) => {
+                    let port = match protocol {
+                        DesktopProtocol::Rdp => host.rdp.as_ref().map_or(3389, |profile| profile.port),
+                        DesktopProtocol::Vnc => host.vnc.as_ref().map_or(5900, |profile| profile.port),
+                    };
+                    show_service_inventory(ui, report, protocol, port);
+                }
                 Err(error) => {
                     ui.colored_label(ui.visuals().error_fg_color, error);
                 }
@@ -226,6 +232,7 @@ fn show_service_inventory(
     ui: &mut egui::Ui,
     report: &super::setup::model::ServiceInventoryReport,
     protocol: DesktopProtocol,
+    configured_port: u16,
 ) {
     use super::setup::model::{Exposure, InitSystem, ServiceState};
 
@@ -433,6 +440,39 @@ fn show_service_inventory(
                     );
                 });
         });
+
+    egui::CollapsingHeader::new("Manual instructions")
+        .id_salt(("service_inventory_manual", protocol as u8))
+        .show(ui, |ui| {
+            let Some(instructions) = super::setup::manual::instructions(
+                report.os_id.as_deref(),
+                protocol,
+                configured_port,
+            ) else {
+                ui.label("No automatic guidance is available for this distribution. Use its official xrdp/TigerVNC documentation. The app will not guess package or service commands.");
+                return;
+            };
+            ui.label(instructions.note);
+            show_manual_commands(ui, "Install manually", &instructions.install);
+            show_manual_commands(ui, "Start manually", &instructions.start);
+            show_manual_commands(ui, "Verify", &instructions.verify);
+            ui.label("After a manual change, select Scan again above to refresh status.");
+        });
+}
+
+fn show_manual_commands(ui: &mut egui::Ui, title: &str, commands: &[String]) {
+    egui::CollapsingHeader::new(title).show(ui, |ui| {
+        for (index, command) in commands.iter().enumerate() {
+            ui.push_id((title, index), |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.monospace(command);
+                    if ui.small_button("Copy").clicked() {
+                        ui.ctx().copy_text(command.clone());
+                    }
+                });
+            });
+        }
+    });
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

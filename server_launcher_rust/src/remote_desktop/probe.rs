@@ -368,6 +368,20 @@ impl ServerDetection {
         find_port_suggestion(result.as_ref().ok()?.service(protocol), configured_port)
     }
 
+    pub(crate) fn vnc_displays(
+        &self,
+        host: &crate::config::SshRemoteHost,
+    ) -> Vec<super::setup::model::VncDisplay> {
+        let key = detection_key(host);
+        self.last
+            .as_ref()
+            .filter(|(tested, _, scanned)| {
+                tested == &key && scanned.elapsed() < Duration::from_secs(60)
+            })
+            .and_then(|(_, result, _)| result.as_ref().ok())
+            .map_or_else(Vec::new, |report| report.vnc.displays.clone())
+    }
+
     fn start(
         &mut self,
         host: crate::config::SshRemoteHost,
@@ -385,8 +399,14 @@ impl ServerDetection {
 }
 
 fn detection_key(host: &crate::config::SshRemoteHost) -> String {
+    use sha2::{Digest, Sha256};
+
+    let password_fingerprint = format!("{:x}", Sha256::digest(host.password.as_bytes()));
+    let rdp = host.rdp.as_ref();
+    let vnc = host.vnc.as_ref();
+    let rdp_security = rdp.map_or_else(|| "none".into(), |profile| format!("{:?}", profile.security));
     format!(
-        "{}:{}@{}|{}|{}|{}|{}|{}",
+        "{}:{}@{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
         host.id,
         host.port,
         host.host,
@@ -394,7 +414,17 @@ fn detection_key(host: &crate::config::SshRemoteHost) -> String {
         host.key_path,
         host.credential_ref.as_deref().unwrap_or_default(),
         host.use_agent,
-        host.strict_host_key
+        host.strict_host_key,
+        host.remote_cwd,
+        password_fingerprint,
+        rdp.is_some_and(|profile| profile.enabled),
+        rdp.map_or(0, |profile| profile.port),
+        rdp_security,
+        rdp.is_some_and(|profile| profile.tunnel_via_ssh),
+        rdp.map_or("", |profile| profile.gateway.as_str()),
+        vnc.is_some_and(|profile| profile.enabled),
+        vnc.map_or(0, |profile| profile.port),
+        vnc.is_some_and(|profile| profile.tunnel_via_ssh)
     )
 }
 
@@ -1188,6 +1218,45 @@ impl ProbeControl {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn detection_host() -> crate::config::SshRemoteHost {
+        crate::config::SshRemoteHost {
+            id: "host".into(),
+            name: "Host".into(),
+            host: "example.test".into(),
+            port: 22,
+            user: "user".into(),
+            key_path: String::new(),
+            password: String::new(),
+            credential_ref: None,
+            remote_cwd: String::new(),
+            use_agent: true,
+            strict_host_key: false,
+            rdp: Some(crate::remote_desktop::profile::RdpProfile::default()),
+            vnc: Some(crate::remote_desktop::profile::VncProfile::default()),
+        }
+    }
+
+    #[test]
+    fn detection_cache_key_tracks_probe_settings_without_exposing_password() {
+        let host = detection_host();
+        let original = detection_key(&host);
+        assert_eq!(original, detection_key(&host));
+
+        let mut changed = host.clone();
+        changed.rdp.as_mut().unwrap().port += 1;
+        assert_ne!(original, detection_key(&changed));
+
+        let mut changed = host.clone();
+        changed.vnc.as_mut().unwrap().tunnel_via_ssh = false;
+        assert_ne!(original, detection_key(&changed));
+
+        let mut changed = host;
+        changed.password = "private-test-password".into();
+        let key = detection_key(&changed);
+        assert_ne!(original, key);
+        assert!(!key.contains("private-test-password"));
+    }
 
     #[test]
     fn port_suggestion_uses_detected_listener_without_overriding_matching_port() {

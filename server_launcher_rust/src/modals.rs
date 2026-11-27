@@ -1560,6 +1560,13 @@ type RemotePcSaveResult = Result<
 
 impl SshHostModalState {
     fn remote_detection_host(&self) -> crate::config::SshRemoteHost {
+        let mut vnc = self.vnc.clone();
+        if let (Some(profile), Some(port)) = (
+            vnc.as_mut(),
+            crate::remote_desktop::editor::vnc_port(&self.vnc_port_text, &self.host),
+        ) {
+            profile.port = port;
+        }
         crate::config::SshRemoteHost {
             id: self.editing_id.clone().unwrap_or_else(|| "remote-probe".into()),
             name: self.name.clone(),
@@ -1573,7 +1580,7 @@ impl SshHostModalState {
             use_agent: self.use_agent,
             strict_host_key: self.strict_host_key,
             rdp: self.rdp.clone(),
-            vnc: self.vnc.clone(),
+            vnc,
         }
     }
 
@@ -2034,7 +2041,31 @@ pub fn render_ssh_host_modal(
                                 std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))),
                             );
                             let configured_port = state.vnc.as_ref().map_or(5900, |profile| profile.port);
-                            if let Some(port) = state.server_detection.suggested_port(
+                            let displays = state.server_detection.vnc_displays(&detection_host);
+                            if displays.len() > 1 {
+                                ui.horizontal(|ui| {
+                                    ui.label("Detected displays:");
+                                    for display in &displays {
+                                        let owner = display
+                                            .user
+                                            .as_deref()
+                                            .map_or(String::new(), |user| format!(" · {user}"));
+                                        let label = format!(
+                                            "{} → {}{}",
+                                            display.display, display.port, owner
+                                        );
+                                        if ui
+                                            .selectable_label(configured_port == display.port, label)
+                                            .clicked()
+                                        {
+                                            state.vnc_port_text = display.port.to_string();
+                                            let profile = state.vnc.get_or_insert_with(Default::default);
+                                            profile.port = display.port;
+                                            profile.port_auto = true;
+                                        }
+                                    }
+                                });
+                            } else if let Some(port) = state.server_detection.suggested_port(
                                 &detection_host,
                                 protocol,
                                 configured_port,

@@ -1625,6 +1625,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn local_pointer_mode_disables_server_cursor_rendering() {
+        let host = SshRemoteHost {
+            id: "test".into(),
+            name: "Test".into(),
+            host: "127.0.0.1".into(),
+            port: 22,
+            user: "user".into(),
+            key_path: String::new(),
+            password: String::new(),
+            credential_ref: None,
+            remote_cwd: String::new(),
+            use_agent: true,
+            strict_host_key: false,
+            rdp: None,
+            vnc: None,
+        };
+        let config = config(&host, &RdpProfile::default(), "", None, None);
+
+        assert!(!config.enable_server_pointer);
+        assert!(!config.pointer_software_rendering);
+    }
+
+    #[test]
     fn graphics_capabilities_never_advertise_avc_without_a_decoder() {
         use ironrdp_egfx::pdu::{
             CapabilitiesV107Flags, CapabilitiesV10Flags, CapabilitiesV103Flags,

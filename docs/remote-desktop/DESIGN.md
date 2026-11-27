@@ -382,7 +382,9 @@ and frame rate (15, 24, 30, or 60 FPS) are configurable in Remote Desktop settin
 Pictures/ServerLauncher and 30 FPS as defaults. Users can select a specific
 FFmpeg executable or use `ffmpeg` from `PATH`. Users can select MP4 (H.264) or a
 PNG sequence directly; the PNG fallback remains available when FFmpeg is
-missing.
+missing. A bounded writer repeats the last complete frame across any sampled
+frame indexes dropped under encoder backpressure, keeping the encoded timeline
+at the selected constant frame rate.
 Remote Desktop settings also seed quality, clipboard direction, scaling, and
 reconnect defaults into newly created protocol profiles; saved host profiles
 retain their own values.

@@ -576,4 +576,17 @@ mod tests {
         };
         assert_eq!(unknown_listener.exposure(), Exposure::Unknown);
     }
+
+    #[test]
+    fn parses_bind_variants_multiple_displays_and_rejects_truncated_records() {
+        let report = parse_inventory("SLD/1\tbegin\nSLD/1\tfield\thost\tinit\tother\nSLD/1\tlistener\trdp\t[::]\t3389\t-\t-\t-\nSLD/1\tlistener\tvnc\t*\t5901\t-\t-\t-\nSLD/1\tlistener\tvnc\t192.0.2.10\t5902\tXtigervnc\t7\tuser\nSLD/1\tdisplay\tvnc\t:1\t5901\tuser\nSLD/1\tdisplay\tvnc\t:2\t5902\tuser\nSLD/1\tend\n").unwrap();
+        assert_eq!(report.init_system, Some(InitSystem::Other));
+        assert_eq!(report.rdp.exposure(), Exposure::AllInterfaces);
+        assert_eq!(report.vnc.exposure(), Exposure::AllInterfaces);
+        assert_eq!(report.vnc.listeners[1].address, "192.0.2.10");
+        assert_eq!(report.vnc.displays.iter().map(|display| display.port).collect::<Vec<_>>(), [5901, 5902]);
+
+        assert!(parse_inventory("SLD/1\tbegin\nSLD/1\tlistener\tvnc\t127.0.0.1\t5901\t-").is_err());
+        assert!(parse_inventory("SLD/1\tbegin\nSLD/1\tlistener\tvnc\t127.0.0.1").is_err());
+    }
 }

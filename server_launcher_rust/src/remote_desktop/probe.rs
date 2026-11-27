@@ -133,6 +133,7 @@ impl ServerDetection {
             }
         });
         let mut requested_intent = None;
+        let mut request_manual_scan = false;
         if let Some((_, result, _)) = self.last.as_ref().filter(|(tested, _, _)| tested == &key) {
             match result {
                 Ok(report) => {
@@ -140,7 +141,13 @@ impl ServerDetection {
                         DesktopProtocol::Rdp => host.rdp.as_ref().map_or(3389, |profile| profile.port),
                         DesktopProtocol::Vnc => host.vnc.as_ref().map_or(5900, |profile| profile.port),
                     };
-                    requested_intent = show_service_inventory(ui, report, protocol, port);
+                    requested_intent = show_service_inventory(
+                        ui,
+                        report,
+                        protocol,
+                        port,
+                        &mut request_manual_scan,
+                    );
                 }
                 Err(error) => {
                     ui.colored_label(ui.visuals().error_fg_color, error);
@@ -148,6 +155,9 @@ impl ServerDetection {
             }
         } else if !can_scan {
             ui.label("Enter the SSH host and username to scan.");
+        }
+        if request_manual_scan && self.pending.is_none() {
+            self.start(host.clone(), key.clone(), timeout, ui.ctx().clone());
         }
 
         if let Some(intent) = requested_intent {
@@ -424,10 +434,17 @@ fn show_service_inventory(
     report: &super::setup::model::ServiceInventoryReport,
     protocol: DesktopProtocol,
     configured_port: u16,
+    request_manual_scan: &mut bool,
 ) -> Option<super::setup::plan::Intent> {
     let mut requested = None;
     ui.group(|ui| {
-        requested = show_service_inventory_card(ui, report, protocol, configured_port);
+        requested = show_service_inventory_card(
+            ui,
+            report,
+            protocol,
+            configured_port,
+            request_manual_scan,
+        );
     });
     requested
 }
@@ -437,6 +454,7 @@ fn show_service_inventory_card(
     report: &super::setup::model::ServiceInventoryReport,
     protocol: DesktopProtocol,
     configured_port: u16,
+    request_manual_scan: &mut bool,
 ) -> Option<super::setup::plan::Intent> {
     use super::setup::model::{Exposure, InitSystem, ServiceState};
 
@@ -665,7 +683,9 @@ fn show_service_inventory_card(
             show_manual_commands(ui, "Install manually", &instructions.install);
             show_manual_commands(ui, "Start manually", &instructions.start);
             show_manual_commands(ui, "Verify", &instructions.verify);
-            ui.label("After a manual change, select Scan again above to refresh status.");
+            if ui.button("I did it manually, check again").clicked() {
+                *request_manual_scan = true;
+            }
         });
 
     let mut requested = None;

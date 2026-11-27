@@ -633,6 +633,19 @@ fn tunnel_target(
     specific
 }
 
+pub(crate) fn tunnel_target_for_session(
+    host: &crate::config::SshRemoteHost,
+    protocol: DesktopProtocol,
+    port: u16,
+) -> std::net::IpAddr {
+    use std::net::{IpAddr, Ipv4Addr};
+
+    super::setup::detect::scan(host, Duration::from_secs(5))
+        .ok()
+        .and_then(|report| tunnel_target(&report.service(protocol).listeners, port))
+        .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST))
+}
+
 fn find_port_suggestion(
     service: &super::setup::model::ServiceInventory,
     protocol: DesktopProtocol,

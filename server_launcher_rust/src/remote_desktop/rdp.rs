@@ -262,10 +262,15 @@ fn run(
                 &password,
             )?
         } else if profile.tunnel_via_ssh {
+            let target = super::probe::tunnel_target_for_session(
+                host,
+                DesktopProtocol::Rdp,
+                profile.port,
+            );
             (
                 tunnel::open(
                     host,
-                    std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                    target,
                     profile.port,
                     CONNECT_TIMEOUT,
                     Some(config_path),

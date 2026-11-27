@@ -26,7 +26,7 @@ pub(crate) fn instructions(
             start: vec!["sudo systemctl start xrdp.service".into()],
             verify: vec![
                 "systemctl status xrdp.service --no-pager".into(),
-                "ss -ltn | grep ':3389'".into(),
+                format!("ss -ltn | grep ':{port}'"),
             ],
             note: "A graphical desktop session is required. xrdp uses its configured port (normally 3389); review your installed xrdp.ini before changing a custom port. The app will not change firewall or cloud security rules.",
         },
@@ -61,6 +61,8 @@ mod tests {
 
         let rdp = instructions(Some("debian"), DesktopProtocol::Rdp, 3389).unwrap();
         assert!(rdp.start.iter().any(|command| command.contains("xrdp.service")));
+        let custom_port = instructions(Some("ubuntu"), DesktopProtocol::Rdp, 3390).unwrap();
+        assert!(custom_port.verify.iter().any(|command| command.contains(":3390")));
     }
 
     #[test]

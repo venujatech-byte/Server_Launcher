@@ -60,8 +60,12 @@ pub(crate) struct ServerDetection {
     action_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     scan_window_open: bool,
     show_manual_instructions: bool,
+    vnc_display: u8,
     vnc_resolution_idx: usize,
+    vnc_depth_idx: usize,
     vnc_localhost_disabled: bool,
+    vnc_start_pending: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+    vnc_start_error: Option<String>,
     action_status: String,
     action_logs: String,
     action_history_warning: Option<(String, DesktopProtocol, String)>,
@@ -302,6 +306,15 @@ impl ServerDetection {
                         port,
                         &mut request_manual_scan,
                     );
+                    if protocol == DesktopProtocol::Vnc
+                        && matches!(
+                            report.vnc.state(),
+                            super::setup::model::ServiceState::InstalledStopped
+                                | super::setup::model::ServiceState::Failed
+                        )
+                    {
+                        self.show_vnc_start_config(ui, host, &key, timeout);
+                    }
                     let history = self
                         .history_cache
                         .as_ref()
@@ -444,6 +457,110 @@ impl ServerDetection {
             }
         }
         self.show_action_review(ui, &key);
+    }
+
+    fn show_vnc_start_config(
+        &mut self,
+        ui: &mut egui::Ui,
+        host: &crate::config::SshRemoteHost,
+        key: &str,
+        timeout: Duration,
+    ) {
+        if let Some(rx) = &self.vnc_start_pending {
+            if let Ok(result) = rx.try_recv() {
+                self.vnc_start_pending = None;
+                match result {
+                    Ok(_) => {
+                        self.vnc_start_error = None;
+                        self.last = None;
+                        self.start(host.clone(), key.to_owned(), timeout, ui.ctx().clone());
+                    }
+                    Err(err) => {
+                        self.vnc_start_error = Some(err);
+                    }
+                }
+            }
+        }
+
+        const RESOLUTIONS: &[&str] = &["1920x1080", "1600x900", "1366x768", "1280x720", "2560x1440"];
+        const DEPTHS: &[&str] = &["24", "16", "32"];
+        if self.vnc_display == 0 {
+            self.vnc_display = 1;
+        }
+        let res = RESOLUTIONS
+            .get(self.vnc_resolution_idx)
+            .copied()
+            .unwrap_or("1920x1080");
+        let depth = DEPTHS.get(self.vnc_depth_idx).copied().unwrap_or("24");
+        let localhost_arg = if self.vnc_localhost_disabled { "no" } else { "yes" };
+        let cmd = format!(
+            "vncserver :{} -localhost {} -geometry {} -depth {}",
+            self.vnc_display, localhost_arg, res, depth
+        );
+
+        ui.add_space(6.0);
+        egui::Frame::group(ui.style())
+            .rounding(egui::Rounding::same(6.0))
+            .inner_margin(egui::Margin::same(8.0))
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new("Start VNC session").strong());
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Display:");
+                    ui.add(egui::DragValue::new(&mut self.vnc_display).range(1..=9).prefix(":"));
+                    ui.label("Resolution:");
+                    egui::ComboBox::from_id_salt("vnc_start_res")
+                        .selected_text(res)
+                        .show_ui(ui, |ui| {
+                            for (i, r) in RESOLUTIONS.iter().enumerate() {
+                                ui.selectable_value(&mut self.vnc_resolution_idx, i, *r);
+                            }
+                        });
+                    ui.label("Depth:");
+                    egui::ComboBox::from_id_salt("vnc_start_depth")
+                        .selected_text(depth)
+                        .show_ui(ui, |ui| {
+                            for (i, d) in DEPTHS.iter().enumerate() {
+                                ui.selectable_value(&mut self.vnc_depth_idx, i, *d);
+                            }
+                        });
+                });
+                ui.checkbox(&mut self.vnc_localhost_disabled, "Allow remote (-localhost no)");
+                ui.label(egui::RichText::new(&cmd).monospace().small().weak());
+                ui.horizontal(|ui| {
+                    let busy = self.vnc_start_pending.is_some();
+                    if ui
+                        .add_enabled(!busy, egui::Button::new("▶ Start VNC"))
+                        .clicked()
+                    {
+                        self.vnc_start_error = None;
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        self.vnc_start_pending = Some(rx);
+                        let host_owned = host.clone();
+                        let key_owned = key.to_owned();
+                        let cmd_owned = cmd.clone();
+                        let ctx = ui.ctx().clone();
+                        std::thread::spawn(move || {
+                            let res = crate::remote::ssh_probe_output(
+                                &host_owned,
+                                &key_owned,
+                                &cmd_owned,
+                                timeout,
+                            )
+                            .map(|_| String::new())
+                            .map_err(|e| e.to_string());
+                            let _ = tx.send(res);
+                            ctx.request_repaint();
+                        });
+                    }
+                    if busy {
+                        ui.spinner();
+                        ui.label(egui::RichText::new("Starting VNC...").small().weak());
+                    }
+                });
+                if let Some(err) = &self.vnc_start_error {
+                    ui.colored_label(ui.visuals().error_fg_color, err);
+                }
+            });
     }
 
     fn show_action_review(&mut self, ui: &mut egui::Ui, key: &str) {

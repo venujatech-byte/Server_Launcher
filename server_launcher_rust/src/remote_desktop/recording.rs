@@ -234,13 +234,9 @@ fn record(
         interval,
         |frame, changed| {
             if changed {
-                pixels = Arc::new(
-                    frame
-                        .pixels
-                        .iter()
-                        .flat_map(|pixel| pixel.to_array())
-                        .collect(),
-                );
+                let buffer = Arc::make_mut(&mut pixels);
+                buffer.clear();
+                buffer.extend(frame.pixels.iter().flat_map(|pixel| pixel.to_array()));
             }
             match pipe_sender.try_send(Arc::clone(&pixels)) {
                 Ok(()) => {}

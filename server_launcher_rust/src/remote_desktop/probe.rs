@@ -1007,7 +1007,18 @@ pub(crate) struct ProbeRequest {
 }
 
 pub(crate) fn run(request: &ProbeRequest, timeout: Duration) -> Result<String, String> {
-    run_with_target(request, None, timeout)
+    let target = if request.tunnel_via_ssh {
+        request.ssh_host.as_ref().and_then(|host| {
+            super::setup::detect::scan(host, timeout.min(Duration::from_secs(5)))
+                .ok()
+                .and_then(|report| {
+                    tunnel_target(&report.service(request.protocol).listeners, request.port)
+                })
+        })
+    } else {
+        None
+    };
+    run_with_target(request, target, timeout)
 }
 
 fn run_with_target(

@@ -262,6 +262,11 @@ impl ServerDetection {
                 .title_bar(false)
                 .resizable(true)
                 .default_width(420.0)
+                .frame(
+                    egui::Frame::window(&ui.ctx().style())
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(75)))
+                        .shadow(egui::Shadow::big_dark()),
+                )
                 .show(ui.ctx(), |ui| {
                     ui.style_mut().text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
                     ui.style_mut().text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(11.5));
@@ -275,7 +280,7 @@ impl ServerDetection {
                             ui.spinner();
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("✕").on_hover_text("Close").clicked() {
+                            if ui.small_button("X").on_hover_text("Close").clicked() {
                                 open = false;
                             }
                             if ui
@@ -662,7 +667,12 @@ impl ServerDetection {
             .title_bar(false)
             .collapsible(false)
             .resizable(false)
-            .default_width(440.0);
+            .default_width(440.0)
+            .frame(
+                egui::Frame::window(&ui.ctx().style())
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(75)))
+                    .shadow(egui::Shadow::big_dark()),
+            );
         if !running {
             window = window.open(&mut window_open);
         }
@@ -675,7 +685,7 @@ impl ServerDetection {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Service action review").size(13.0).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if !running && ui.small_button("✕").on_hover_text("Cancel").clicked() {
+                        if !running && ui.small_button("X").on_hover_text("Cancel").clicked() {
                             cancel = true;
                         }
                     });

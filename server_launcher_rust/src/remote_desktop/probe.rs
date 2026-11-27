@@ -322,6 +322,11 @@ impl ServerDetection {
                     });
                     ui.separator();
                     ui.add_space(2.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt(("service_manager_scroll", protocol as u8))
+                        .max_height(ui.ctx().screen_rect().height() * 0.70)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
                     if self.pending.is_some() && !has_current_result {
                         show_service_scan_placeholder(ui, protocol);
                     }
@@ -384,6 +389,7 @@ impl ServerDetection {
                     if let Some(is_running) = show_vnc_controls {
                         self.show_vnc_start_config(ui, host, &key, timeout, is_running);
                     }
+                        }); // end ScrollArea
                 });
             self.scan_window_open = open;
         } else if !can_scan {
@@ -744,10 +750,17 @@ impl ServerDetection {
                 ui.style_mut().text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(11.0));
                 // — compact custom title bar —
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Service action review").size(13.0).strong());
+                    ui.label(egui::RichText::new("Service action review").size(12.0).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if !running && ui.small_button("X").on_hover_text("Cancel").clicked() {
-                            cancel = true;
+                        if !running {
+                            let close_btn = ui.add(
+                                egui::Button::new(egui::RichText::new("✕").size(10.0))
+                                    .min_size(egui::vec2(18.0, 18.0))
+                                    .rounding(egui::Rounding::same(999.0)),
+                            ).on_hover_text("Cancel");
+                            if close_btn.clicked() {
+                                cancel = true;
+                            }
                         }
                     });
                 });

@@ -1395,6 +1395,7 @@ fn show_service_inventory_card(
         ServiceState::InstalledStopped | ServiceState::Failed => {
             actions.push(("Start", super::setup::plan::Intent::Start));
             actions.push(("Restart", super::setup::plan::Intent::Restart));
+            actions.push(("Uninstall", super::setup::plan::Intent::Uninstall));
         }
         ServiceState::RunningSystemd => {
             actions.push(("Restart", super::setup::plan::Intent::Restart));
@@ -1402,20 +1403,22 @@ fn show_service_inventory_card(
             if service.unit_enabled != Some(true) {
                 actions.push(("Enable at boot", super::setup::plan::Intent::EnableAtBoot));
             }
+            actions.push(("Uninstall", super::setup::plan::Intent::Uninstall));
         }
-        ServiceState::RunningManual | ServiceState::Unknown => {}
+        ServiceState::RunningManual => {
+            actions.push(("Uninstall", super::setup::plan::Intent::Uninstall));
+        }
+        ServiceState::Unknown => {}
     }
-    if protocol == DesktopProtocol::Rdp {
-        ui.horizontal_wrapped(|ui| {
-            for (title, intent) in actions {
-                if super::setup::plan::build_plan(report, protocol, intent).is_ok()
-                    && ui.button(title).clicked()
-                {
-                    requested = Some(intent);
-                }
+    ui.horizontal_wrapped(|ui| {
+        for (title, intent) in actions {
+            if super::setup::plan::build_plan(report, protocol, intent).is_ok()
+                && ui.button(title).clicked()
+            {
+                requested = Some(intent);
             }
-        });
-    }
+        }
+    });
     requested
 }
 

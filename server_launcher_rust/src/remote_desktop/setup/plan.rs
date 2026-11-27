@@ -8,6 +8,7 @@ pub(crate) enum Intent {
     Stop,
     Restart,
     InstallAndStart,
+    Uninstall,
     EnableAtBoot,
     RestrictToLocalhost,
     RestoreState,
@@ -44,11 +45,30 @@ pub(crate) fn build_plan(
     if report.init_system != Some(InitSystem::Systemd) {
         return Err("Automated service actions require a detected systemd host.");
     }
-    if protocol != DesktopProtocol::Rdp {
-        return Err("TigerVNC actions remain manual until the per-user service mapping is verified.");
+    if protocol == DesktopProtocol::Vnc && intent == Intent::Uninstall {
+        if report.package_manager.as_deref() != Some("apt") {
+            return Err("Automated TigerVNC uninstall requires a detected APT package manager.");
+        }
+        return Ok(ActionPlan {
+            summary: "Uninstall TigerVNC",
+            steps: vec![ActionStep {
+                id: "uninstall",
+                title: "Uninstall TigerVNC",
+                command: "sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 remove -y tigervnc-standalone-server",
+                effect: "Removes the tigervnc-standalone-server package.",
+                needs_root: true,
+                undo_note: "Reinstall with apt-get install tigervnc-standalone-server.",
+            }],
+            warnings: vec!["Removing the package does not delete user ~/.vnc configuration files."],
+        });
     }
-    if intent == Intent::InstallAndStart && report.package_manager.as_deref() != Some("apt") {
-        return Err("Automated xrdp installation requires a detected APT package manager.");
+    if protocol != DesktopProtocol::Rdp {
+        return Err("TigerVNC start/stop/restart/config actions remain manual until per-user service mapping and password setup are verified.");
+    }
+    if matches!(intent, Intent::InstallAndStart | Intent::Uninstall)
+        && report.package_manager.as_deref() != Some("apt")
+    {
+        return Err("Automated xrdp package actions require a detected APT package manager.");
     }
 
     let (summary, commands): (
@@ -90,6 +110,23 @@ pub(crate) fn build_plan(
                 "sudo systemctl enable xrdp.service",
                 "Enables xrdp for future boots; does not start it now.",
             )],
+        ),
+        Intent::Uninstall => (
+            "Uninstall xrdp",
+            &[
+                (
+                    "stop",
+                    "Stop xrdp",
+                    "sudo systemctl stop xrdp.service",
+                    "Stops the running xrdp service before removal.",
+                ),
+                (
+                    "uninstall",
+                    "Uninstall xrdp",
+                    "sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 remove -y xrdp",
+                    "Removes the xrdp package.",
+                ),
+            ],
         ),
         Intent::InstallAndStart => (
             "Install and start xrdp",

@@ -15,9 +15,20 @@ fn choice<T: Copy + PartialEq>(ui: &mut Ui, label: &str, value: &mut T, items: &
     });
 }
 
-fn text(ui: &mut Ui, label: &str, value: &mut String) {
-    ui.label(label);
-    ui.add(TextEdit::singleline(value).desired_width(f32::INFINITY));
+fn inline_text(ui: &mut Ui, label: &str, value: &mut String) {
+    ui.horizontal(|ui| {
+        ui.add_sized([112.0, ui.spacing().interact_size.y], egui::Label::new(label));
+        ui.add(TextEdit::singleline(value).desired_width(f32::INFINITY));
+    });
+}
+
+fn section_header(ui: &mut Ui, icon: &str, title: &str) {
+    ui.add_space(5.0);
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(icon).color(ui.visuals().hyperlink_color));
+        ui.label(egui::RichText::new(title).strong());
+    });
+    ui.separator();
 }
 
 fn clipboard(ui: &mut Ui, value: &mut Clipboard) {
@@ -104,15 +115,16 @@ pub(crate) fn rdp(
     let mut profile = draft.clone().unwrap_or_else(|| new_rdp_profile(defaults));
     ui.checkbox(&mut profile.enabled, "Enable RDP");
     ui.add_enabled_ui(profile.enabled, |ui| {
+        section_header(ui, crate::lucide::SERVER, "Connection & security");
         ui.horizontal(|ui| {
             ui.label("Port *");
             ui.add(DragValue::new(&mut profile.port).range(1..=u16::MAX));
         });
         ui.checkbox(&mut profile.same_username_as_ssh, "Same username as SSH");
         ui.add_enabled_ui(!profile.same_username_as_ssh, |ui| {
-            text(ui, "Username *", &mut profile.username);
+            inline_text(ui, "Username *", &mut profile.username);
         });
-        text(ui, "Domain", &mut profile.domain);
+        inline_text(ui, "Domain", &mut profile.domain);
         choice(
             ui,
             "Security",
@@ -123,7 +135,8 @@ pub(crate) fn rdp(
                 (RdpSecurity::Tls, "TLS"),
             ],
         );
-        ui.label("Auto allows NLA or encrypted TLS. Unencrypted legacy RDP is disabled.");
+        ui.label("Auto negotiates NLA or TLS. Unencrypted legacy RDP is disabled.");
+        section_header(ui, crate::lucide::MONITOR, "Display & performance");
         choice(
             ui,
             "Display painting",
@@ -186,6 +199,7 @@ pub(crate) fn rdp(
         }
         ui.checkbox(&mut profile.multi_monitor, "Two side-by-side remote monitors");
         ui.label("Uses the selected resolution as a combined display; server support is required.");
+        section_header(ui, crate::lucide::KEYBOARD, "Input & sharing");
         ui.collapsing("Input", |ui| {
             ui.checkbox(&mut profile.view_only, "Start in view-only mode");
             ui.checkbox(&mut profile.left_handed_mouse, "Left-handed mouse support");
@@ -216,6 +230,7 @@ pub(crate) fn rdp(
             ui.label("The remote PC can receive audio from your selected microphone while connected.");
         }
         clipboard(ui, &mut profile.clipboard);
+        section_header(ui, crate::lucide::FOLDER, "Devices & session");
         ui.collapsing("Drive redirection", |ui| {
             ui.label("Shared folders are visible to the remote PC for this session.");
             if ui.button("Add folder…").clicked() {
@@ -260,7 +275,7 @@ pub(crate) fn rdp(
         });
         ui.checkbox(&mut profile.admin_session, "Administrative session");
         ui.label("Requests the server's administrative session; server policy and permissions apply.");
-        text(ui, "RD Gateway host (optional)", &mut profile.gateway);
+        inline_text(ui, "RD Gateway host", &mut profile.gateway);
         ui.label("Uses the RDP username and password for gateway sign-in. Gateway TLS certificates must be system-trusted.");
         ui.add_enabled_ui(profile.gateway.trim().is_empty(), |ui| {
             ui.checkbox(&mut profile.tunnel_via_ssh, "Tunnel via SSH");
@@ -332,12 +347,17 @@ pub(crate) fn vnc(
         .unwrap_or_else(|| new_vnc_profile(host, defaults));
     ui.checkbox(&mut profile.enabled, "Enable VNC");
     ui.add_enabled_ui(profile.enabled, |ui| {
-        text(ui, "Port or display *", port_text);
+        section_header(ui, crate::lucide::SERVER, "Connection");
+        inline_text(ui, "Port or display *", port_text);
         if let Some(port) = vnc_port(port_text, host) {
             profile.port = port;
         }
-        text(ui, "Username (optional)", &mut profile.username);
-        ui.label("Username/password login requires VeNCrypt Plain and Tunnel via SSH. Direct plaintext credentials are blocked.");
+        inline_text(ui, "Username", &mut profile.username);
+        ui.label(format!(
+            "{} Username/password auth requires VeNCrypt Plain through an SSH tunnel; direct plaintext auth is blocked.",
+            crate::lucide::SHIELD
+        ));
+        section_header(ui, crate::lucide::ACTIVITY, "Display & clipboard");
         choice(ui, "Quality", &mut profile.quality, &[
             (Quality::Auto, "Auto"),
             (Quality::Best, "Best"),
@@ -347,7 +367,7 @@ pub(crate) fn vnc(
         color_depth(ui, &mut profile.color_depth);
         clipboard(ui, &mut profile.clipboard);
 
-        ui.collapsing("Advanced", |ui| {
+        ui.collapsing(format!("{} Advanced", crate::lucide::SLIDERS), |ui| {
             ui.label("Encoding priority (first supported encoding is preferred)");
             for i in 0..profile.encodings.len() {
                 let encoding = profile.encodings[i];
@@ -387,7 +407,7 @@ pub(crate) fn vnc(
             ui.label("TCP user timeout is available for direct Linux connections only.");
         });
 
-        ui.collapsing("Behavior", |ui| {
+        ui.collapsing(format!("{} Behavior", crate::lucide::SPARKLES), |ui| {
             ui.checkbox(&mut profile.view_only, "View only");
             ui.checkbox(&mut profile.shared, "Shared session");
             ui.checkbox(&mut profile.show_remote_cursor, "Show remote cursor");
@@ -400,7 +420,7 @@ pub(crate) fn vnc(
             ]);
         });
 
-        ui.collapsing("SSH Tunnel", |ui| {
+        ui.collapsing(format!("{} SSH Tunnel", crate::lucide::LOCK), |ui| {
             ui.checkbox(&mut profile.tunnel_via_ssh, "Tunnel via SSH");
             if profile.tunnel_via_ssh {
                 ui.label("The VNC connection is carried through this host's SSH connection.");
@@ -411,7 +431,7 @@ pub(crate) fn vnc(
             ui.label("TCP user timeout only applies to direct connections, not SSH tunnels.");
         });
 
-        ui.collapsing("Notes", |ui| {
+        ui.collapsing(format!("{} Notes", crate::lucide::INFO), |ui| {
             ui.label("Classic VNC clipboard supports Latin-1 text only. Click the remote desktop before pasting.");
             ui.label("Server bell messages are ignored. Dynamic resolution depends on server support.");
         });

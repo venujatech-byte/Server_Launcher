@@ -18,6 +18,35 @@ use std::{
 };
 use zeroize::Zeroizing;
 
+fn toolbar_icon_button(
+    ui: &mut egui::Ui,
+    icon: &str,
+    tooltip: &str,
+    enabled: bool,
+) -> egui::Response {
+    ui.add_enabled(
+        enabled,
+        egui::Button::new(icon).min_size(egui::vec2(30.0, 26.0)),
+    )
+    .on_hover_text(tooltip)
+}
+
+fn toolbar_toggle_button(
+    ui: &mut egui::Ui,
+    icon: &str,
+    tooltip: &str,
+    selected: bool,
+    enabled: bool,
+) -> egui::Response {
+    ui.add_enabled(
+        enabled,
+        egui::Button::new(icon)
+            .selected(selected)
+            .min_size(egui::vec2(30.0, 26.0)),
+    )
+    .on_hover_text(tooltip)
+}
+
 pub(crate) fn run(
     host_id: &str,
     protocol: DesktopProtocol,
@@ -1079,15 +1108,24 @@ impl eframe::App for Viewer {
         }
         let toolbar = |ui: &mut egui::Ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.label(if self.test_pattern {
+                let status_text = if self.test_pattern {
                     "Test pattern"
                 } else if connected {
                     &status
                 } else {
                     "Disconnected"
-                });
+                };
+                let status_icon = if self.test_pattern {
+                    crate::lucide::IMAGE
+                } else if connected {
+                    crate::lucide::CIRCLE_DOT
+                } else {
+                    crate::lucide::ALERT_TRIANGLE
+                };
+                ui.label(format!("{status_icon} {status_text}"));
+                ui.separator();
                 egui::ComboBox::from_id_salt("remote_scaling")
-                    .selected_text(scale_label(self.scaling))
+                    .selected_text(format!("{} {}", crate::lucide::MAXIMIZE, scale_label(self.scaling)))
                     .show_ui(ui, |ui| {
                         for scale in [Scaling::Fit, Scaling::Native, Scaling::Fill] {
                             ui.selectable_value(&mut self.scaling, scale, scale_label(scale));
@@ -1095,15 +1133,18 @@ impl eframe::App for Viewer {
                     });
                 ui.add_enabled_ui(connected && !self.view_only, |ui| {
                     let keyboard_capture = self.capture.keyboard_capture();
-                    let label = if keyboard_capture {
-                        format!("{} Keyboard → Remote", crate::lucide::KEYBOARD)
-                    } else {
-                        format!("{} Keyboard", crate::lucide::KEYBOARD)
-                    };
-                    if ui
-                        .selectable_label(keyboard_capture, label)
-                        .on_hover_text("Forwards keyboard input while this viewer is focused. The desktop may reserve shortcuts such as Super or Alt+Tab; use Send keys if they stay local. The Right Ctrl host key remains available for viewer shortcuts.")
-                        .clicked()
+                    if toolbar_toggle_button(
+                        ui,
+                        crate::lucide::KEYBOARD,
+                        if keyboard_capture {
+                            "Keyboard input is captured by the remote viewer"
+                        } else {
+                            "Capture keyboard input for the remote viewer"
+                        },
+                        keyboard_capture,
+                        true,
+                    )
+                    .clicked()
                     {
                         if let Some(connection) = &self.connection {
                             let enable = !keyboard_capture;
@@ -1187,14 +1228,23 @@ impl eframe::App for Viewer {
                         }
                     }
                 }
-                if ui.checkbox(&mut self.show_fps, "Show live FPS").changed() {
+                if toolbar_toggle_button(
+                    ui,
+                    crate::lucide::ACTIVITY,
+                    "Show live remote display FPS",
+                    self.show_fps,
+                    true,
+                )
+                .clicked()
+                {
+                    self.show_fps = !self.show_fps;
                     ctx.request_repaint();
                 }
                 if self.show_fps && connected {
-                    ui.label(format!("Remote FPS  {:.1}", self.fps));
+                    ui.label(format!("{:.1} FPS", self.fps));
                 }
                 ui.add_enabled_ui(connected, |ui| {
-                    ui.menu_button("Stats", |ui| {
+                    let stats = ui.menu_button(crate::lucide::INFO, |ui| {
                         ui.label(self.protocol.label());
                         ui.label(&status);
                         if let Some(texture) = &self.texture {
@@ -1233,13 +1283,17 @@ impl eframe::App for Viewer {
                             ui.label(format!("Remote display updates  {:.1} FPS", self.fps));
                         }
                     });
+                    stats.response.on_hover_text("Connection statistics");
                 });
                 if self.protocol == DesktopProtocol::Rdp {
                     if let Some(connection) = &self.connection {
                         let mut connection = connection.lock().unwrap();
                         let response = ui.add_enabled(
                             connected && connection.rdp_resize_supported,
-                            egui::Checkbox::new(&mut self.dynamic_resize, "Resize remote to fit"),
+                            egui::Checkbox::new(
+                                &mut self.dynamic_resize,
+                                format!("{} Fit", crate::lucide::SCREEN_SHARE),
+                            ),
                         );
                         if response.changed() {
                             connection.rdp_resize_enabled = self.dynamic_resize;
@@ -1258,7 +1312,7 @@ impl eframe::App for Viewer {
                             .add_enabled_ui(
                                 connected && !self.view_only && connection.vnc_screen.is_some(),
                                 |ui| {
-                                    ui.menu_button("Resolution", |ui| {
+                                    ui.menu_button(crate::lucide::MONITOR, |ui| {
                                         for size in [
                                             [1024, 768],
                                             [1280, 720],
@@ -1283,7 +1337,8 @@ impl eframe::App for Viewer {
                                     .response
                                 },
                             )
-                            .inner;
+                            .inner
+                            .on_hover_text("Change remote display resolution");
                         if connection.vnc_screen.is_none() {
                             menu.on_disabled_hover_text(
                                 "The VNC server must support single-screen remote resizing.",
@@ -1291,13 +1346,13 @@ impl eframe::App for Viewer {
                         }
                     }
                 }
-                if ui
-                    .button(if fullscreen {
-                        "Exit fullscreen"
-                    } else {
-                        "Fullscreen"
-                    })
-                    .clicked()
+                if toolbar_icon_button(
+                    ui,
+                    if fullscreen { crate::lucide::MINIMIZE } else { crate::lucide::MAXIMIZE },
+                    if fullscreen { "Exit fullscreen" } else { "Enter fullscreen" },
+                    true,
+                )
+                .clicked()
                 {
                     self.fullscreen = !fullscreen;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
@@ -1309,8 +1364,10 @@ impl eframe::App for Viewer {
                             && self.receive_clipboard
                             && remote_clipboard_file_count > 0,
                         egui::Button::new(format!(
-                            "Download files ({remote_clipboard_file_count})"
-                        )),
+                            "{} {remote_clipboard_file_count}",
+                            crate::lucide::DOWNLOAD
+                        ))
+                        .min_size(egui::vec2(30.0, 26.0)),
                     );
                     if response
                         .on_hover_text("Save files currently offered by the remote clipboard.")
@@ -1330,10 +1387,11 @@ impl eframe::App for Viewer {
                     }
                     let response = ui.add_enabled(
                         connected && !self.view_only && self.send_clipboard,
-                        egui::Button::new("Share files"),
+                        egui::Button::new(crate::lucide::CLIPBOARD)
+                            .min_size(egui::vec2(30.0, 26.0)),
                     );
                     if response
-                        .on_hover_text("Choose files to make them available on the remote clipboard.")
+                        .on_hover_text("Share files through the remote clipboard")
                         .clicked()
                     {
                         if let Some(paths) = rfd::FileDialog::new()
@@ -1353,49 +1411,71 @@ impl eframe::App for Viewer {
                 if !connected && self.texture.is_some() && !self.test_pattern {
                     ui.label(&status);
                 }
-                let screenshot_label = if self.screenshot_queued {
-                    "Waiting for frame…"
+                let screenshot_tooltip = if self.screenshot_queued {
+                    "Waiting for a remote frame"
                 } else if self.screenshot.is_some() {
-                    "Saving…"
+                    "Saving screenshot"
                 } else {
-                    "Screenshot"
+                    "Save screenshot"
                 };
-                if ui
-                    .add_enabled(
-                        self.texture.is_some()
-                            && self.screenshot.is_none()
-                            && !self.screenshot_queued,
-                        egui::Button::new(screenshot_label),
-                    )
-                    .clicked()
+                if toolbar_icon_button(
+                    ui,
+                    crate::lucide::IMAGE,
+                    screenshot_tooltip,
+                    self.texture.is_some() && self.screenshot.is_none() && !self.screenshot_queued,
+                )
+                .clicked()
                 {
                     self.take_screenshot(ctx);
                 }
                 if let Some(recorder) = &self.recording {
+                    ui.label(
+                        egui::RichText::new(format!("{} REC", crate::lucide::CIRCLE_DOT))
+                            .color(ui.visuals().error_fg_color),
+                    );
                     let pause = if recorder.paused() {
                         "Resume recording"
                     } else {
                         "Pause recording"
                     };
-                    if ui.button(pause).clicked() {
+                    if toolbar_icon_button(
+                        ui,
+                        if recorder.paused() { crate::lucide::PLAY } else { crate::lucide::PAUSE },
+                        pause,
+                        true,
+                    )
+                    .clicked()
+                    {
                         recorder.toggle_pause();
                         ctx.request_repaint();
                     }
-                    if ui.button("Stop recording").clicked() {
+                    if toolbar_icon_button(ui, crate::lucide::STOP, "Stop recording", true).clicked() {
                         recorder.stop();
                     }
                 } else if ui
                     .add_enabled(
                         connected && self.texture.is_some(),
-                        egui::Button::new("Record"),
+                        egui::Button::new(crate::lucide::CIRCLE_DOT)
+                            .min_size(egui::vec2(30.0, 26.0)),
                     )
+                    .on_hover_text("Start recording")
                     .clicked()
                 {
                     self.toggle_recording(ctx);
                 }
-                ui.checkbox(&mut self.copy_screenshot, "Copy screenshot");
+                if toolbar_toggle_button(
+                    ui,
+                    crate::lucide::COPY,
+                    "Copy screenshots to the clipboard",
+                    self.copy_screenshot,
+                    true,
+                )
+                .clicked()
+                {
+                    self.copy_screenshot = !self.copy_screenshot;
+                }
                 ui.add_enabled_ui(connected && !self.view_only, |ui| {
-                    ui.menu_button("Send keys", |ui| {
+                    let send_keys = ui.menu_button(crate::lucide::KEY, |ui| {
                         let shortcuts: &[(&str, &[u32])] = &[
                             ("Ctrl+Alt+Del", &[0xffe3, 0xffe9, 0xffff]),
                             ("Alt+Tab", &[0xffe9, 0xff09]),
@@ -1425,12 +1505,19 @@ impl eframe::App for Viewer {
                             }
                         });
                     });
+                    send_keys
+                        .response
+                        .on_hover_text("Send a keyboard shortcut to the remote PC");
                 });
-                let view_only_response = ui.add_enabled(
+                let view_only_response = toolbar_toggle_button(
+                    ui,
+                    if self.view_only { crate::lucide::EYE } else { crate::lucide::EYE_OFF },
+                    if self.view_only { "Disable view-only mode" } else { "Enable view-only mode" },
+                    self.view_only,
                     connected,
-                    egui::Checkbox::new(&mut self.view_only, "View only"),
                 );
-                if view_only_response.changed() {
+                if view_only_response.clicked() {
+                    self.view_only = !self.view_only;
                     #[cfg(target_os = "linux")]
                     {
                         self.native_keyboard.take();
@@ -1452,18 +1539,29 @@ impl eframe::App for Viewer {
                     }
                 }
                 if connected {
-                    let label = if self.toolbar_pinned {
-                        "Unpin toolbar"
-                    } else {
-                        "Pin toolbar"
-                    };
-                    if ui.button(label).clicked() {
+                    let label = if self.toolbar_pinned { "Unpin" } else { "Pin" };
+                    if ui
+                        .add(egui::Button::new(label).selected(self.toolbar_pinned))
+                        .on_hover_text(if self.toolbar_pinned {
+                            "Unpin toolbar"
+                        } else {
+                            "Keep toolbar visible"
+                        })
+                        .clicked()
+                    {
                         self.toolbar_pinned = !self.toolbar_pinned;
                         self.toolbar_until = Some(now + Duration::from_secs(2));
                         ctx.request_repaint();
                     }
                 }
-                if ui.button("Disconnect").clicked() {
+                if toolbar_icon_button(
+                    ui,
+                    crate::lucide::LOG_OUT,
+                    "Disconnect remote desktop",
+                    true,
+                )
+                .clicked()
+                {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });

@@ -107,10 +107,16 @@ pub(crate) fn build_plan(
                     "Installs xrdp and dependencies; automatic undo does not remove packages.",
                 ),
                 (
-                    "enable-start",
-                    "Enable and start xrdp",
-                    "sudo systemctl enable --now xrdp.service",
-                    "Enables xrdp at boot and starts it now.",
+                    "start",
+                    "Start xrdp",
+                    "sudo systemctl start xrdp.service",
+                    "Starts xrdp now; boot behavior is unchanged.",
+                ),
+                (
+                    "enable",
+                    "Enable xrdp at boot",
+                    "sudo systemctl enable xrdp.service",
+                    "Enables xrdp for future boots; this step does not start it.",
                 ),
             ],
         ),
@@ -139,7 +145,7 @@ pub(crate) fn build_plan(
                 needs_root: true,
                 undo_note: match *id {
                     "start" | "restart" => "The service can be stopped again.",
-                    "enable" | "enable-start" => "The service can be disabled again.",
+                    "enable" => "The service can be disabled again.",
                     "install" => "Package removal is not part of automatic undo.",
                     _ => "No automatic undo is needed.",
                 },
@@ -235,13 +241,15 @@ mod tests {
             Intent::InstallAndStart,
         )
         .unwrap();
-        assert_eq!(plan.steps.len(), 3);
+        assert_eq!(plan.steps.len(), 4);
         assert_eq!(plan.steps[0].command, "sudo apt-get update");
         assert_eq!(plan.steps[1].command, "sudo apt-get install -y xrdp");
-        assert_eq!(plan.steps[2].command, "sudo systemctl enable --now xrdp.service");
+        assert_eq!(plan.steps[2].command, "sudo systemctl start xrdp.service");
+        assert_eq!(plan.steps[3].command, "sudo systemctl enable xrdp.service");
         assert!(plan.steps[0].effect.contains("package metadata"));
         assert!(plan.steps[1].effect.contains("does not remove packages"));
-        assert!(plan.steps[2].effect.contains("starts it now"));
+        assert!(plan.steps[2].effect.contains("Starts xrdp now"));
+        assert!(plan.steps[3].effect.contains("future boots"));
         assert!(plan.steps.iter().all(|step| step.needs_root));
     }
 

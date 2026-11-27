@@ -10,6 +10,7 @@ pub(crate) enum Intent {
     InstallAndStart,
     EnableAtBoot,
     RestrictToLocalhost,
+    RestoreState,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -81,6 +82,7 @@ pub(crate) fn build_plan(
         Intent::RestrictToLocalhost => {
             return Err("xrdp listen-address configuration is not verified; use the manual instructions.")
         }
+        Intent::RestoreState => return Err("Use the reviewed restore-state planner."),
     };
 
     if intent != Intent::InstallAndStart && report.rdp.installed != Some(true) {
@@ -119,6 +121,55 @@ pub(crate) fn build_plan(
         .flatten()
         .collect(),
     })
+}
+
+pub(crate) fn build_restore_plan(
+    prior_active: Option<bool>,
+    prior_enabled: Option<bool>,
+    current_active: Option<bool>,
+    current_enabled: Option<bool>,
+) -> Result<ActionPlan, &'static str> {
+    let (Some(prior_active), Some(prior_enabled), Some(current_active), Some(current_enabled)) =
+        (prior_active, prior_enabled, current_active, current_enabled)
+    else {
+        return Err("The previous or current xrdp service state is unknown; Undo is unavailable.");
+    };
+
+    let mut steps = Vec::new();
+    if current_active != prior_active {
+        let (id, title, command) = if prior_active {
+            ("restore-start", "Restore running state", "sudo systemctl start xrdp.service")
+        } else {
+            ("restore-stop", "Restore stopped state", "sudo systemctl stop xrdp.service")
+        };
+        steps.push(restore_step(id, title, command));
+    }
+    if current_enabled != prior_enabled {
+        let (id, title, command) = if prior_enabled {
+            ("restore-enable", "Restore enabled-at-boot state", "sudo systemctl enable xrdp.service")
+        } else {
+            ("restore-disable", "Restore disabled-at-boot state", "sudo systemctl disable xrdp.service")
+        };
+        steps.push(restore_step(id, title, command));
+    }
+    if steps.is_empty() {
+        return Err("xrdp already matches the state recorded before the last action.");
+    }
+    Ok(ActionPlan {
+        summary: "Restore the xrdp state observed before the last action",
+        steps,
+        warnings: Vec::new(),
+    })
+}
+
+fn restore_step(id: &'static str, title: &'static str, command: &'static str) -> ActionStep {
+    ActionStep {
+        id,
+        title,
+        command,
+        needs_root: true,
+        undo_note: "Restores the observed state from before the app action.",
+    }
 }
 
 #[cfg(test)]
@@ -196,5 +247,15 @@ mod tests {
             Intent::RestrictToLocalhost
         )
         .is_err());
+    }
+
+    #[test]
+    fn restore_plan_only_contains_fixed_changes_needed_for_known_prior_state() {
+        let plan = build_restore_plan(Some(false), Some(true), Some(true), Some(false)).unwrap();
+        assert_eq!(plan.steps.len(), 2);
+        assert_eq!(plan.steps[0].command, "sudo systemctl stop xrdp.service");
+        assert_eq!(plan.steps[1].command, "sudo systemctl enable xrdp.service");
+        assert!(build_restore_plan(None, Some(true), Some(true), Some(false)).is_err());
+        assert!(build_restore_plan(Some(true), Some(true), Some(true), Some(true)).is_err());
     }
 }

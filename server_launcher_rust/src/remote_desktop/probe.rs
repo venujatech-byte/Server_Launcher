@@ -25,6 +25,10 @@ struct PendingAction {
 pub(crate) struct ServerDetection {
     pending: Option<(String, std::sync::mpsc::Receiver<DetectionResult>)>,
     last: Option<(String, DetectionResult, Instant)>,
+    history_cache: Option<(
+        String,
+        Result<Vec<super::setup::history::HistoryRecord>, String>,
+    )>,
     action_review: Option<PendingAction>,
     action_password: zeroize::Zeroizing<String>,
     action_pending: Option<std::sync::mpsc::Receiver<super::setup::exec::ActionEvent>>,
@@ -49,6 +53,16 @@ impl ServerDetection {
         timeout: Duration,
     ) {
         let key = detection_key(host);
+        if !self
+            .history_cache
+            .as_ref()
+            .is_some_and(|(cached_key, _)| cached_key == &key)
+        {
+            self.history_cache = Some((
+                key.clone(),
+                super::setup::history::recent_for_host(host),
+            ));
+        }
         let events = self
             .action_pending
             .as_ref()
@@ -82,6 +96,7 @@ impl ServerDetection {
                 super::setup::exec::ActionEvent::Finished(result) => {
                     self.action_pending = None;
                     self.action_cancel = None;
+                    self.history_cache = None;
                     let rejected = matches!(&result, Err(error) if error.starts_with("Sudo password was rejected."));
                     let retry = if rejected {
                         self.action_review.as_mut().is_some_and(|action| {
@@ -183,6 +198,7 @@ impl ServerDetection {
             }
         });
         let mut requested_intent = None;
+        let mut requested_undo = None;
         let mut request_manual_scan = false;
         let has_current_result = self
             .last
@@ -204,6 +220,19 @@ impl ServerDetection {
                         protocol,
                         port,
                         &mut request_manual_scan,
+                    );
+                    let history = self
+                        .history_cache
+                        .as_ref()
+                        .filter(|(history_key, _)| history_key == &key)
+                        .map(|(_, result)| result);
+                    requested_undo = show_service_history(
+                        ui,
+                        host,
+                        protocol,
+                        report,
+                        history,
+                        self.action_review.is_none() && self.action_pending.is_none(),
                     );
                 }
                 Err(error) => {
@@ -233,6 +262,40 @@ impl ServerDetection {
                         prior_unit_active: report.service(protocol).unit_active,
                         prior_unit_enabled: report.service(protocol).unit_enabled,
                     });
+                }
+            }
+        }
+
+        if let Some(record) = requested_undo {
+            if protocol == DesktopProtocol::Rdp {
+                if let Some((_, Ok(report), _)) =
+                    self.last.as_ref().filter(|(tested, _, _)| tested == &key)
+                {
+                    let service = report.service(protocol);
+                    if service.unit_present == Some(true) {
+                        if let Ok(plan) = super::setup::plan::build_restore_plan(
+                            record.prior_unit_active,
+                            record.prior_unit_enabled,
+                            service.unit_active,
+                            service.unit_enabled,
+                        ) {
+                            self.action_password.clear();
+                            self.action_review = Some(PendingAction {
+                                host: host.clone(),
+                                key: key.clone(),
+                                protocol,
+                                plan,
+                                intent: super::setup::plan::Intent::RestoreState,
+                                needs_password: report.uid != Some(0)
+                                    && report.passwordless_sudo != Some(true),
+                                sudo_available: report.uid == Some(0)
+                                    || report.sudo_available != Some(false),
+                                password_attempts: 0,
+                                prior_unit_active: service.unit_active,
+                                prior_unit_enabled: service.unit_enabled,
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -746,6 +809,76 @@ fn show_service_inventory(
         );
     });
     requested
+}
+
+fn show_service_history(
+    ui: &mut egui::Ui,
+    host: &crate::config::SshRemoteHost,
+    protocol: DesktopProtocol,
+    report: &super::setup::model::ServiceInventoryReport,
+    history: Option<&Result<Vec<super::setup::history::HistoryRecord>, String>>,
+    allow_undo: bool,
+) -> Option<super::setup::history::HistoryRecord> {
+    let records = match history {
+        Some(Ok(records)) => records
+            .iter()
+            .filter(|record| record.protocol == protocol.label())
+            .collect::<Vec<_>>(),
+        Some(Err(error)) => {
+            egui::CollapsingHeader::new("Local service history")
+                .id_salt(("service_history_error", protocol as u8))
+                .show(ui, |ui| {
+                    ui.colored_label(
+                        ui.visuals().warn_fg_color,
+                        format!("History unavailable: {error}"),
+                    );
+                });
+            return None;
+        }
+        None => return None,
+    };
+    if records.is_empty() {
+        return None;
+    }
+
+    let mut requested_undo = None;
+    egui::CollapsingHeader::new("Recent service changes")
+        .id_salt(("service_history", protocol as u8))
+        .default_open(false)
+        .show(ui, |ui| {
+            for (index, record) in records.iter().enumerate() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(&record.action);
+                    ui.weak(&record.at);
+                    ui.weak(if record.completed { "Complete" } else { "Partial" });
+                    ui.weak(format!("{} step(s)", record.completed_steps.len()));
+                    if index == 0 && protocol == DesktopProtocol::Rdp {
+                        let service = report.service(protocol);
+                        let undo_available =
+                            service.unit_present == Some(true)
+                                && super::setup::plan::build_restore_plan(
+                                    record.prior_unit_active,
+                                    record.prior_unit_enabled,
+                                    service.unit_active,
+                                    service.unit_enabled,
+                                )
+                                .is_ok();
+                        if allow_undo
+                            && ui
+                                .add_enabled(undo_available, egui::Button::new("Undo"))
+                                .on_disabled_hover_text(
+                                    "Undo needs a known prior state and a current systemd status.",
+                                )
+                                .clicked()
+                        {
+                            requested_undo = Some((**record).clone());
+                        }
+                    }
+                });
+            }
+            ui.weak(format!("History for {} · {}@{}:{}", host.name, host.user, host.host, host.port));
+        });
+    requested_undo
 }
 
 fn show_service_scan_placeholder(ui: &mut egui::Ui, protocol: DesktopProtocol) {

@@ -20,19 +20,19 @@ struct HistoryFile {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct HistoryRecord {
-    at: String,
-    host_id: String,
-    host_name: String,
-    host: String,
-    ssh_port: u16,
-    ssh_user: String,
-    protocol: String,
-    action: String,
-    prior_unit_active: Option<bool>,
-    prior_unit_enabled: Option<bool>,
-    completed_steps: Vec<String>,
-    completed: bool,
+pub(crate) struct HistoryRecord {
+    pub at: String,
+    pub host_id: String,
+    pub host_name: String,
+    pub host: String,
+    pub ssh_port: u16,
+    pub ssh_user: String,
+    pub protocol: String,
+    pub action: String,
+    pub prior_unit_active: Option<bool>,
+    pub prior_unit_enabled: Option<bool>,
+    pub completed_steps: Vec<String>,
+    pub completed: bool,
 }
 
 pub(crate) fn record_action(
@@ -70,6 +70,41 @@ pub(crate) fn record_action(
 
 fn limited(value: &str, max_chars: usize) -> String {
     value.chars().take(max_chars).collect()
+}
+
+pub(crate) fn recent_for_host(host: &SshRemoteHost) -> Result<Vec<HistoryRecord>, String> {
+    let path = history_path()?;
+    let _guard = HISTORY_LOCK
+        .lock()
+        .map_err(|_| "The local service history is unavailable.".to_string())?;
+    let metadata = match fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("Could not read local service history: {error}")),
+    };
+    if metadata.len() > MAX_FILE_BYTES {
+        return Err("The local service history is larger than its safety limit.".into());
+    }
+    let history: HistoryFile = serde_json::from_slice(
+        &fs::read(path)
+            .map_err(|error| format!("Could not read local service history: {error}"))?,
+    )
+    .map_err(|error| format!("Could not read local service history: {error}"))?;
+    if history.version != 1 {
+        return Err("The local service history uses an unsupported version.".into());
+    }
+    Ok(history
+        .records
+        .into_iter()
+        .filter(|record| {
+            record.host_id == host.id
+                && record.host == host.host
+                && record.ssh_port == host.port
+                && record.ssh_user == host.user
+        })
+        .rev()
+        .take(10)
+        .collect())
 }
 
 fn history_path() -> Result<PathBuf, String> {

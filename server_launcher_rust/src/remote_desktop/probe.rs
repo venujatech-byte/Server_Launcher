@@ -234,6 +234,17 @@ fn show_service_inventory(
     protocol: DesktopProtocol,
     configured_port: u16,
 ) {
+    ui.group(|ui| {
+        show_service_inventory_card(ui, report, protocol, configured_port);
+    });
+}
+
+fn show_service_inventory_card(
+    ui: &mut egui::Ui,
+    report: &super::setup::model::ServiceInventoryReport,
+    protocol: DesktopProtocol,
+    configured_port: u16,
+) {
     use super::setup::model::{Exposure, InitSystem, ServiceState};
 
     let service = report.service(protocol);

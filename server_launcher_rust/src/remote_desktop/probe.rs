@@ -411,7 +411,11 @@ impl ServerDetection {
         let (_, result, _) = self.last.as_ref().filter(|(tested, _, scanned)| {
             tested == &key && scanned.elapsed() < Duration::from_secs(60)
         })?;
-        find_port_suggestion(result.as_ref().ok()?.service(protocol), configured_port)
+        find_port_suggestion(
+            result.as_ref().ok()?.service(protocol),
+            protocol,
+            configured_port,
+        )
     }
 
     pub(crate) fn take_action_port_update(
@@ -433,7 +437,7 @@ impl ServerDetection {
                 DesktopProtocol::Rdp => host.rdp.as_ref().map_or(3389, |profile| profile.port),
                 DesktopProtocol::Vnc => host.vnc.as_ref().map_or(5900, |profile| profile.port),
             };
-            find_port_suggestion(report.service(protocol), configured)
+            find_port_suggestion(report.service(protocol), protocol, configured)
         });
         self.action_port_update = None;
         port
@@ -538,7 +542,7 @@ fn detect_servers(
 ) -> DetectionResult {
     let mut report = super::setup::detect::scan(host, timeout)?;
     if let Some(profile) = host.rdp.as_ref().filter(|profile| profile.enabled) {
-        if let Some(port) = detected_port(&report.rdp, profile.port) {
+        if let Some(port) = detected_port(&report.rdp, DesktopProtocol::Rdp, profile.port) {
             let mut ssh_host = host.clone();
             ssh_host.password.clear();
             let request = ProbeRequest {
@@ -555,7 +559,7 @@ fn detect_servers(
         }
     }
     if let Some(profile) = host.vnc.as_ref().filter(|profile| profile.enabled) {
-        if let Some(port) = detected_port(&report.vnc, profile.port) {
+        if let Some(port) = detected_port(&report.vnc, DesktopProtocol::Vnc, profile.port) {
             let mut ssh_host = host.clone();
             ssh_host.password.clear();
             let request = ProbeRequest {
@@ -576,21 +580,35 @@ fn detect_servers(
 
 fn detected_port(
     service: &super::setup::model::ServiceInventory,
+    protocol: DesktopProtocol,
     configured_port: u16,
 ) -> Option<u16> {
-    service
+    let detected_display = (protocol == DesktopProtocol::Vnc)
+        .then(|| {
+            service
+                .displays
+                .iter()
+                .find(|display| display.port == configured_port)
+                .or_else(|| service.displays.iter().min_by_key(|display| display.port))
+                .map(|display| display.port)
+        })
+        .flatten();
+    detected_display.or_else(|| {
+        service
         .listeners
         .iter()
         .find(|listener| listener.port == configured_port)
         .or_else(|| service.listeners.iter().min_by_key(|listener| listener.port))
         .map(|listener| listener.port)
+    })
 }
 
 fn find_port_suggestion(
     service: &super::setup::model::ServiceInventory,
+    protocol: DesktopProtocol,
     configured_port: u16,
 ) -> Option<u16> {
-    let detected = detected_port(service, configured_port)?;
+    let detected = detected_port(service, protocol, configured_port)?;
     (detected != configured_port).then_some(detected)
 }
 
@@ -1409,8 +1427,10 @@ mod tests {
 
     #[test]
     fn port_suggestion_uses_detected_listener_without_overriding_matching_port() {
-        let service = crate::remote_desktop::setup::model::ServiceInventory {
-            listeners: vec![crate::remote_desktop::setup::model::Listener {
+        use crate::remote_desktop::setup::model::{Listener, ServiceInventory, VncDisplay};
+
+        let service = ServiceInventory {
+            listeners: vec![Listener {
                 address: "0.0.0.0".into(),
                 port: 5901,
                 process: Some("Xtigervnc".into()),
@@ -1419,9 +1439,48 @@ mod tests {
             }],
             ..Default::default()
         };
-        assert_eq!(find_port_suggestion(&service, 5900), Some(5901));
-        assert_eq!(find_port_suggestion(&service, 5901), None);
-        assert_eq!(find_port_suggestion(&Default::default(), 5900), None);
+        assert_eq!(
+            find_port_suggestion(&service, DesktopProtocol::Vnc, 5900),
+            Some(5901)
+        );
+        assert_eq!(
+            find_port_suggestion(&service, DesktopProtocol::Vnc, 5901),
+            None
+        );
+        assert_eq!(
+            find_port_suggestion(&Default::default(), DesktopProtocol::Vnc, 5900),
+            None
+        );
+
+        let process_only = ServiceInventory {
+            displays: vec![VncDisplay {
+                display: ":1".into(),
+                port: 5901,
+                user: Some("ubuntu".into()),
+            }],
+            ..Default::default()
+        };
+        assert_eq!(detected_port(&process_only, DesktopProtocol::Vnc, 5900), Some(5901));
+
+        let display_is_more_specific_than_an_unrelated_listener = ServiceInventory {
+            listeners: vec![Listener {
+                address: "0.0.0.0".into(),
+                port: 5900,
+                process: Some("other-service".into()),
+                pid: Some(12),
+                owner: None,
+            }],
+            displays: process_only.displays,
+            ..Default::default()
+        };
+        assert_eq!(
+            detected_port(
+                &display_is_more_specific_than_an_unrelated_listener,
+                DesktopProtocol::Vnc,
+                5900
+            ),
+            Some(5901)
+        );
     }
 
     #[test]

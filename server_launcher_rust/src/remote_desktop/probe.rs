@@ -237,7 +237,16 @@ impl ServerDetection {
                     );
                 }
                 Err(error) => {
-                    ui.colored_label(ui.visuals().error_fg_color, error);
+                    ui.colored_label(
+                        ui.visuals().error_fg_color,
+                        scan_error_hint(error).unwrap_or("Remote service scan failed."),
+                    );
+                    egui::CollapsingHeader::new("Scan error details")
+                        .id_salt(("service_scan_error", protocol as u8))
+                        .show(ui, |ui| {
+                            let detail = error.chars().take(4096).collect::<String>();
+                            ui.add(egui::Label::new(detail).wrap());
+                        });
                 }
             }
         } else if !can_scan {
@@ -649,6 +658,26 @@ fn action_error_hint(error: &str) -> Option<&'static str> {
         Some("The expected systemd unit is missing. Rescan the host and use the manual instructions if it remains absent.")
     } else if message.contains("timed out") || message.contains("deadline") {
         Some("The remote command timed out. Check the server and retry when it is responsive.")
+    } else {
+        None
+    }
+}
+
+fn scan_error_hint(error: &str) -> Option<&'static str> {
+    let message = error.chars().take(8192).collect::<String>().to_ascii_lowercase();
+    if message.contains("permission denied") || message.contains("authentication failed") {
+        Some("SSH authentication failed. Check the username, password, key path, and key permissions.")
+    } else if message.contains("could not resolve hostname")
+        || message.contains("temporary failure in name resolution")
+        || message.contains("name or service not known")
+    {
+        Some("The SSH host name could not be resolved. Check the host address and DNS settings.")
+    } else if message.contains("connection refused") {
+        Some("The SSH server refused the connection. Check the SSH port and server status.")
+    } else if message.contains("timed out") || message.contains("operation timeout") {
+        Some("The SSH connection timed out. Check the server and network; a firewall or security-group rule may be blocking it.")
+    } else if message.contains("no route to host") || message.contains("network is unreachable") {
+        Some("The SSH host is unreachable from this computer. Check its address and network route.")
     } else {
         None
     }
@@ -1874,6 +1903,23 @@ mod tests {
             .unwrap()
             .contains("desktop session"));
         assert_eq!(action_error_hint("unexpected remote output"), None);
+    }
+
+    #[test]
+    fn scan_failures_distinguish_ssh_auth_dns_refusal_and_timeout() {
+        assert!(scan_error_hint("SSH scan failed: Permission denied (publickey)")
+            .unwrap()
+            .contains("authentication failed"));
+        assert!(scan_error_hint("Could not resolve hostname example")
+            .unwrap()
+            .contains("resolved"));
+        assert!(scan_error_hint("connect: Connection refused")
+            .unwrap()
+            .contains("refused"));
+        assert!(scan_error_hint("Connection timed out")
+            .unwrap()
+            .contains("may be blocking"));
+        assert_eq!(scan_error_hint("unclassified remote error"), None);
     }
 
     #[test]

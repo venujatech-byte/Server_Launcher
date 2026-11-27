@@ -4,7 +4,7 @@ Baseline `vnc/rdp` at `d8b64bb`. Scope is the native Rust edition, its packaging
 
 ## Execution status — 2026-11-27
 
-Local `HEAD` is `c686a2f` on `vnc/rdp`, three commits ahead of `origin/vnc/rdp` (`f07e0a0`). The local test PC remains at `4754177`; it has not been updated in this pass. `cargo check --locked --all-targets` passed locally at `c686a2f`, including compilation of test targets. Repository instructions allow `cargo check` only, so regression tests were not executed. CI run `45921034260` passed Linux and Windows all-target checks at the older revision `4754177`; no CI run exists for the three local commits. No GUI, protocol interoperability, package, release, or performance result is verified for the current revision.
+Implementation code is at `c686a2f` on `vnc/rdp`; the roadmap status update is committed at `c63fd64`. The local test PC remains at `4754177`; it has not been updated in this pass. `cargo check --locked --all-targets` passed locally at `c686a2f`, including compilation of test targets. Repository instructions allow `cargo check` only, so regression tests were not executed. CI run `45921034260` passed Linux and Windows all-target checks at the older revision `4754177`; no CI run exists for the local code commits. No GUI, protocol interoperability, package, release, or performance result is verified for the current revision.
 
 | Stage | Evidence at `4754177` | Remaining work |
 | --- | --- | --- |
@@ -67,11 +67,11 @@ Files `clipboard_sync.rs`, `rdp_clipboard.rs`, `clipboard_image.rs`, `viewer.rs`
 - Verify alternate-format fallback when a remote advertises DIBV5 and Unicode but fails the first request. Keep pending offer state scoped to the current connection and offer. If a later offer arrives, an earlier failed request must not overwrite its value.
 - Validate RDP file ranges and destination handling using a file larger than 1 MiB, multiple names, a conflicting destination, and interrupted transfer. Confirm existing local files remain intact and partial outputs are cleaned up. Keep flat regular-file semantics unless recursive transfer is explicitly implemented. Use the existing SSH upload path for viewer drops and verify exact remote destination, progress and cancel.
 
-## Stage 4 — Fix recorder shutdown and verify process cleanup
+## Stage 4 — Verify recorder shutdown and process cleanup
 
 Files `recording.rs`, `viewer.rs`, `session.rs`, `tunnel.rs`.
 
-- Audit finding in `record()`: the worker can block on `pipe.write_all` when FFmpeg stops consuming data and on `child.wait` when it stops exiting. The stop flag cannot interrupt those waits. Preserve the current encoder/fallback options. Give the process one supervisor responsible for waiting and killing, through a bounded control channel or shared stop state. Move pipe writes to the worker owning stdin. Keep at most one pending frame and retain the last frame for CFR. On normal stop close stdin and allow a bounded trailer flush. On expiry terminate and reap the encoder, report failure, and preserve only media verified usable. Test with a controlled child that stops draining its pipe. Confirm UI and remote input stay responsive.
+- Current code sends frames through a one-frame bounded queue to a dedicated stdin writer and gives a supervisor responsibility for waiting, killing and reaping FFmpeg. A full queue drops a frame without increasing encoded-duration progress. Compile-checked regression cases cover queue saturation and a stuck child. Remaining: run a controlled child that stops draining its pipe, verify trailer/output integrity after normal and forced shutdown, and measure that UI and remote input stay responsive. Dropped frames are not repeated to preserve wall-clock duration; add timestamp-aware CFR only if testing shows that behavior is needed.
 - Compare the viewer exit/finalization deadline with the parent session's two-second forced termination in `Sessions::open`. Explicitly test normal close during recording, launcher close, and viewer termination. Keep the normal shutdown bounded and coordinate any changed timeout between parent and child. Verify the SSH child is gone on Linux and Windows. Check FFmpeg output after abnormal exit before claiming it is recoverable.
 - Verify screenshots at native remote size in Fill and Fit, odd-sized video frames, pause/resume, resolution changes during recording, and fallback when FFmpeg is missing. Distinguish missing executable from encoder rejection. Validate PNG fallback against a constrained destination and document its disk growth.
 

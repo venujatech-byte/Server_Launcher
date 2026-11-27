@@ -22,3 +22,15 @@ pub(crate) fn scan(
     let report = String::from_utf8_lossy(&output.stdout);
     parse_inventory(&report)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::DETECTION_SCRIPT;
+
+    #[test]
+    fn listener_detection_keeps_read_only_fallbacks() {
+        assert!(DETECTION_SCRIPT.contains("if command -v ss"));
+        assert!(DETECTION_SCRIPT.contains("elif command -v netstat"));
+        assert!(DETECTION_SCRIPT.contains("/proc/net/tcp /proc/net/tcp6"));
+    }
+}

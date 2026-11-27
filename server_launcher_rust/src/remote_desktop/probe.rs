@@ -336,9 +336,13 @@ impl ServerDetection {
         })?;
         let report = result.as_ref().ok()?;
         if let Some(handshake) = report.handshake(protocol) {
-            return Some(match handshake {
-                Ok(_) => "●",
-                Err(_) => "◐",
+            return Some(match (handshake, report.service(protocol).state()) {
+                (
+                    Ok(_),
+                    super::setup::model::ServiceState::RunningSystemd
+                    | super::setup::model::ServiceState::RunningManual,
+                ) => "●",
+                _ => "◐",
             });
         }
         Some(match report.service(protocol).state() {
@@ -495,8 +499,13 @@ fn show_service_inventory_card(
         ServiceState::Unknown => ("Status unknown", ui.visuals().weak_text_color()),
     };
     let handshake = report.handshake(protocol);
+    let running = matches!(
+        service.state(),
+        ServiceState::RunningSystemd | ServiceState::RunningManual
+    );
     let (label, color) = match handshake {
-        Some(Ok(_)) => ("OK · protocol handshake succeeded", ui.visuals().hyperlink_color),
+        Some(Ok(_)) if running => ("OK · running and protocol handshake succeeded", ui.visuals().hyperlink_color),
+        Some(Ok(_)) => ("Handshake succeeded; service state is unconfirmed", ui.visuals().warn_fg_color),
         Some(Err(_)) if matches!(service.state(), ServiceState::RunningSystemd | ServiceState::RunningManual) => {
             ("Running, not reachable", ui.visuals().warn_fg_color)
         }

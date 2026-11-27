@@ -178,6 +178,7 @@ pub(crate) fn run(
         options,
         Box::new(move |cc| {
             cc.egui_ctx.set_visuals(palette.egui_visuals());
+            crate::lucide::setup_lucide_font(&cc.egui_ctx);
             let focus = Arc::new(AtomicBool::new(false));
             let closed = Arc::new(AtomicBool::new(false));
             let ctx = cc.egui_ctx.clone();

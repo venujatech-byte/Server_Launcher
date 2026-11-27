@@ -4,7 +4,7 @@ Baseline `vnc/rdp` at `d8b64bb`. Scope is the native Rust edition, its packaging
 
 ## Execution status — 2026-11-27
 
-Current local revision is `6c2fa96`, one commit ahead of `origin/vnc/rdp`. The SSH test PC is at `4754177`, which includes all code changes but not the latest documentation-only commit. `cargo check --locked --all-targets` passed on that Linux PC. The local Linux check also passed before `4754177`. Repository instructions allow `cargo check` only. The new regression tests compile but have not been run. A local Windows GNU cross-check could not start because `x86_64-w64-mingw32-gcc` is missing; the release workflow's Windows MSVC check remains unrun. No GUI, protocol interoperability, Windows, CI, release, or performance result is verified for these commits.
+At the start of this status update, local `HEAD` was `e14e31a`, two commits ahead of `origin/vnc/rdp` (`4754177`). The authorized SSH test PC is at `4754177`, which includes all code changes but not the latest documentation-only commits. `cargo check --locked --all-targets` passed on that Linux PC. The local Linux check also passed at `4754177`. Repository instructions allow `cargo check` only. The new regression tests compile but have not been run. A local Windows GNU cross-check could not start because `x86_64-w64-mingw32-gcc` is missing; the release workflow's Windows MSVC check remains unrun. No GUI, protocol interoperability, Windows, CI, release, or performance result is verified for these commits.
 
 | Stage | Evidence at `4754177` | Remaining work |
 | --- | --- | --- |
@@ -12,9 +12,13 @@ Current local revision is `6c2fa96`, one commit ahead of `origin/vnc/rdp`. The S
 | 2. Rendering and performance | RDP damage conversion falls back to one full-frame update after 32 disjoint regions. Regression case added and compiled. | Reproduce stale regions on a real server. Compare full and changed-region uploads and record real latency and resource measurements. |
 | 3. Clipboard and files | Validate local clipboard image size before copying bytes. Include dimensions in image loop-prevention fingerprints. | Run both clipboard directions, clipboard fallback, and file transfer tests on supported desktops and servers. |
 | 4. Recorder and lifecycle | FFmpeg writes use a one-frame queue and a supervisor with a two-second stop grace period. Frame buffers are reused when available. Unix stuck-child regression test added and compiled. | Execute the regression test where permitted. Test normal/forced recording shutdown, output integrity, launcher close, tunnel cleanup, and Windows process behavior. |
-| 5. Interoperability | No new runtime evidence. | Run the RDP, VNC, gateway, certificate, audio, microphone, drive, multi-monitor, credential and Windows/Linux matrix in `TESTING.md`. |
+| 5. Interoperability | Test PC has no listener on TCP 3389 or 5900–5910; it is not currently an RDP/VNC target. | Run the RDP, VNC, gateway, certificate, audio, microphone, drive, multi-monitor, credential and Windows/Linux matrix in `TESTING.md` against a verified target. |
 | 6. Release | Local Windows GNU cross-check is unavailable without MinGW. No current Windows MSVC CI or package evidence. | Run authorized Windows CI and package checks on the current revision. Record results and check the packaged viewer process. |
 | 7. Follow-up | Direct VNC TLS, extended VNC clipboard and native Wayland shortcut capture remain unsupported or unverified. | Work these only after the core protocol and release gates pass. |
+
+### Test PC listener probe — 2026-11-27
+
+The authorized SSH test PC answered a read-only TCP listener check. No listener was found on TCP 3389 or 5900–5910. The process list showed `xrdp-sesman`, an Xorg `:10` session, and `xrdp-chansrv`, but no RDP listener process; this host is not currently a usable RDP/VNC interoperability target. No services or files were changed. Use a verified xrdp/VNC server before running stage 5 protocol checks.
 
 ## Start here
 

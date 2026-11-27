@@ -49,6 +49,7 @@ pub(crate) struct VncDisplay {
 pub(crate) struct ServiceInventory {
     pub installed: Option<bool>,
     pub version: Option<String>,
+    pub unit_present: Option<bool>,
     pub unit_active: Option<bool>,
     pub unit_enabled: Option<bool>,
     pub unit_failed: Option<bool>,
@@ -314,6 +315,7 @@ fn set_field(
     match key {
         "installed" => service.installed = Some(parse_bool(value)?),
         "version" => service.version = nonempty(value),
+        "unit_present" => service.unit_present = Some(parse_bool(value)?),
         "unit_active" => service.unit_active = Some(parse_bool(value)?),
         "unit_enabled" => service.unit_enabled = Some(parse_bool(value)?),
         "unit_failed" => service.unit_failed = Some(parse_bool(value)?),

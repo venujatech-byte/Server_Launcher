@@ -300,6 +300,11 @@ fn show_service_inventory_card(
     } else {
         ui.label("– Installation could not be determined");
     }
+    if service.unit_present == Some(true) {
+        ui.label("✓ systemd service units found");
+    } else if service.unit_present == Some(false) {
+        ui.label("– systemd service units not found");
+    }
     if service.unit_active == Some(true) {
         ui.label(format!(
             "✓ systemd unit active{}",

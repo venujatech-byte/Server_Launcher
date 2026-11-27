@@ -75,6 +75,12 @@ fi
 if command -v xrdp >/dev/null 2>&1 || [ -n "$rdp_version" ]; then field rdp installed 1; else field rdp installed 0; fi
 field rdp version "$rdp_version"
 if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+    rdp_unit_present=1
+    for unit in xrdp.service xrdp-sesman.service; do
+        unit_load=$(systemctl show -p LoadState "$unit" 2>/dev/null | sed -n 's/^LoadState=//p' | sed -n '1p')
+        [ "$unit_load" = loaded ] || rdp_unit_present=0
+    done
+    field rdp unit_present "$rdp_unit_present"
     if systemctl is-active --quiet xrdp.service && systemctl is-active --quiet xrdp-sesman.service; then field rdp unit_active 1; else field rdp unit_active 0; fi
     if systemctl is-enabled --quiet xrdp.service && systemctl is-enabled --quiet xrdp-sesman.service; then field rdp unit_enabled 1; else field rdp unit_enabled 0; fi
     if systemctl is-failed --quiet xrdp.service || systemctl is-failed --quiet xrdp-sesman.service; then
@@ -109,6 +115,7 @@ field vnc version "$vnc_version"
 if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
     vnc_units=$(systemctl list-units --all --type=service --no-legend 2>/dev/null | awk 'tolower($1) ~ /(vnc|tigervnc)/ { print $1 }')
     if [ -n "$vnc_units" ]; then
+        field vnc unit_present 1
         vnc_unit_found=0; vnc_unit_active=0; vnc_unit_failed=0; vnc_unit_enabled=0
         for unit in $vnc_units; do
             case "$unit" in *[!a-zA-Z0-9_.:@-]*) continue ;; esac
@@ -128,6 +135,8 @@ if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
                 done
             fi
         fi
+    else
+        field vnc unit_present 0
     fi
 fi
 

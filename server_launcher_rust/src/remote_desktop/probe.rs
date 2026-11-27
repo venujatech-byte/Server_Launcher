@@ -1559,75 +1559,75 @@ fn show_service_inventory_card(
         Readiness::Unknown => ("Status unknown", ui.visuals().weak_text_color()),
     };
     ui.horizontal(|ui| {
-        egui::Frame::none()
-            .fill(egui::Color32::from_rgba_unmultiplied(
-                color.r(),
-                color.g(),
-                color.b(),
-                30,
-            ))
-            .rounding(egui::Rounding::same(999.0))
-            .inner_margin(egui::Margin::symmetric(8.0, 3.0))
-            .show(ui, |ui| {
-                ui.colored_label(color, format!("● {label}"));
-            });
-        if let Some(version) = &service.version {
-            ui.label(format!("Version {version}"));
-        }
-    });
-
-    egui::Grid::new(("service_checks", protocol as u8))
-        .num_columns(3)
-        .spacing([8.0, 4.0])
-        .show(ui, |ui| {
-            let ok_color = ui.visuals().hyperlink_color;
-            let warn_color = ui.visuals().warn_fg_color;
-            let text_color = ui.visuals().text_color();
-            let mut row = |icon: &str, icon_color: egui::Color32, title: &str, detail: String| {
-                ui.colored_label(icon_color, icon);
-                ui.label(egui::RichText::new(title).weak());
-                ui.label(detail);
-                ui.end_row();
-            };
-            row(
-                "✓", ok_color,
-                "SSH",
-                format!("reachable as {}", report.user.as_deref().unwrap_or("unknown user")),
-            );
-            row(
-                if service.installed == Some(true) { "✓" } else { "–" },
-                if service.installed == Some(true) { ok_color } else { warn_color },
-                "Installed",
-                match (service.installed, service.version.as_deref()) {
-                    (Some(true), Some(version)) => version.to_owned(),
-                    (Some(true), None) => "executable detected".into(),
-                    (Some(false), _) => "not detected".into(),
-                    (None, _) => "could not be determined".into(),
-                },
-            );
-            if service.unit_present.is_some() || service.manual_process == Some(true) {
-                let svc_active = service.unit_active == Some(true) || service.manual_process == Some(true);
-                row(
-                    if svc_active { "✓" } else { "–" },
-                    if svc_active { ok_color } else { warn_color },
-                    "Service",
-                    if service.manual_process == Some(true) {
-                        "running as a manual process".into()
-                    } else if service.unit_active == Some(true) {
-                        format!(
-                            "systemd active{}",
-                            service.unit_enabled.map_or(String::new(), |enabled| {
-                                if enabled { " · enabled at boot".into() } else { " · not enabled at boot".into() }
-                            })
-                        )
-                    } else if service.unit_active == Some(false) {
-                        "systemd inactive".into()
-                    } else {
-                        "state unavailable".into()
-                    },
-                );
+        ui.colored_label(color, egui::RichText::new("●").size(14.0));
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new(label).size(14.0).strong());
+            if let Some(version) = &service.version {
+                ui.label(egui::RichText::new(format!("Version {version}")).small().weak());
             }
         });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let pill_text = if protocol == DesktopProtocol::Vnc {
+                service.displays.first().map(|d| format!("Display {} → :{}", d.display, d.port))
+            } else {
+                service.listeners.first().map(|l| format!("Port :{}", l.port))
+            };
+            if let Some(pill) = pill_text {
+                egui::Frame::none()
+                    .fill(egui::Color32::from_rgb(38, 43, 58))
+                    .rounding(egui::Rounding::same(999.0))
+                    .inner_margin(egui::Margin::symmetric(10.0, 4.0))
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new(pill).small());
+                    });
+            }
+        });
+    });
+    ui.add_space(6.0);
+    ui.separator();
+    ui.add_space(6.0);
+
+    let ok_color = ui.visuals().hyperlink_color;
+    let warn_color = ui.visuals().warn_fg_color;
+    let installed_val = match (service.installed, service.version.as_deref()) {
+        (Some(true), Some(v)) => v.to_owned(),
+        (Some(true), None) => "Detected".into(),
+        (Some(false), _) => "Not installed".into(),
+        (None, _) => "Unknown".into(),
+    };
+    let svc_active = service.unit_active == Some(true) || service.manual_process == Some(true);
+    let svc_val = if service.manual_process == Some(true) {
+        "Manual process".into()
+    } else if service.unit_active == Some(true) {
+        "Systemd active".into()
+    } else if service.unit_active == Some(false) {
+        "Inactive".into()
+    } else {
+        "Unavailable".into()
+    };
+    let hs_ok = matches!(handshake, Some(Ok(_)));
+    let hs_val = match handshake {
+        Some(Ok(_)) => if protocol == DesktopProtocol::Vnc { "VNC 3.8" } else { "RDP OK" },
+        Some(Err(_)) => "Failed",
+        None => "Not tested",
+    };
+    let ssh_user = report.user.as_deref().unwrap_or("unknown");
+
+    ui.columns(4, |cols| {
+        let mut kpi = |col: &mut egui::Ui, ok: bool, title: &str, val: &str| {
+            col.horizontal(|ui| {
+                ui.colored_label(if ok { ok_color } else { warn_color }, if ok { "✓" } else { "–" });
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new(title).small().weak());
+                    ui.label(egui::RichText::new(val).small().strong());
+                });
+            });
+        };
+        kpi(&mut cols[0], true, "SSH", ssh_user);
+        kpi(&mut cols[1], service.installed == Some(true), "Installed", &installed_val);
+        kpi(&mut cols[2], svc_active, "Service", &svc_val);
+        kpi(&mut cols[3], hs_ok, "Handshake", hs_val);
+    });
     if service.unit_failed == Some(true) {
         ui.colored_label(ui.visuals().error_fg_color, "Service unit reports a failed state");
         let prefix = match protocol {

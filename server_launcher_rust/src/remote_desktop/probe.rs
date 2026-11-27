@@ -172,6 +172,13 @@ impl ServerDetection {
         });
         let mut requested_intent = None;
         let mut request_manual_scan = false;
+        let has_current_result = self
+            .last
+            .as_ref()
+            .is_some_and(|(tested, _, _)| tested == &key);
+        if self.pending.is_some() && !has_current_result {
+            show_service_scan_placeholder(ui, protocol);
+        }
         if let Some((_, result, _)) = self.last.as_ref().filter(|(tested, _, _)| tested == &key) {
             match result {
                 Ok(report) => {
@@ -691,6 +698,36 @@ fn show_service_inventory(
         );
     });
     requested
+}
+
+fn show_service_scan_placeholder(ui: &mut egui::Ui, protocol: DesktopProtocol) {
+    let service_name = match protocol {
+        DesktopProtocol::Rdp => "xrdp",
+        DesktopProtocol::Vnc => "TigerVNC",
+    };
+    egui::Frame::group(ui.style())
+        .rounding(egui::Rounding::same(10.0))
+        .inner_margin(10.0)
+        .show(ui, |ui| {
+            ui.set_min_height(180.0);
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.strong(format!("Checking {service_name} over SSH…"));
+            });
+            ui.add_space(8.0);
+            for check in [
+                "SSH host",
+                "Operating system and service package",
+                "Service state",
+                "Listening port and bind address",
+                "Protocol handshake",
+            ] {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("◌").color(ui.visuals().weak_text_color()));
+                    ui.label(egui::RichText::new(check).color(ui.visuals().weak_text_color()));
+                });
+            }
+        });
 }
 
 fn show_service_inventory_card(

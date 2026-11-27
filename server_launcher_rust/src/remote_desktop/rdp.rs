@@ -59,6 +59,7 @@ use zeroize::Zeroizing;
 const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const AUDIO_INPUT_QUEUE: usize = 64;
+const MAX_RDP_DAMAGE_REGIONS: usize = 32;
 
 #[derive(Debug, Clone)]
 struct SharedPlayback {
@@ -1186,6 +1187,7 @@ fn prepare_damage(
     let frame_pixels = usize::from(width)
         .checked_mul(usize::from(height))
         .ok_or_else(|| error("The RDP server reported invalid framebuffer damage."))?;
+    let mut use_full_frame = false;
     for &region in regions {
         let [x, y] = region.origin;
         let [w, h] = region.size;
@@ -1197,6 +1199,9 @@ fn prepare_damage(
             .ok_or_else(|| error("The RDP server reported invalid framebuffer damage."))?;
         if w == 0 || h == 0 || right > usize::from(width) || bottom > usize::from(height) {
             return Err(error("The RDP server reported invalid framebuffer damage."));
+        }
+        if use_full_frame {
+            continue;
         }
         let mut merged = region;
         let mut index = 0;
@@ -1210,6 +1215,11 @@ fn prepare_damage(
                 index += 1;
             }
         }
+        if merged_regions.len() == MAX_RDP_DAMAGE_REGIONS {
+            merged_regions.clear();
+            use_full_frame = true;
+            continue;
+        }
         merged_regions.push(merged);
     }
     let damaged_pixels = merged_regions
@@ -1222,7 +1232,7 @@ fn prepare_damage(
         origin: [0, 0],
         size: [usize::from(width), usize::from(height)],
     }];
-    let regions = if damaged_pixels >= frame_pixels {
+    let regions = if use_full_frame || damaged_pixels >= frame_pixels {
         &full_frame[..]
     } else {
         merged_regions.as_slice()
@@ -1755,6 +1765,35 @@ mod tests {
             prepare_damage(&[region, region], &data, 8, 2, 1, &mut pixels, &mut merged).unwrap();
         assert_eq!(prepared, [(region, 0..2)]);
         assert_eq!(pixels, [egui::Color32::RED, egui::Color32::GREEN]);
+    }
+
+    #[test]
+    fn falls_back_to_one_frame_for_too_many_disjoint_damage_regions() {
+        let regions = (0..=MAX_RDP_DAMAGE_REGIONS)
+            .map(|index| Region {
+                origin: [index * 2, 0],
+                size: [1, 1],
+            })
+            .collect::<Vec<_>>();
+        let data = vec![0; 4 * 65];
+        let mut pixels = Vec::new();
+        let mut merged = Vec::new();
+
+        let prepared = prepare_damage(
+            &regions,
+            &data,
+            65 * 4,
+            65,
+            1,
+            &mut pixels,
+            &mut merged,
+        )
+        .unwrap();
+
+        assert_eq!(
+            prepared,
+            [(Region { origin: [0, 0], size: [65, 1] }, 0..65)]
+        );
     }
 
     #[test]

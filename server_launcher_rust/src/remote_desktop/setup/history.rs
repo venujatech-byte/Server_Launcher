@@ -27,6 +27,8 @@ pub(crate) struct HistoryRecord {
     pub host: String,
     pub ssh_port: u16,
     pub ssh_user: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distro: Option<String>,
     pub protocol: String,
     pub action: String,
     pub prior_unit_active: Option<bool>,
@@ -39,6 +41,7 @@ pub(crate) fn record_action(
     host: &SshRemoteHost,
     protocol: &str,
     action: &str,
+    distro: Option<&str>,
     prior_unit_active: Option<bool>,
     prior_unit_enabled: Option<bool>,
     completed_steps: Vec<String>,
@@ -55,6 +58,7 @@ pub(crate) fn record_action(
         host: limited(&host.host, 512),
         ssh_port: host.port,
         ssh_user: limited(&host.user, 128),
+        distro: distro.map(|name| limited(name, 256)),
         protocol: limited(protocol, 8),
         action: limited(action, 128),
         prior_unit_active,
@@ -220,6 +224,7 @@ mod tests {
                     host: "192.0.2.10".into(),
                     ssh_port: 22,
                     ssh_user: "user".into(),
+                    distro: Some("Ubuntu 24.04".into()),
                     protocol: "RDP".into(),
                     action: "Start xrdp".into(),
                     prior_unit_active: Some(false),
@@ -234,5 +239,12 @@ mod tests {
         let history: HistoryFile = serde_json::from_str(&contents).unwrap();
         assert_eq!(history.records.len(), MAX_RECORDS);
         assert!(!contents.contains("password"));
+    }
+
+    #[test]
+    fn legacy_history_without_distro_still_loads() {
+        let old = r#"{"version":1,"records":[{"at":"2026-01-01T00:00:00Z","host_id":"host","host_name":"Host","host":"192.0.2.10","ssh_port":22,"ssh_user":"user","protocol":"RDP","action":"Start xrdp","prior_unit_active":false,"prior_unit_enabled":false,"completed_steps":["start"],"completed":true}]}"#;
+        let history: HistoryFile = serde_json::from_str(old).unwrap();
+        assert_eq!(history.records[0].distro, None);
     }
 }

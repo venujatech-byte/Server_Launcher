@@ -1979,6 +1979,15 @@ pub fn render_ssh_host_modal(
                                 protocol,
                                 std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))),
                             );
+                            let assigned_port = state
+                                .server_detection
+                                .take_action_port_update(&detection_host, protocol);
+                            if let Some(port) = assigned_port {
+                                let profile = state.rdp.get_or_insert_with(Default::default);
+                                profile.port = port;
+                                profile.port_auto = true;
+                                ui.label(format!("Port {port} applied from the post-action scan."));
+                            }
                             let configured_port = state.rdp.as_ref().map_or(3389, |profile| profile.port);
                             if let Some(port) = state.server_detection.suggested_port(
                                 &detection_host,
@@ -2040,6 +2049,16 @@ pub fn render_ssh_host_modal(
                                 protocol,
                                 std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))),
                             );
+                            let assigned_port = state
+                                .server_detection
+                                .take_action_port_update(&detection_host, protocol);
+                            if let Some(port) = assigned_port {
+                                state.vnc_port_text = port.to_string();
+                                let profile = state.vnc.get_or_insert_with(Default::default);
+                                profile.port = port;
+                                profile.port_auto = true;
+                                ui.label(format!("Port {port} applied from the post-action scan."));
+                            }
                             let configured_port = state.vnc.as_ref().map_or(5900, |profile| profile.port);
                             let displays = state.server_detection.vnc_displays(&detection_host);
                             if displays.len() > 1 {

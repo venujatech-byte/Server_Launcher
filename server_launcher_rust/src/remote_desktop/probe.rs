@@ -13,6 +13,7 @@ struct PendingAction {
     key: String,
     protocol: DesktopProtocol,
     plan: super::setup::plan::ActionPlan,
+    intent: super::setup::plan::Intent,
     needs_password: bool,
     sudo_available: bool,
     password_attempts: u8,
@@ -29,6 +30,7 @@ pub(crate) struct ServerDetection {
     action_status: String,
     action_logs: String,
     action_result: Option<(String, DesktopProtocol, ActionResult)>,
+    action_port_update: Option<(String, DesktopProtocol, Instant)>,
 }
 
 impl ServerDetection {
@@ -90,6 +92,20 @@ impl ServerDetection {
                         } else {
                             result
                         };
+                        if result.is_ok()
+                            && matches!(
+                                action.intent,
+                                super::setup::plan::Intent::Start
+                                    | super::setup::plan::Intent::Restart
+                                    | super::setup::plan::Intent::InstallAndStart
+                            )
+                        {
+                            self.action_port_update = Some((
+                                action.key.clone(),
+                                action.protocol,
+                                Instant::now(),
+                            ));
+                        }
                         self.action_result = Some((action.key.clone(), action.protocol, result));
                         self.start(action.host, action.key, timeout, ui.ctx().clone());
                     }
@@ -191,6 +207,7 @@ impl ServerDetection {
                         key: key.clone(),
                         protocol,
                         plan,
+                        intent,
                         needs_password: report.uid != Some(0) && report.passwordless_sudo != Some(true),
                         sudo_available: report.uid == Some(0) || report.sudo_available != Some(false),
                         password_attempts: 0,
@@ -379,6 +396,31 @@ impl ServerDetection {
             tested == &key && scanned.elapsed() < Duration::from_secs(60)
         })?;
         find_port_suggestion(result.as_ref().ok()?.service(protocol), configured_port)
+    }
+
+    pub(crate) fn take_action_port_update(
+        &mut self,
+        host: &crate::config::SshRemoteHost,
+        protocol: DesktopProtocol,
+    ) -> Option<u16> {
+        let (key, action_protocol, started) = self.action_port_update.as_ref()?;
+        if key != &detection_key(host) || *action_protocol != protocol || self.pending.is_some() {
+            return None;
+        }
+        let report = self
+            .last
+            .as_ref()
+            .filter(|(tested, _, scanned)| tested == key && scanned >= started)
+            .and_then(|(_, result, _)| result.as_ref().ok());
+        let port = report.and_then(|report| {
+            let configured = match protocol {
+                DesktopProtocol::Rdp => host.rdp.as_ref().map_or(3389, |profile| profile.port),
+                DesktopProtocol::Vnc => host.vnc.as_ref().map_or(5900, |profile| profile.port),
+            };
+            find_port_suggestion(report.service(protocol), configured)
+        });
+        self.action_port_update = None;
+        port
     }
 
     pub(crate) fn vnc_displays(
@@ -1269,6 +1311,39 @@ mod tests {
         let key = detection_key(&changed);
         assert_ne!(original, key);
         assert!(!key.contains("private-test-password"));
+    }
+
+    #[test]
+    fn action_port_update_waits_for_the_post_action_scan_and_is_one_shot() {
+        use super::super::setup::model::{Listener, ServiceInventory, ServiceInventoryReport};
+
+        let host = detection_host();
+        let key = detection_key(&host);
+        let service = ServiceInventory {
+            listeners: vec![Listener {
+                address: "127.0.0.1".into(),
+                port: 3390,
+                process: Some("xrdp".into()),
+                pid: None,
+                owner: None,
+            }],
+            ..Default::default()
+        };
+        let report = ServiceInventoryReport {
+            rdp: service,
+            ..Default::default()
+        };
+        let started = Instant::now();
+        let mut detection = ServerDetection {
+            last: Some((key.clone(), Ok(report.clone()), started)),
+            action_port_update: Some((key.clone(), DesktopProtocol::Rdp, started + Duration::from_secs(1))),
+            ..Default::default()
+        };
+
+        assert_eq!(detection.take_action_port_update(&host, DesktopProtocol::Rdp), None);
+        detection.last = Some((key, Ok(report), started + Duration::from_secs(2)));
+        assert_eq!(detection.take_action_port_update(&host, DesktopProtocol::Rdp), Some(3390));
+        assert_eq!(detection.take_action_port_update(&host, DesktopProtocol::Rdp), None);
     }
 
     #[test]

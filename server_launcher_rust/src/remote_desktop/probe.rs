@@ -1698,15 +1698,30 @@ fn show_service_inventory_card(
         }
         ServiceState::Unknown => {}
     }
+    let mut first_block_reason: Option<&'static str> = None;
+    let mut any_shown = false;
     ui.horizontal_wrapped(|ui| {
         for (title, intent) in actions {
-            if super::setup::plan::build_plan(report, protocol, intent).is_ok()
-                && ui.button(title).clicked()
-            {
-                requested = Some(intent);
+            match super::setup::plan::build_plan(report, protocol, intent) {
+                Ok(_) => {
+                    any_shown = true;
+                    if ui.button(title).clicked() {
+                        requested = Some(intent);
+                    }
+                }
+                Err(reason) => {
+                    if first_block_reason.is_none() {
+                        first_block_reason = Some(reason);
+                    }
+                }
             }
         }
     });
+    if !any_shown {
+        if let Some(reason) = first_block_reason {
+            ui.label(egui::RichText::new(reason).small().weak());
+        }
+    }
     requested
 }
 

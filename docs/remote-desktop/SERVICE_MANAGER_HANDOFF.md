@@ -5,7 +5,7 @@ Use this handoff with [`SERVICE_MANAGER_ROADMAP.md`](SERVICE_MANAGER_ROADMAP.md)
 ## Repository state
 
 - Branch: `vnc/rdp`
-- Latest code change: `8d29e80 test(setup): cover supported xrdp action plans`.
+- Latest code change: `9b72659 test(setup): cover specific and localhost exposure`.
 - Latest Rust changes passed `cargo check --locked --all-targets` on the SSH PC in temporary worktrees.
 - SSH build/check PC: use the connection details already provided by the user; do not copy its address, username, or credentials into repository files. Its clone is `~/coding/Server_Launcher`.
 - The user has asked that checks run on that SSH PC and that changes be pushed and pulled there.
@@ -43,6 +43,10 @@ The following changes are on `vnc/rdp` and passed `cargo check --locked --all-ta
 - `5b40df1`: host-wide OS, sudo, desktop, firewall, and resource details are collapsed by default in the service card.
 - `d906063`: generated RDP verification commands use the selected profile port.
 - `8d29e80`: planner tests cover the fixed commands for xrdp start, stop, restart, and enable-at-boot.
+- `055c751`: first SSH inventory scans show a themed placeholder while keeping existing results visible during refresh.
+- `63d8d97`: manual command groups offer a Copy all button.
+- `9b72659`: exposure fixtures distinguish specific addresses from the localhost alias.
+- `8a1eba7` and `c47f26f`: README and service-manager notes describe the current limits and checked evidence.
 
 Tests were not executed. UI changes were not visually runtime-tested. The SSH-PC compiler check is evidence of compilation only; it does not verify remote xrdp/VNC behavior.
 
@@ -57,19 +61,19 @@ The latest readiness model distinguishes `Ready` (service state running and hand
 Do not claim the roadmap is complete until each required item is implemented and verified or explicitly documented as manual-only.
 
 1. **Finish read-only scan/probe correctness (Stages 2–4).** Parser fixtures now include wildcard/IPv6 binds, `*`, specific binds, multiple VNC displays, and truncated records. The detector script has a read-only `ss` → `netstat` → `/proc/net/tcp*` fallback, but no scripted fixture harness currently tests those command-availability branches. Keep scans read-only and on-demand; keep authentication/login distinct from handshake.
-2. **Finish service-card details (Stage 5).** The card has a theme-derived status outline/pill, collapsed host details, protocol-specific raw-output disclosure, manual-process details, and the editor already shows cached protocol status dots. A VNC display selector appears only with multiple verified displays. Remaining: stable checking placeholder, compact status rows, and visual/keyboard checks across themes and narrow windows.
-3. **Finish manual guidance (Stage 6).** Verify each command against authoritative sources before displaying it. Improve current Debian/Ubuntu instructions and tests. Add other distro families only after package, unit, startup, and rollback facts are confirmed. Unknown or unsupported systems remain manual-only; do not generate guessed commands.
+2. **Finish service-card details (Stage 5).** The card has a theme-derived status outline/pill, collapsed host details, a first-scan placeholder, protocol-specific raw-output disclosure, manual-process details, and cached editor status dots. A VNC display selector appears only with multiple verified displays. Remaining: compact status rows and visual/keyboard checks across themes and narrow windows.
+3. **Finish manual guidance (Stage 6).** Current Debian/Ubuntu command groups support per-command and Copy all actions, and RDP verification uses the selected port. Verify the remaining command details against authoritative sources before displaying them. Add other distro families only after package, unit, startup, and rollback facts are confirmed. Unknown or unsupported systems remain manual-only; do not generate guessed commands.
 4. **Audit plans against the safety contract (Stage 7).** Plans currently use fixed static xrdp commands. Preserve the closed intent set, but complete explicit capability checks, evidence-based display/effect descriptions, and plan tests. Do not introduce user-controlled shell interpolation. Any future command argument must be validated and passed positionally.
 5. **Complete action execution/progress (Stages 8–10).** The UI reports command-step boundaries, not live output/progress inside a package operation. Add bounded streaming only if it can reuse the SSH layer safely. Preserve operation-scoped sudo, exact approved commands, safe cancellation boundaries, bounded logs, and a post-action rescan. Test event order/failure/cancellation by type-checking fixtures; do not run remote mutations during coding checks.
 6. **Install/start support (Stage 11).** xrdp install/start exists only for verified Debian/Ubuntu systemd hosts, and has not been runtime-tested by this app. Add lock timeout and explicit optional desktop setup only if exact commands and rollback are verified. TigerVNC start/install must remain manual-only until per-user service mapping and password provisioning can be made safe without argv, history, or config storage.
 7. **Port assignment and bind restriction (Stage 12).** Display-based VNC suggestions are improved, but audit automatic profile updates so a user-edited port is never silently replaced. Do not automate xrdp or VNC localhost binding until installed-version syntax, backups, rollback, tunnel routing, and behavior are verified. Never change firewall or cloud-security rules.
 8. **Add bounded setup log and reviewed Undo (Stage 13).** This is not implemented. Record only app-owned service/config changes outside `servers.json`; do not store passwords, raw output, or unbounded logs. Undo must show and require approval for exact inverse actions, must verify host identity/backups, and must not uninstall packages by default.
 9. **Complete diagnostics and UI polish (Stage 14).** Expand diagnosis only for observed evidence (SSH failure, refusal, timeout as a possible network/security-group block, wrong protocol, unsupported handshake/auth, package lock/unavailable, missing desktop, port conflict, SELinux, cancellation, partial completion). Keep raw output collapsed. Visual checks in Nocturnal Command, Light, Catppuccin Latte, and narrow windows remain undone.
-10. **Complete documentation and final verification (Stage 15).** Update `SERVICE_MANAGER.md`, `TESTING.md`, and README with implementation limits and a manual matrix. Python persistence behavior is documented as potentially dropping Rust-only fields; keep Python files untouched. Record actual distro/version/client route and clearly distinguish compile-checked, test-executed, docs-verified, and runtime-tested evidence.
+10. **Complete documentation and final verification (Stage 15).** README and `SERVICE_MANAGER.md` now describe the current service-manager scope and compile-check evidence. Keep `TESTING.md` aligned with implementation limits and the manual matrix. Python persistence behavior is documented as potentially dropping Rust-only fields; keep Python files untouched. Record actual distro/version/client route and clearly distinguish compile-checked, test-executed, docs-verified, and runtime-tested evidence.
 
 ## Next recommended coding change
 
-Continue with item 2: add a steady initial scan placeholder and compact status rows, then check the card in multiple themes and a narrow window. Keep changes small and run the required SSH-PC `cargo check --locked --all-targets` before committing.
+Continue with item 2: compact the visible service rows, then check the card in multiple themes and a narrow window. Keep changes small and run the required SSH-PC `cargo check --locked --all-targets` before committing.
 
 ## Do not misreport
 

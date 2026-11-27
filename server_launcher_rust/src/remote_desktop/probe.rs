@@ -422,22 +422,40 @@ impl ServerDetection {
         }
         window.show(ui.ctx(), |ui| {
                 ui.heading(action.plan.summary);
-                ui.label("Review the exact commands. Nothing runs until you select Run.");
-                ui.add_space(6.0);
-                for step in &action.plan.steps {
-                    ui.strong(step.title);
-                    ui.label(step.effect);
-                    ui.small(format!("Undo: {}", step.undo_note));
-                    let command = super::setup::exec::command_for_step(
-                        step,
-                        action.host.user == "root",
-                        action.needs_password,
-                    )
-                    .unwrap_or_else(|_| "Unsupported plan command".into());
-                    ui.monospace(command);
+                ui.label(egui::RichText::new("Review the exact commands. Nothing runs until you select Run.").weak());
+                ui.add_space(8.0);
+                for (idx, step) in action.plan.steps.iter().enumerate() {
+                    egui::Frame::group(ui.style())
+                        .inner_margin(egui::Margin::same(8.0))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.strong(format!("{}. {}", idx + 1, step.title));
+                            ui.label(step.effect);
+                            ui.label(egui::RichText::new(format!("Undo: {}", step.undo_note)).small().weak());
+                            ui.add_space(4.0);
+                            let command = super::setup::exec::command_for_step(
+                                step,
+                                action.host.user == "root",
+                                action.needs_password,
+                            )
+                            .unwrap_or_else(|_| "Unsupported plan command".into());
+                            egui::Frame::none()
+                                .fill(ui.visuals().extreme_bg_color)
+                                .rounding(egui::Rounding::same(4.0))
+                                .inner_margin(egui::Margin::symmetric(8.0, 5.0))
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.add(egui::Label::new(egui::RichText::new(command).monospace().small()).wrap());
+                                });
+                        });
+                    ui.add_space(6.0);
                 }
-                for warning in &action.plan.warnings {
-                    ui.colored_label(ui.visuals().warn_fg_color, *warning);
+                if !action.plan.warnings.is_empty() {
+                    ui.add_space(2.0);
+                    for warning in &action.plan.warnings {
+                        ui.colored_label(ui.visuals().warn_fg_color, *warning);
+                    }
+                    ui.add_space(4.0);
                 }
                 if !action.sudo_available {
                     ui.colored_label(ui.visuals().error_fg_color, "sudo is not available for this SSH user. Use the manual instructions.");

@@ -1065,6 +1065,9 @@ fn show_service_inventory_card(
 
 fn show_manual_commands(ui: &mut egui::Ui, title: &str, commands: &[String]) {
     egui::CollapsingHeader::new(title).show(ui, |ui| {
+        if ui.small_button("Copy all").clicked() {
+            ui.ctx().copy_text(commands.join("\n"));
+        }
         for (index, command) in commands.iter().enumerate() {
             ui.push_id((title, index), |ui| {
                 ui.horizontal_wrapped(|ui| {

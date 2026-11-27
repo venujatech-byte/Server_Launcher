@@ -1717,7 +1717,14 @@ impl eframe::App for Viewer {
             });
         };
         if pinned {
-            egui::TopBottomPanel::top("viewer_tools").show(ctx, toolbar);
+            egui::TopBottomPanel::top("viewer_tools")
+                .exact_height(44.0)
+                .frame(
+                    egui::Frame::none()
+                        .fill(ctx.style().visuals.panel_fill)
+                        .inner_margin(egui::Margin::symmetric(8.0, 4.0)),
+                )
+                .show(ctx, toolbar);
         } else if let Some(until) = overlay_until {
             ctx.request_repaint_after(until - now);
             self.toolbar_rect = egui::Area::new(egui::Id::new("floating_viewer_tools"))

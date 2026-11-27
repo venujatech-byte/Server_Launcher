@@ -630,6 +630,15 @@ fn action_error_hint(error: &str) -> Option<&'static str> {
         Some("This SSH account does not have permission to run the approved administrator command.")
     } else if message.contains("no space left on device") {
         Some("The remote system is out of disk space. Free space before retrying.")
+    } else if message.contains("address already in use") || message.contains("port is already allocated") {
+        Some("The requested port is already in use. Rescan the host and choose an available port.")
+    } else if message.contains("selinux") && (message.contains("denied") || message.contains("avc:")) {
+        Some("SELinux blocked the service operation. Review the audit log and use the distribution's documented policy; do not disable SELinux.")
+    } else if message.contains("no desktop environment")
+        || message.contains("unable to start the session")
+        || message.contains("failed to start the desktop")
+    {
+        Some("The remote desktop service needs an installed desktop session. Check the manual instructions before adding one.")
     } else if message.contains("temporary failure resolving")
         || message.contains("could not resolve")
         || message.contains("network is unreachable")
@@ -1855,6 +1864,15 @@ mod tests {
             .unwrap()
             .contains("unavailable"));
         assert!(action_error_hint("user is not in the sudoers file").is_some());
+        assert!(action_error_hint("bind: Address already in use")
+            .unwrap()
+            .contains("port is already in use"));
+        assert!(action_error_hint("SELinux AVC: denied")
+            .unwrap()
+            .contains("do not disable SELinux"));
+        assert!(action_error_hint("Unable to start the session")
+            .unwrap()
+            .contains("desktop session"));
         assert_eq!(action_error_hint("unexpected remote output"), None);
     }
 

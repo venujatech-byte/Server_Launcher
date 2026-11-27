@@ -101,7 +101,11 @@ impl ClipboardSync {
                                 }
                             }
                             PendingClipboard::Image(image) => {
-                                let fingerprint = image_fingerprint(&image.rgba);
+                                let fingerprint = image_fingerprint(
+                                    image.width,
+                                    image.height,
+                                    &image.rgba,
+                                );
                                 if clipboard
                                     .set_image(arboard::ImageData {
                                         width: image.width,
@@ -154,7 +158,11 @@ impl ClipboardSync {
                                     height: image.height,
                                     rgba: image.bytes.to_vec(),
                                 };
-                                let fingerprint = image_fingerprint(&image.rgba);
+                                let fingerprint = image_fingerprint(
+                                    image.width,
+                                    image.height,
+                                    &image.rgba,
+                                );
                                 if last_image != Some(fingerprint) {
                                     last_image = Some(fingerprint);
                                     queue_latest(
@@ -206,8 +214,10 @@ impl ClipboardSync {
     }
 }
 
-fn image_fingerprint(bytes: &[u8]) -> u64 {
+fn image_fingerprint(width: usize, height: usize, bytes: &[u8]) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    width.hash(&mut hasher);
+    height.hash(&mut hasher);
     bytes.hash(&mut hasher);
     hasher.finish()
 }
@@ -251,6 +261,15 @@ mod tests {
         assert!(super::should_read_image(None));
         assert!(super::should_read_image(Some("")));
         assert!(!super::should_read_image(Some("text")));
+    }
+
+    #[test]
+    fn image_fingerprint_includes_dimensions() {
+        let pixels = [0, 1, 2, 3, 4, 5, 6, 7];
+        assert_ne!(
+            super::image_fingerprint(1, 2, &pixels),
+            super::image_fingerprint(2, 1, &pixels)
+        );
     }
 
     #[test]

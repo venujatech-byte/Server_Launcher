@@ -4,7 +4,7 @@ Baseline `vnc/rdp` at `d8b64bb`. Scope is the native Rust edition, its packaging
 
 ## Execution status — 2026-11-27
 
-At the start of this status update, local `HEAD` was `e14e31a`, two commits ahead of `origin/vnc/rdp` (`4754177`). The authorized SSH test PC is at `4754177`, which includes all code changes but not the latest documentation-only commits. `cargo check --locked --all-targets` passed on that Linux PC. The local Linux check also passed at `4754177`. Repository instructions allow `cargo check` only. The new regression tests compile but have not been run. A local Windows GNU cross-check could not start because `x86_64-w64-mingw32-gcc` is missing; the release workflow's Windows MSVC check remains unrun. No GUI, protocol interoperability, Windows, CI, release, or performance result is verified for these commits.
+At the start of this status update, local `HEAD` was `e14e31a`, two commits ahead of `origin/vnc/rdp` (`4754177`). The authorized SSH test PC is at `4754177`, which includes all code changes but not the latest documentation-only commits. `cargo check --locked --all-targets` passed locally and on that Linux PC. Remote Desktop Compile Check run `45921034260` passed its Linux and Windows all-target checks at `4754177`. Repository instructions allow `cargo check` only; regression tests compile but have not been run. A local Windows GNU cross-check could not start because `x86_64-w64-mingw32-gcc` is missing, but Windows MSVC CI has now compiled the revision. No GUI, protocol interoperability, package, release, or performance result is verified for these commits.
 
 | Stage | Evidence at `4754177` | Remaining work |
 | --- | --- | --- |
@@ -13,7 +13,7 @@ At the start of this status update, local `HEAD` was `e14e31a`, two commits ahea
 | 3. Clipboard and files | Validate local clipboard image size before copying bytes. Include dimensions in image loop-prevention fingerprints. | Run both clipboard directions, clipboard fallback, and file transfer tests on supported desktops and servers. |
 | 4. Recorder and lifecycle | FFmpeg writes use a one-frame queue and a supervisor with a two-second stop grace period. Frame buffers are reused when available. Unix stuck-child regression test added and compiled. | Execute the regression test where permitted. Test normal/forced recording shutdown, output integrity, launcher close, tunnel cleanup, and Windows process behavior. |
 | 5. Interoperability | Test PC has no listener on TCP 3389 or 5900–5910; it is not currently an RDP/VNC target. | Run the RDP, VNC, gateway, certificate, audio, microphone, drive, multi-monitor, credential and Windows/Linux matrix in `TESTING.md` against a verified target. |
-| 6. Release | Local Windows GNU cross-check is unavailable without MinGW. No current Windows MSVC CI or package evidence. | Run authorized Windows CI and package checks on the current revision. Record results and check the packaged viewer process. |
+| 6. Release | CI run `45921034260` passed Linux and Windows all-target checks at `4754177`. No package or runtime evidence. | Run package checks on the current revision. Record results and check the packaged viewer process. |
 | 7. Follow-up | Direct VNC TLS, extended VNC clipboard and native Wayland shortcut capture remain unsupported or unverified. | Work these only after the core protocol and release gates pass. |
 
 ### Test PC listener probe — 2026-11-27

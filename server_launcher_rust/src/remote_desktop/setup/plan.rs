@@ -46,6 +46,9 @@ pub(crate) fn build_plan(
     if protocol != DesktopProtocol::Rdp {
         return Err("TigerVNC actions remain manual until the per-user service mapping is verified.");
     }
+    if intent == Intent::InstallAndStart && report.package_manager.as_deref() != Some("apt") {
+        return Err("Automated xrdp installation requires a detected APT package manager.");
+    }
 
     let (summary, commands): (
         &'static str,
@@ -180,6 +183,7 @@ mod tests {
         ServiceInventoryReport {
             os_id: Some("ubuntu".into()),
             init_system: Some(InitSystem::Systemd),
+            package_manager: Some("apt".into()),
             rdp: super::super::model::ServiceInventory {
                 installed: Some(true),
                 unit_present: Some(true),
@@ -202,6 +206,19 @@ mod tests {
         assert_eq!(plan.steps[1].command, "sudo apt-get install -y xrdp");
         assert_eq!(plan.steps[2].command, "sudo systemctl enable --now xrdp.service");
         assert!(plan.steps.iter().all(|step| step.needs_root));
+    }
+
+    #[test]
+    fn install_plan_requires_detected_apt_capability() {
+        let mut report = verified_ubuntu();
+        report.package_manager = Some("unknown".into());
+        assert!(build_plan(&report, DesktopProtocol::Rdp, Intent::InstallAndStart).is_err());
+
+        report.package_manager = None;
+        assert!(build_plan(&report, DesktopProtocol::Rdp, Intent::InstallAndStart).is_err());
+
+        report.package_manager = Some("apt".into());
+        assert!(build_plan(&report, DesktopProtocol::Rdp, Intent::InstallAndStart).is_ok());
     }
 
     #[test]

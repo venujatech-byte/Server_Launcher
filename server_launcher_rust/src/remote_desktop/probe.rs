@@ -305,7 +305,7 @@ impl ServerDetection {
                     if self.pending.is_some() && !has_current_result {
                         show_service_scan_placeholder(ui, protocol);
                     }
-                    let mut show_vnc_start = false;
+                    let mut show_vnc_controls = None;
                     if let Some((_, result, _)) = self.last.as_ref().filter(|(tested, _, _)| tested == &key) {
                         match result {
                             Ok(report) => {
@@ -320,14 +320,18 @@ impl ServerDetection {
                         port,
                         &mut request_manual_scan,
                     );
-                    if protocol == DesktopProtocol::Vnc
-                        && matches!(
-                            report.vnc.state(),
+                    if protocol == DesktopProtocol::Vnc {
+                        match report.vnc.state() {
                             super::setup::model::ServiceState::InstalledStopped
-                                | super::setup::model::ServiceState::Failed
-                        )
-                    {
-                        show_vnc_start = true;
+                            | super::setup::model::ServiceState::Failed => {
+                                show_vnc_controls = Some(false);
+                            }
+                            super::setup::model::ServiceState::RunningManual
+                            | super::setup::model::ServiceState::RunningSystemd => {
+                                show_vnc_controls = Some(true);
+                            }
+                            _ => {}
+                        }
                     }
                     let history = self
                         .history_cache
@@ -357,8 +361,8 @@ impl ServerDetection {
                 }
             }
         }
-                    if show_vnc_start {
-                        self.show_vnc_start_config(ui, host, &key, timeout);
+                    if let Some(is_running) = show_vnc_controls {
+                        self.show_vnc_start_config(ui, host, &key, timeout, is_running);
                     }
                 });
             self.scan_window_open = open;
@@ -482,6 +486,7 @@ impl ServerDetection {
         host: &crate::config::SshRemoteHost,
         key: &str,
         timeout: Duration,
+        is_running: bool,
     ) {
         if let Some(rx) = &self.vnc_passwd_pending {
             if let Ok(result) = rx.try_recv() {
@@ -551,16 +556,34 @@ impl ServerDetection {
                 ui.label(egui::RichText::new(&cmd).monospace().small().weak());
                 ui.horizontal(|ui| {
                     let busy = self.vnc_start_pending.is_some();
-                    if ui
+                    let mut run_cmd: Option<String> = None;
+                    if is_running {
+                        if ui
+                            .add_enabled(!busy, egui::Button::new("Stop VNC"))
+                            .clicked()
+                        {
+                            run_cmd = Some(format!("vncserver -kill :{}", self.vnc_display));
+                        }
+                        if ui
+                            .add_enabled(!busy, egui::Button::new("Restart VNC"))
+                            .clicked()
+                        {
+                            run_cmd = Some(format!(
+                                "vncserver -kill :{} || true; {}",
+                                self.vnc_display, cmd
+                            ));
+                        }
+                    } else if ui
                         .add_enabled(!busy, egui::Button::new("▶ Start VNC"))
                         .clicked()
                     {
+                        run_cmd = Some(cmd.clone());
+                    }
+                    if let Some(cmd_owned) = run_cmd {
                         self.vnc_start_error = None;
                         let (tx, rx) = std::sync::mpsc::channel();
                         self.vnc_start_pending = Some(rx);
                         let host_owned = host.clone();
-                        let key_owned = key.to_owned();
-                        let cmd_owned = cmd.clone();
                         let ctx = ui.ctx().clone();
                         std::thread::spawn(move || {
                             let command = crate::remote::build_ssh_command(
@@ -585,7 +608,15 @@ impl ServerDetection {
                     }
                     if busy {
                         ui.spinner();
-                        ui.label(egui::RichText::new("Starting VNC...").small().weak());
+                        ui.label(
+                            egui::RichText::new(if is_running {
+                                "Updating VNC..."
+                            } else {
+                                "Starting VNC..."
+                            })
+                            .small()
+                            .weak(),
+                        );
                     }
                 });
                 if let Some(err) = &self.vnc_start_error {

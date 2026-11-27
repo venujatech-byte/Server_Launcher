@@ -553,11 +553,14 @@ impl ServerDetection {
         );
 
         ui.add_space(6.0);
-        egui::Frame::group(ui.style())
-            .rounding(egui::Rounding::same(6.0))
-            .inner_margin(egui::Margin::same(8.0))
+        egui::Frame::none()
+            .fill(egui::Color32::from_rgb(28, 31, 42))
+            .stroke(egui::Stroke::NONE)
+            .rounding(egui::Rounding::same(10.0))
+            .inner_margin(egui::Margin::same(12.0))
             .show(ui, |ui| {
-                ui.label(egui::RichText::new("Start VNC session").strong());
+                ui.label(egui::RichText::new("Start a session").strong());
+                ui.add_space(4.0);
                 ui.horizontal_wrapped(|ui| {
                     ui.label("Display:");
                     ui.add(egui::DragValue::new(&mut self.vnc_display).range(1..=9).prefix(":"));
@@ -578,8 +581,22 @@ impl ServerDetection {
                             }
                         });
                 });
-                ui.checkbox(&mut self.vnc_localhost_disabled, "Allow remote (-localhost no)");
-                ui.label(egui::RichText::new(&cmd).monospace().small().weak());
+                ui.checkbox(&mut self.vnc_localhost_disabled, "Allow connections from other machines (-localhost no)");
+                egui::Frame::none()
+                    .fill(egui::Color32::from_rgb(18, 20, 28))
+                    .rounding(egui::Rounding::same(6.0))
+                    .inner_margin(egui::Margin::symmetric(8.0, 5.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new(format!("$ {cmd}")).monospace().small().weak());
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.small_button("Copy").clicked() {
+                                    ui.ctx().copy_text(cmd.clone());
+                                }
+                            });
+                        });
+                    });
+                ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     let busy = self.vnc_start_pending.is_some();
                     let mut run_cmd: Option<String> = None;
@@ -1368,10 +1385,11 @@ fn show_service_inventory(
         Readiness::Failed => ui.visuals().error_fg_color,
         _ => ui.visuals().weak_text_color(),
     };
-    egui::Frame::group(ui.style())
-        .stroke(egui::Stroke::new(1.0_f32, color))
+    egui::Frame::none()
+        .fill(egui::Color32::from_rgb(28, 31, 42))
+        .stroke(egui::Stroke::NONE)
         .rounding(egui::Rounding::same(10.0))
-        .inner_margin(10.0)
+        .inner_margin(12.0)
         .show(ui, |ui| {
         requested = show_service_inventory_card(
             ui,

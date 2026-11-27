@@ -685,6 +685,27 @@ fn scan_error_hint(error: &str) -> Option<&'static str> {
     }
 }
 
+fn probe_error_summary(error: &str) -> &'static str {
+    let message = error.chars().take(8192).collect::<String>().to_ascii_lowercase();
+    if message.contains("connection refused") {
+        "No service accepted the connection. Check the remote service and port."
+    } else if message.contains("timed out") || message.contains("timeout") {
+        "The connection timed out. Check the server and network; a firewall or security-group rule may be blocking it."
+    } else if message.contains("dns:") {
+        "The host name could not be resolved. Check the remote address and DNS settings."
+    } else if message.contains("ssh tunnel:") {
+        "The SSH tunnel could not reach the remote desktop service. Check SSH access, the detected listener, and the port."
+    } else if message.contains("handshake:")
+        && (message.contains("unsupported") || message.contains("security type"))
+    {
+        "The server offered a protocol or security type this client does not support. Check the server's RDP/VNC security settings."
+    } else if message.contains("handshake:") {
+        "The port answered, but the protocol handshake failed. Confirm that the selected protocol and port match the server."
+    } else {
+        "The connection check failed. Expand the details to review the reported reason."
+    }
+}
+
 fn detection_key(host: &crate::config::SshRemoteHost) -> String {
     use sha2::{Digest, Sha256};
 
@@ -1468,24 +1489,32 @@ fn run_with_target(
         .to_socket_addrs()
         .map_err(|_| "DNS: could not resolve the host. Check the address in General.".to_owned())?;
     let mut connection = None;
+    let mut last_connect_error = None;
     for address in addresses.take(16) {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             break;
         }
-        if let Ok(socket) =
-            TcpStream::connect_timeout(&address, remaining.min(Duration::from_secs(3)))
-        {
-            connection = Some(socket);
-            break;
+        match TcpStream::connect_timeout(&address, remaining.min(Duration::from_secs(3))) {
+            Ok(socket) => {
+                connection = Some(socket);
+                break;
+            }
+            Err(error) => last_connect_error = Some(error.kind()),
         }
     }
     let hint = match request.protocol {
         DesktopProtocol::Rdp => "Check that Remote Desktop or xrdp is listening.",
         DesktopProtocol::Vnc => "Check that your VNC server is listening on this port.",
     };
-    let socket = connection
-        .ok_or_else(|| format!("TCP: could not connect to port {}. {hint}", request.port))?;
+    let socket = connection.ok_or_else(|| {
+        let reason = match last_connect_error {
+            Some(std::io::ErrorKind::ConnectionRefused) => "connection refused",
+            Some(std::io::ErrorKind::TimedOut) => "connection timed out",
+            _ => "could not connect",
+        };
+        format!("TCP: {reason} on port {}. {hint}", request.port)
+    })?;
     let mut stream = TimedSocket { socket, deadline };
     check_handshake(request, &mut stream)
         .map(|info| format!("{info}. Authentication was not tested."))
@@ -1757,7 +1786,12 @@ impl ProbeControl {
                         ui.label("● Protocol reachable").on_hover_text(info);
                     }
                     Err(error) => {
-                        ui.label(format!("○ {error}"));
+                        ui.colored_label(ui.visuals().warn_fg_color, probe_error_summary(error));
+                        egui::CollapsingHeader::new("Connection check details")
+                            .id_salt(("protocol_probe_error", request.as_ref().map(|r| r.protocol as u8)))
+                            .show(ui, |ui| {
+                                ui.add(egui::Label::new(error.chars().take(4096).collect::<String>()).wrap());
+                            });
                     }
                 }
             }
@@ -1768,6 +1802,18 @@ impl ProbeControl {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connection_failures_get_safe_actionable_summaries() {
+        assert!(probe_error_summary("TCP: connection refused on port 3389")
+            .contains("No service accepted"));
+        assert!(probe_error_summary("TCP: connection timed out on port 5901")
+            .contains("may be blocking"));
+        assert!(probe_error_summary("Handshake: unsupported security type")
+            .contains("does not support"));
+        assert!(probe_error_summary("DNS: could not resolve host").contains("resolved"));
+        assert!(probe_error_summary("unclassified error").contains("Expand the details"));
+    }
 
     fn detection_host() -> crate::config::SshRemoteHost {
         crate::config::SshRemoteHost {

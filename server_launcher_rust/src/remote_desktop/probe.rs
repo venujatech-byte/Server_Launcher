@@ -23,7 +23,10 @@ pub(crate) struct ServerDetection {
     last: Option<(String, DetectionResult, Instant)>,
     action_review: Option<PendingAction>,
     action_password: zeroize::Zeroizing<String>,
-    action_pending: Option<std::sync::mpsc::Receiver<ActionResult>>,
+    action_pending: Option<std::sync::mpsc::Receiver<super::setup::exec::ActionEvent>>,
+    action_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    action_status: String,
+    action_logs: String,
     action_result: Option<(String, DesktopProtocol, ActionResult)>,
 }
 
@@ -40,29 +43,36 @@ impl ServerDetection {
         timeout: Duration,
     ) {
         let key = detection_key(host);
-        if let Some(receiver) = &self.action_pending {
-            match receiver.try_recv() {
-                Ok(result) => {
+        let events = self
+            .action_pending
+            .as_ref()
+            .map(|receiver| receiver.try_iter().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for event in events {
+            match event {
+                super::setup::exec::ActionEvent::StepStarted { index, total, title } => {
+                    self.action_status = format!("Step {index}/{total}: {title}");
+                }
+                super::setup::exec::ActionEvent::StepFinished { index, total, title, output } => {
+                    self.action_status = format!("Completed {index}/{total}: {title}");
+                    if !output.trim().is_empty() {
+                        self.action_logs.push_str(&format!("\n{title}\n{output}"));
+                        let excess = self.action_logs.len().saturating_sub(24 * 1024);
+                        if excess > 0 {
+                            let boundary = self.action_logs.char_indices().find(|(i, _)| *i >= excess).map_or(self.action_logs.len(), |(i, _)| i);
+                            self.action_logs.drain(..boundary);
+                        }
+                    }
+                }
+                super::setup::exec::ActionEvent::Finished(result) => {
                     self.action_pending = None;
+                    self.action_cancel = None;
                     if let Some(action) = self.action_review.take() {
                         self.action_result = Some((action.key.clone(), action.protocol, result));
                         self.start(action.host, action.key, timeout, ui.ctx().clone());
                     }
                     self.action_password.clear();
                 }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.action_pending = None;
-                    if let Some(action) = self.action_review.take() {
-                        self.action_result = Some((
-                            action.key.clone(),
-                            action.protocol,
-                            Err("The remote action stopped unexpectedly.".into()),
-                        ));
-                        self.start(action.host, action.key, timeout, ui.ctx().clone());
-                    }
-                    self.action_password.clear();
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => {}
             }
         }
         if let Some((_, receiver)) = &self.pending {
@@ -178,6 +188,7 @@ impl ServerDetection {
         let running = self.action_pending.is_some();
         let mut approve = false;
         let mut cancel = false;
+        let mut cancel_after_step = false;
         egui::Window::new("Review remote service action")
             .id(egui::Id::new(("service_action_review", key)))
             .collapsible(false)
@@ -212,7 +223,10 @@ impl ServerDetection {
                 ui.horizontal(|ui| {
                     if running {
                         ui.spinner();
-                        ui.label("Running approved steps…");
+                        ui.label(if self.action_status.is_empty() { "Starting approved steps…" } else { self.action_status.as_str() });
+                        if ui.button("Cancel after this step").clicked() {
+                            cancel_after_step = true;
+                        }
                     } else {
                         let can_run = action.sudo_available
                             && (!action.needs_password || !self.action_password.is_empty());
@@ -224,7 +238,18 @@ impl ServerDetection {
                         }
                     }
                 });
+                if running && !self.action_logs.is_empty() {
+                    egui::ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
+                        ui.add(egui::Label::new(egui::RichText::new(&self.action_logs).monospace()).wrap());
+                    });
+                }
             });
+        if cancel_after_step {
+            if let Some(cancel) = &self.action_cancel {
+                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                self.action_status = "Cancellation requested; the current step will finish first.".into();
+            }
+        }
         if cancel {
             self.action_password.clear();
             self.action_review = None;
@@ -240,11 +265,23 @@ impl ServerDetection {
                 };
                 let (sender, receiver) = std::sync::mpsc::channel();
                 self.action_pending = Some(receiver);
+                self.action_status.clear();
+                self.action_logs.clear();
+                let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                self.action_cancel = Some(cancel.clone());
                 let ctx = ui.ctx().clone();
                 std::thread::spawn(move || {
-                    let result = super::setup::exec::run_approved_plan(&host, &plan, password)
-                        .map(|outputs| outputs.len());
-                    let _ = sender.send(result);
+                    let result = super::setup::exec::run_approved_plan(
+                        &host,
+                        &plan,
+                        password,
+                        &cancel,
+                        |event| {
+                            let _ = sender.send(event);
+                            ctx.request_repaint();
+                        },
+                    );
+                    let _ = sender.send(super::setup::exec::ActionEvent::Finished(result));
                     ctx.request_repaint();
                 });
             }

@@ -1,16 +1,30 @@
 use super::plan::ActionPlan;
 use crate::config::SshRemoteHost;
 use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
 use zeroize::{Zeroize, Zeroizing};
+
+pub(crate) enum ActionEvent {
+    StepStarted { index: usize, total: usize, title: &'static str },
+    StepFinished { index: usize, total: usize, title: &'static str, output: String },
+    Finished(Result<usize, String>),
+}
 
 /// Run only the fixed commands in a plan after the caller has obtained approval.
 pub(crate) fn run_approved_plan(
     host: &SshRemoteHost,
     plan: &ActionPlan,
     password: Option<Zeroizing<String>>,
-) -> Result<Vec<String>, String> {
-    let mut output = Vec::with_capacity(plan.steps.len());
-    for step in &plan.steps {
+    cancel: &AtomicBool,
+    mut report: impl FnMut(ActionEvent),
+) -> Result<usize, String> {
+    let total = plan.steps.len();
+    let mut completed = 0;
+    for (index, step) in plan.steps.iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(format!("Cancelled after {completed} completed step(s)."));
+        }
+        report(ActionEvent::StepStarted { index: index + 1, total, title: step.title });
         let remote_command = command_for_step(step, host.user == "root", password.is_some())?;
         let (program, _) = parse_fixed_command(step.command)?;
         let mut input = Zeroizing::new(Vec::new());
@@ -42,9 +56,22 @@ pub(crate) fn run_approved_plan(
                 format!("{} failed: {detail}", step.title)
             });
         }
-        output.push(String::from_utf8_lossy(&result.stdout).into_owned());
+        completed += 1;
+        let output = String::from_utf8_lossy(&result.stdout);
+        report(ActionEvent::StepFinished {
+            index: index + 1,
+            total,
+            title: step.title,
+            output: output_tail(&output, 8 * 1024),
+        });
     }
-    Ok(output)
+    Ok(completed)
+}
+
+fn output_tail(output: &str, max_chars: usize) -> String {
+    let mut tail = output.chars().rev().take(max_chars).collect::<Vec<_>>();
+    tail.reverse();
+    tail.into_iter().collect()
 }
 
 pub(crate) fn command_for_step(
@@ -121,5 +148,11 @@ mod tests {
         assert_eq!(command_for_step(&step, true, false).unwrap(), "'systemctl' 'start' 'xrdp.service'");
         assert_eq!(command_for_step(&step, false, false).unwrap(), "sudo -n -- 'systemctl' 'start' 'xrdp.service'");
         assert_eq!(command_for_step(&step, false, true).unwrap(), "sudo -S -p '' -- 'systemctl' 'start' 'xrdp.service'");
+    }
+
+    #[test]
+    fn action_output_keeps_only_a_bounded_unicode_safe_tail() {
+        assert_eq!(output_tail("αβγδε", 3), "γδε");
+        assert_eq!(output_tail("short", 20), "short");
     }
 }

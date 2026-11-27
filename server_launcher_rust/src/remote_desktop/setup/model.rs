@@ -588,5 +588,28 @@ mod tests {
 
         assert!(parse_inventory("SLD/1\tbegin\nSLD/1\tlistener\tvnc\t127.0.0.1\t5901\t-").is_err());
         assert!(parse_inventory("SLD/1\tbegin\nSLD/1\tlistener\tvnc\t127.0.0.1").is_err());
+
+        let specific = ServiceInventory {
+            listeners: vec![Listener {
+                address: "192.0.2.10".into(),
+                port: 5901,
+                process: None,
+                pid: None,
+                owner: None,
+            }],
+            ..Default::default()
+        };
+        assert_eq!(specific.exposure(), Exposure::SpecificAddress("192.0.2.10".into()));
+        let localhost = ServiceInventory {
+            listeners: vec![Listener {
+                address: "localhost".into(),
+                port: 5901,
+                process: None,
+                pid: None,
+                owner: None,
+            }],
+            ..Default::default()
+        };
+        assert_eq!(localhost.exposure(), Exposure::LocalhostOnly);
     }
 }

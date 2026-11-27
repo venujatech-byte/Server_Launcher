@@ -212,18 +212,41 @@ fn record(
         Err(error) => return Err(format!("Could not start FFmpeg: {error}")),
     };
     let pipe = child.stdin.take().expect("FFmpeg stdin was piped");
-    let (pipe_sender, pipe_receiver) = mpsc::sync_channel::<Arc<Vec<u8>>>(1);
+    let (pipe_sender, pipe_receiver) = mpsc::sync_channel::<(u64, Arc<Vec<u8>>)>(1);
+    let target_frames = Arc::new(AtomicU64::new(0));
+    let writer_target_frames = Arc::clone(&target_frames);
+    let (writer_result_sender, writer_result_receiver) = mpsc::channel();
     let (status_sender, status_receiver) = mpsc::channel();
     let child_stop = Arc::clone(&stop);
     thread::spawn(move || supervise_child(child, child_stop, status_sender));
-    thread::spawn(move || {
+    let pipe_writer = thread::spawn(move || {
         let mut pipe = pipe;
-        while let Ok(pixels) = pipe_receiver.recv() {
-            if pipe.write_all(&pixels).is_err() {
-                break;
+        let mut last_frame = None;
+        let mut written_frames = 0;
+        let result = (|| {
+            while let Ok((frame_index, pixels)) = pipe_receiver.recv() {
+                write_scheduled_frame(
+                    &mut pipe,
+                    &mut last_frame,
+                    &mut written_frames,
+                    frame_index,
+                    pixels,
+                )?;
             }
-        }
+            if let Some(last_frame) = &last_frame {
+                write_frame_repeats(
+                    &mut pipe,
+                    last_frame,
+                    writer_target_frames
+                        .load(Ordering::Relaxed)
+                        .saturating_sub(written_frames),
+                )?;
+            }
+            Ok::<_, std::io::Error>(())
+        })();
+        let _ = writer_result_sender.send(result);
     });
+    let progress_target = Arc::clone(&target_frames);
     let mut pixels = Arc::new(Vec::with_capacity(size[0] * size[1] * 4));
     let mut frames = 0_u64;
     let write_result = sample_frames(
@@ -238,15 +261,14 @@ fn record(
                 buffer.clear();
                 buffer.extend(frame.pixels.iter().flat_map(|pixel| pixel.to_array()));
             }
-            if !enqueue_recording_frame(
+            enqueue_recording_frame(
                 &pipe_sender,
                 Arc::clone(&pixels),
                 &mut frames,
                 frame_micros,
                 &progress,
-            )? {
-                return Ok(());
-            }
+                &progress_target,
+            )?;
             if frames % u64::from(fps) == 0 {
                 if let Ok(metadata) = std::fs::metadata(&output) {
                     output_bytes.store(metadata.len(), Ordering::Relaxed);
@@ -257,15 +279,74 @@ fn record(
     );
     stop.store(true, Ordering::Relaxed);
     drop(pipe_sender);
+    let pipe_result = writer_result_receiver
+        .recv_timeout(Duration::from_secs(4))
+        .map_err(|_| "FFmpeg did not finish writing the recording.".to_owned())?
+        .map_err(|error| format!("Could not write the recording: {error}"));
+    let _ = pipe_writer.join();
     let status = status_receiver
         .recv_timeout(Duration::from_secs(4))
         .map_err(|_| "FFmpeg did not stop after recording ended.".to_owned())?
         .map_err(|error| error.to_string())?;
     write_result?;
+    pipe_result?;
     if !status.success() {
         return Err(format!("FFmpeg could not encode the recording ({status})."));
     }
     output.keep().map_err(|error| error.to_string())
+}
+
+fn write_scheduled_frame(
+    writer: &mut impl Write,
+    last_frame: &mut Option<Arc<Vec<u8>>>,
+    written_frames: &mut u64,
+    frame_index: u64,
+    pixels: Arc<Vec<u8>>,
+) -> std::io::Result<()> {
+    if frame_index <= *written_frames {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Recording frame indexes must increase.",
+        ));
+    }
+    if let Some(last_frame) = last_frame {
+        write_frame_repeats(writer, last_frame, frame_index - *written_frames - 1)?;
+    }
+    writer.write_all(&pixels)?;
+    *written_frames = frame_index;
+    *last_frame = Some(pixels);
+    Ok(())
+}
+
+fn write_frame_repeats(
+    writer: &mut impl Write,
+    frame: &[u8],
+    count: u64,
+) -> std::io::Result<()> {
+    for _ in 0..count {
+        writer.write_all(frame)?;
+    }
+    Ok(())
+}
+
+fn enqueue_recording_frame(
+    sender: &mpsc::SyncSender<(u64, Arc<Vec<u8>>)>,
+    pixels: Arc<Vec<u8>>,
+    frames: &mut u64,
+    frame_micros: u64,
+    progress: &AtomicU64,
+    target_frames: &AtomicU64,
+) -> Result<(), String> {
+    *frames += 1;
+    progress.store(*frames * frame_micros, Ordering::Relaxed);
+    target_frames.store(*frames, Ordering::Relaxed);
+    match sender.try_send((*frames, pixels)) {
+        // The pipe writer fills dropped frame indexes with its last complete frame.
+        Ok(()) | Err(mpsc::TrySendError::Full(_)) => Ok(()),
+        Err(mpsc::TrySendError::Disconnected(_)) => {
+            Err("FFmpeg stopped accepting recording frames.".into())
+        }
+    }
 }
 
 fn supervise_child(
@@ -388,26 +469,6 @@ fn normalize_fps(fps: u32) -> u32 {
     match fps {
         15 | 24 | 30 | 60 => fps,
         _ => 30,
-    }
-}
-
-fn enqueue_recording_frame(
-    sender: &mpsc::SyncSender<Arc<Vec<u8>>>,
-    pixels: Arc<Vec<u8>>,
-    frames: &mut u64,
-    frame_micros: u64,
-    progress: &AtomicU64,
-) -> Result<bool, String> {
-    match sender.try_send(pixels) {
-        Ok(()) => {
-            *frames += 1;
-            progress.store(*frames * frame_micros, Ordering::Relaxed);
-            Ok(true)
-        }
-        Err(mpsc::TrySendError::Full(_)) => Ok(false),
-        Err(mpsc::TrySendError::Disconnected(_)) => {
-            Err("FFmpeg stopped accepting recording frames.".into())
-        }
     }
 }
 
@@ -552,29 +613,79 @@ mod tests {
     }
 
     #[test]
-    fn dropped_encoder_frames_do_not_advance_recording_duration() {
-        let (sender, _receiver) = mpsc::sync_channel(1);
+    fn dropped_encoder_frames_repeat_last_frame_and_preserve_duration() {
+        let (sender, receiver) = mpsc::sync_channel(1);
         let progress = AtomicU64::new(0);
+        let target_frames = AtomicU64::new(0);
         let mut frames = 0;
 
-        assert!(enqueue_recording_frame(
+        enqueue_recording_frame(
             &sender,
             Arc::new(vec![1]),
             &mut frames,
             10,
             &progress,
+            &target_frames,
         )
-        .unwrap());
-        assert!(!enqueue_recording_frame(
+        .unwrap();
+        enqueue_recording_frame(
             &sender,
             Arc::new(vec![2]),
             &mut frames,
             10,
             &progress,
+            &target_frames,
         )
-        .unwrap());
+        .unwrap();
+        let first = receiver.recv().unwrap();
+        enqueue_recording_frame(
+            &sender,
+            Arc::new(vec![3]),
+            &mut frames,
+            10,
+            &progress,
+            &target_frames,
+        )
+        .unwrap();
+        enqueue_recording_frame(
+            &sender,
+            Arc::new(vec![4]),
+            &mut frames,
+            10,
+            &progress,
+            &target_frames,
+        )
+        .unwrap();
+        let third = receiver.recv().unwrap();
 
-        assert_eq!(frames, 1);
-        assert_eq!(progress.load(Ordering::Relaxed), 10);
+        let mut output = Vec::new();
+        let mut last_frame = None;
+        let mut written_frames = 0;
+        write_scheduled_frame(
+            &mut output,
+            &mut last_frame,
+            &mut written_frames,
+            first.0,
+            first.1,
+        )
+        .unwrap();
+        write_scheduled_frame(
+            &mut output,
+            &mut last_frame,
+            &mut written_frames,
+            third.0,
+            third.1,
+        )
+        .unwrap();
+        write_frame_repeats(
+            &mut output,
+            last_frame.as_ref().unwrap(),
+            target_frames.load(Ordering::Relaxed) - written_frames,
+        )
+        .unwrap();
+
+        assert_eq!(frames, 4);
+        assert_eq!(progress.load(Ordering::Relaxed), 40);
+        assert_eq!(output, [1, 1, 3, 3]);
     }
 }

@@ -299,7 +299,7 @@ impl ServerDetection {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             // Close button styled as a round pill
                             let close_resp = ui.add(
-                                egui::Button::new(egui::RichText::new("✕").size(10.0))
+                                egui::Button::new(egui::RichText::new("X").size(10.0))
                                     .min_size(egui::vec2(18.0, 18.0))
                                     .rounding(egui::Rounding::same(999.0)),
                             ).on_hover_text("Close");
@@ -771,7 +771,7 @@ impl ServerDetection {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if !running {
                             let close_btn = ui.add(
-                                egui::Button::new(egui::RichText::new("✕").size(10.0))
+                                egui::Button::new(egui::RichText::new("X").size(10.0))
                                     .min_size(egui::vec2(18.0, 18.0))
                                     .rounding(egui::Rounding::same(999.0)),
                             ).on_hover_text("Cancel");
@@ -1659,41 +1659,22 @@ fn show_service_inventory_card(
         }
     }
 
-    // Compact listener + exposure + display into a single row each
-    let unique_ports: Vec<u16> = {
-        let mut ps: Vec<u16> = service.listeners.iter().map(|l| l.port).collect();
-        ps.sort();
-        ps.dedup();
-        ps
-    };
-    let exposure_suffix = match service.exposure() {
-        Exposure::AllInterfaces => " · all interfaces ⚠",
-        Exposure::LocalhostOnly => " · localhost only",
-        Exposure::SpecificAddress(_) => " · specific address",
-        Exposure::Unknown => "",
-    };
-    if unique_ports.is_empty() {
-        ui.label(egui::RichText::new("– No matching listener found").weak());
-    } else {
-        let ports_str = unique_ports.iter().map(|p| format!(":{p}")).collect::<Vec<_>>().join(", ");
-        let line = format!("✓ Listening on {ports_str}{exposure_suffix}");
-        if service.exposure() == Exposure::AllInterfaces {
-            ui.colored_label(ui.visuals().warn_fg_color, line);
-        } else {
-            ui.label(line);
-        }
-    }
-    if protocol == DesktopProtocol::Vnc {
-        for display in &service.displays {
-            let user = display.user.as_deref().map_or(String::new(), |u| format!(" · {u}"));
-            ui.label(
-                egui::RichText::new(format!("Display {} → :{}{}", display.display, display.port, user))
-                    .weak()
-            );
-        }
-    }
-    if let Some(port) = service.configured_port {
-        ui.label(egui::RichText::new(format!("Configured port {port}")).weak());
+    if service.exposure() == Exposure::AllInterfaces {
+        ui.add_space(6.0);
+        egui::Frame::none()
+            .fill(egui::Color32::from_rgba_unmultiplied(180, 120, 30, 35))
+            .stroke(egui::Stroke::NONE)
+            .rounding(egui::Rounding::same(8.0))
+            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.colored_label(warn_color, "⚠");
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("Open to your whole network").strong().color(warn_color));
+                        ui.label(egui::RichText::new("Listening on all interfaces. Connect through the SSH tunnel for security.").small().weak());
+                    });
+                });
+            });
     }
     egui::CollapsingHeader::new("Host details")
         .id_salt(("service_inventory_host_details", protocol as u8))

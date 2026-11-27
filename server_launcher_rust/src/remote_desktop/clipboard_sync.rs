@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use super::clipboard_image::ClipboardImage;
+use super::clipboard_image::{validate_image, ClipboardImage};
 
 pub(crate) struct ClipboardSync {
     focused: Arc<AtomicBool>,
@@ -146,13 +146,14 @@ impl ClipboardSync {
                             None
                         };
                         if let Some(image) = local_image {
-                            let valid_size = image
-                                .width
-                                .checked_mul(image.height)
-                                .and_then(|pixels| pixels.checked_mul(4))
-                                == Some(image.bytes.len())
-                                && image.bytes.len() <= max_image_bytes.saturating_sub(124);
-                            if valid_size {
+                            if validate_image(
+                                image.width,
+                                image.height,
+                                image.bytes.len(),
+                                max_image_bytes,
+                            )
+                            .is_ok()
+                            {
                                 let image = ClipboardImage {
                                     width: image.width,
                                     height: image.height,

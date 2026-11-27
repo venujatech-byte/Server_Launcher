@@ -166,7 +166,7 @@ pub(crate) fn decode_dib_with_limit(
     })
 }
 
-fn validate_image(
+pub(crate) fn validate_image(
     width: usize,
     height: usize,
     byte_count: usize,
@@ -263,6 +263,11 @@ mod tests {
         let encoded = encode_dibv5_with_limit(&image, 128).unwrap();
         assert!(decode_dib_with_limit(&encoded, 127).is_err());
         assert_eq!(decode_dib_with_limit(&encoded, 128).unwrap(), image);
+    }
+
+    #[test]
+    fn rejects_oversized_rgba_dimensions_before_encoding() {
+        assert!(validate_image(MAX_SIDE + 1, 1, (MAX_SIDE + 1) * 4, MAX_BYTES).is_err());
     }
 
     #[test]

@@ -4,16 +4,16 @@ Baseline `vnc/rdp` at `d8b64bb`. Scope is the native Rust edition, its packaging
 
 ## Execution status — 2026-11-27
 
-Current local revision is `4754177`, nine commits ahead of `origin/vnc/rdp`. The owner asked for commits without pushes, so the SSH test PC still has the upstream revision. `PKG_CONFIG_PATH=/tmp/server-launcher-pkgconfig cargo check --locked --all-targets` passed on Linux at `4754177`. Repository instructions allow `cargo check` only. The new regression tests compile but have not been run. No GUI, protocol interoperability, Windows, CI, release, or performance result is verified for these commits.
+Current local revision is `6c2fa96`, one commit ahead of `origin/vnc/rdp`. The SSH test PC is at `4754177`, which includes all code changes but not the latest documentation-only commit. `cargo check --locked --all-targets` passed on that Linux PC. The local Linux check also passed before `4754177`. Repository instructions allow `cargo check` only. The new regression tests compile but have not been run. A local Windows GNU cross-check could not start because `x86_64-w64-mingw32-gcc` is missing; the release workflow's Windows MSVC check remains unrun. No GUI, protocol interoperability, Windows, CI, release, or performance result is verified for these commits.
 
 | Stage | Evidence at `4754177` | Remaining work |
 | --- | --- | --- |
-| 1. Baseline | Source checked for the cursor setting. The local pointer setting is covered by a regression test. `rdp.rs` and `clipboard_sync.rs` all-target checks pass. | Run credential persistence, cursor/input, protocol connection and notification checks on current builds. |
+| 1. Baseline | Source checked for the cursor setting. The local pointer setting is covered by a regression test. Linux `cargo check --locked --all-targets` passed locally and on the SSH test PC at `4754177`. | Run credential persistence, cursor/input, protocol connection and notification checks on current builds. |
 | 2. Rendering and performance | RDP damage conversion falls back to one full-frame update after 32 disjoint regions. Regression case added and compiled. | Reproduce stale regions on a real server. Compare full and changed-region uploads and record real latency and resource measurements. |
 | 3. Clipboard and files | Validate local clipboard image size before copying bytes. Include dimensions in image loop-prevention fingerprints. | Run both clipboard directions, clipboard fallback, and file transfer tests on supported desktops and servers. |
 | 4. Recorder and lifecycle | FFmpeg writes use a one-frame queue and a supervisor with a two-second stop grace period. Frame buffers are reused when available. Unix stuck-child regression test added and compiled. | Execute the regression test where permitted. Test normal/forced recording shutdown, output integrity, launcher close, tunnel cleanup, and Windows process behavior. |
 | 5. Interoperability | No new runtime evidence. | Run the RDP, VNC, gateway, certificate, audio, microphone, drive, multi-monitor, credential and Windows/Linux matrix in `TESTING.md`. |
-| 6. Release | No new CI or package evidence. | Run authorized CI and package checks on the current revision. Record results and check the packaged viewer process. |
+| 6. Release | Local Windows GNU cross-check is unavailable without MinGW. No current Windows MSVC CI or package evidence. | Run authorized Windows CI and package checks on the current revision. Record results and check the packaged viewer process. |
 | 7. Follow-up | Direct VNC TLS, extended VNC clipboard and native Wayland shortcut capture remain unsupported or unverified. | Work these only after the core protocol and release gates pass. |
 
 ## Start here

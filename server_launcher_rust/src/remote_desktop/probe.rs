@@ -1753,6 +1753,9 @@ fn show_service_inventory_card(
         ServiceState::InstalledStopped | ServiceState::Failed => {
             actions.push(("Start", super::setup::plan::Intent::Start));
             actions.push(("Restart", super::setup::plan::Intent::Restart));
+            if service.state() == ServiceState::Failed {
+                actions.push(("Reinstall", super::setup::plan::Intent::InstallAndStart));
+            }
             actions.push(("⟳ Update", super::setup::plan::Intent::Update));
             actions.push(("Uninstall", super::setup::plan::Intent::Uninstall));
         }

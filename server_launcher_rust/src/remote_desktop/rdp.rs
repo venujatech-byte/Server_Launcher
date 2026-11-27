@@ -35,7 +35,7 @@ use ironrdp::{
         },
         pdu::{AudioFormat, AudioFormatFlags, PitchPdu, QualityMode, VolumePdu},
     },
-    session::{fast_path, image::DecodedImage, ActiveStageBuilder, ActiveStageOutput},
+    session::{image::DecodedImage, ActiveStageBuilder, ActiveStageOutput},
 };
 use ironrdp_blocking::Framed;
 use ironrdp_egfx::client::{GraphicsPipelineClient, GraphicsPipelineHandler};
@@ -422,8 +422,6 @@ fn run(
     let mut width = result.desktop_size.width;
     let mut height = result.desktop_size.height;
     let activation_factory = result.activation_factory;
-    let io_channel_id = result.io_channel_id;
-    let user_channel_id = result.user_channel_id;
     let compression_type = result.compression_type;
     let (input, overflow) = {
         let mut shared = state.lock().unwrap();
@@ -786,6 +784,7 @@ fn run(
                             share_id,
                             enable_server_pointer,
                             pointer_software_rendering,
+                            static_channel_chunk_size,
                             ..
                         } = activation.connection_activation_state()
                         {
@@ -798,18 +797,18 @@ fn run(
                                 .resize([width.into(), height.into()])
                                 .map_err(error)?;
                             image = DecodedImage::new(PixelFormat::RgbA32, width, height);
-                            stage.set_share_id(share_id);
-                            stage.set_enable_server_pointer(enable_server_pointer);
-                            stage.set_fastpath_processor(
-                                fast_path::ProcessorBuilder {
-                                    io_channel_id,
-                                    user_channel_id,
-                                    share_id,
-                                    enable_server_pointer,
-                                    pointer_software_rendering,
-                                }
-                                .build(),
-                            );
+                            if !stage.reactivate(
+                                activation.io_channel_id(),
+                                activation.user_channel_id(),
+                                share_id,
+                                enable_server_pointer,
+                                pointer_software_rendering,
+                                static_channel_chunk_size,
+                            ) {
+                                return Err(error(
+                                    "The RDP server negotiated an invalid static channel chunk size.",
+                                ));
+                            }
                             break;
                         }
                         let remaining = deadline.saturating_duration_since(Instant::now());

@@ -5,7 +5,7 @@ Use this handoff with [`SERVICE_MANAGER_ROADMAP.md`](SERVICE_MANAGER_ROADMAP.md)
 ## Repository state
 
 - Branch: `vnc/rdp`
-- Latest code change: `203cf1e test(setup): guard listener detection fallbacks`.
+- Latest code change: `408a386 feat(setup): record service action history`.
 - Latest Rust changes passed `cargo check --locked --all-targets` on the SSH PC in temporary worktrees.
 - SSH build/check PC: use the connection details already provided by the user; do not copy its address, username, or credentials into repository files. Its clone is `~/coding/Server_Launcher`.
 - The user has asked that checks run on that SSH PC and that changes be pushed and pulled there.
@@ -48,13 +48,14 @@ The following changes are on `vnc/rdp` and passed `cargo check --locked --all-ta
 - `9b72659`: exposure fixtures distinguish specific addresses from the localhost alias.
 - `5869e1f`: SSH, installation, and service-state checks render in a compact three-column checklist.
 - `203cf1e`: a source-level regression check keeps the `ss`, `netstat`, and `/proc` listener fallback branches present.
+- `408a386`: successful and partially completed service actions write a bounded, private local history file with host identity and completed step IDs; it excludes credentials and remote output.
 - `8a1eba7` and `c47f26f`: README and service-manager notes describe the current limits and checked evidence.
 
 Tests were not executed. UI changes were not visually runtime-tested. The SSH-PC compiler check is evidence of compilation only; it does not verify remote xrdp/VNC behavior or execute detector fallback branches.
 
 ## Current implementation boundary
 
-See [`SERVICE_MANAGER.md`](SERVICE_MANAGER.md) for package-source notes. In brief, the app has a read-only `SLD/1` inventory scan and RDP/VNC handshake probe, manual instructions for Debian/Ubuntu, and reviewed fixed-command xrdp actions for Debian/Ubuntu systemd hosts. Service changes run asynchronously and use operation-scoped sudo password handling. TigerVNC mutations and unverified distro actions remain manual-only.
+See [`SERVICE_MANAGER.md`](SERVICE_MANAGER.md) for package-source notes. In brief, the app has a read-only `SLD/1` inventory scan and RDP/VNC handshake probe, manual instructions for Debian/Ubuntu, and reviewed fixed-command xrdp actions for Debian/Ubuntu systemd hosts. Service changes run asynchronously and use operation-scoped sudo password handling. Successful/partial steps are now recorded locally, but history is not yet presented for Undo. TigerVNC mutations and unverified distro actions remain manual-only.
 
 The latest readiness model distinguishes `Ready` (service state running and handshake succeeded), running without a tested handshake, running but unreachable, stopped, failed, not installed, limited detection, and unknown. A successful handshake alone does not imply the managed service is healthy when service evidence is absent.
 
@@ -69,13 +70,13 @@ Do not claim the roadmap is complete until each required item is implemented and
 5. **Complete action execution/progress (Stages 8–10).** The UI reports command-step boundaries, not live output/progress inside a package operation. Add bounded streaming only if it can reuse the SSH layer safely. Preserve operation-scoped sudo, exact approved commands, safe cancellation boundaries, bounded logs, and a post-action rescan. Test event order/failure/cancellation by type-checking fixtures; do not run remote mutations during coding checks.
 6. **Install/start support (Stage 11).** xrdp install/start exists only for verified Debian/Ubuntu systemd hosts, and has not been runtime-tested by this app. Add lock timeout and explicit optional desktop setup only if exact commands and rollback are verified. TigerVNC start/install must remain manual-only until per-user service mapping and password provisioning can be made safe without argv, history, or config storage.
 7. **Port assignment and bind restriction (Stage 12).** Display-based VNC suggestions are improved, but audit automatic profile updates so a user-edited port is never silently replaced. Do not automate xrdp or VNC localhost binding until installed-version syntax, backups, rollback, tunnel routing, and behavior are verified. Never change firewall or cloud-security rules.
-8. **Add bounded setup log and reviewed Undo (Stage 13).** This is not implemented. Record only app-owned service/config changes outside `servers.json`; do not store passwords, raw output, or unbounded logs. Undo must show and require approval for exact inverse actions, must verify host identity/backups, and must not uninstall packages by default.
+8. **Finish setup log and reviewed Undo (Stage 13).** A bounded local history file now records completed step IDs and host identity without passwords or remote output. It is not shown in the UI yet, and Undo is not implemented. Add a host-identity-checked history view and only offer approved inverse service actions whose prior state is known; never uninstall packages by default.
 9. **Complete diagnostics and UI polish (Stage 14).** Expand diagnosis only for observed evidence (SSH failure, refusal, timeout as a possible network/security-group block, wrong protocol, unsupported handshake/auth, package lock/unavailable, missing desktop, port conflict, SELinux, cancellation, partial completion). Keep raw output collapsed. Visual checks in Nocturnal Command, Light, Catppuccin Latte, and narrow windows remain undone.
 10. **Complete documentation and final verification (Stage 15).** README and `SERVICE_MANAGER.md` now describe the current service-manager scope and compile-check evidence. Keep `TESTING.md` aligned with implementation limits and the manual matrix. Python persistence behavior is documented as potentially dropping Rust-only fields; keep Python files untouched. Record actual distro/version/client route and clearly distinguish compile-checked, test-executed, docs-verified, and runtime-tested evidence.
 
 ## Next recommended coding change
 
-Continue with item 2: compact the visible service rows, then check the card in multiple themes and a narrow window. Keep changes small and run the required SSH-PC `cargo check --locked --all-targets` before committing.
+Continue with item 8: expose recent local service changes and add an approved Undo only for known prior service state. Keep package removal out of Undo. Then complete the visual/keyboard checks when the app can be run in the required themes and narrow sizes.
 
 ## Do not misreport
 

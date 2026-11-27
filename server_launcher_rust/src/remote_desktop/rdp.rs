@@ -796,7 +796,7 @@ fn run(
                                 .lock()
                                 .unwrap()
                                 .framebuffer
-                                .resize([width.into(), height.into()])
+                                .reset([width.into(), height.into()])
                                 .map_err(error)?;
                             image = DecodedImage::new(PixelFormat::RgbA32, width, height);
                             if !stage.reactivate(

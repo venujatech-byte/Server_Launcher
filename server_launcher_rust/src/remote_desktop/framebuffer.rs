@@ -60,21 +60,26 @@ pub(crate) struct Update {
 
 impl Framebuffer {
     pub(crate) fn resize(&mut self, size: [usize; 2]) -> Result<(), &'static str> {
+        if size != self.size {
+            self.reset(size)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn reset(&mut self, size: [usize; 2]) -> Result<(), &'static str> {
         let [w, h] = size;
         if w == 0 || h == 0 || w > MAX_SIDE || h > MAX_SIDE || w * h > MAX_PIXELS {
             return Err("Remote framebuffer dimensions exceed the viewer limit.");
         }
-        if size != self.size {
-            self.size = size;
-            self.pixels = vec![Color32::BLACK; w * h];
-            self.revision = self.revision.wrapping_add(1);
-            self.dirty.clear();
-            self.dirty.push(Region {
-                origin: [0, 0],
-                size,
-            });
-            self.resized = true;
-        }
+        self.size = size;
+        self.pixels = vec![Color32::BLACK; w * h];
+        self.revision = self.revision.wrapping_add(1);
+        self.dirty.clear();
+        self.dirty.push(Region {
+            origin: [0, 0],
+            size,
+        });
+        self.resized = true;
         Ok(())
     }
 

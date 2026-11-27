@@ -189,6 +189,7 @@ mod tests {
             id: "start",
             title: "Start xrdp",
             command: "sudo systemctl start xrdp.service",
+            effect: "Starts xrdp now.",
             needs_root: true,
             undo_note: "Can be stopped again.",
         };

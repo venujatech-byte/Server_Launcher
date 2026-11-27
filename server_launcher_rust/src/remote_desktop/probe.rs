@@ -377,7 +377,9 @@ impl ServerDetection {
                 ui.label("Review the exact commands. Nothing runs until you select Run.");
                 ui.add_space(6.0);
                 for step in &action.plan.steps {
-                    ui.label(format!("{} — {}", step.title, step.undo_note));
+                    ui.strong(step.title);
+                    ui.label(step.effect);
+                    ui.small(format!("Undo: {}", step.undo_note));
                     let command = super::setup::exec::command_for_step(
                         step,
                         action.host.user == "root",

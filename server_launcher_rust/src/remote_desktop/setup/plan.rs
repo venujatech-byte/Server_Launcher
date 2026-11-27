@@ -19,6 +19,7 @@ pub(crate) struct ActionStep {
     pub id: &'static str,
     pub title: &'static str,
     pub command: &'static str,
+    pub effect: &'static str,
     pub needs_root: bool,
     pub undo_note: &'static str,
 }
@@ -52,33 +53,64 @@ pub(crate) fn build_plan(
 
     let (summary, commands): (
         &'static str,
-        &[(&'static str, &'static str, &'static str)],
+        &[(&'static str, &'static str, &'static str, &'static str)],
     ) = match intent {
         Intent::Start => (
             "Start xrdp",
-            &[("start", "Start xrdp", "sudo systemctl start xrdp.service")],
+            &[(
+                "start",
+                "Start xrdp",
+                "sudo systemctl start xrdp.service",
+                "Starts xrdp now; boot behavior is unchanged.",
+            )],
         ),
         Intent::Stop => (
             "Stop xrdp",
-            &[("stop", "Stop xrdp", "sudo systemctl stop xrdp.service")],
+            &[(
+                "stop",
+                "Stop xrdp",
+                "sudo systemctl stop xrdp.service",
+                "Stops xrdp now; it remains enabled or disabled as before.",
+            )],
         ),
         Intent::Restart => (
             "Restart xrdp",
-            &[("restart", "Restart xrdp", "sudo systemctl restart xrdp.service")],
+            &[(
+                "restart",
+                "Restart xrdp",
+                "sudo systemctl restart xrdp.service",
+                "Restarts xrdp now; active remote desktop sessions may disconnect.",
+            )],
         ),
         Intent::EnableAtBoot => (
             "Enable xrdp at boot",
-            &[("enable", "Enable xrdp at boot", "sudo systemctl enable xrdp.service")],
+            &[(
+                "enable",
+                "Enable xrdp at boot",
+                "sudo systemctl enable xrdp.service",
+                "Enables xrdp for future boots; does not start it now.",
+            )],
         ),
         Intent::InstallAndStart => (
             "Install and start xrdp",
             &[
-                ("package-index", "Update package index", "sudo apt-get update"),
-                ("install", "Install xrdp", "sudo apt-get install -y xrdp"),
+                (
+                    "package-index",
+                    "Update package index",
+                    "sudo apt-get update",
+                    "Refreshes package metadata from configured repositories.",
+                ),
+                (
+                    "install",
+                    "Install xrdp",
+                    "sudo apt-get install -y xrdp",
+                    "Installs xrdp and dependencies; automatic undo does not remove packages.",
+                ),
                 (
                     "enable-start",
                     "Enable and start xrdp",
                     "sudo systemctl enable --now xrdp.service",
+                    "Enables xrdp at boot and starts it now.",
                 ),
             ],
         ),
@@ -99,10 +131,11 @@ pub(crate) fn build_plan(
         summary,
         steps: commands
             .iter()
-            .map(|(id, title, command)| ActionStep {
+            .map(|(id, title, command, effect)| ActionStep {
                 id,
                 title,
                 command,
+                effect,
                 needs_root: true,
                 undo_note: match *id {
                     "start" | "restart" => "The service can be stopped again.",
@@ -170,6 +203,7 @@ fn restore_step(id: &'static str, title: &'static str, command: &'static str) ->
         id,
         title,
         command,
+        effect: "Restores the prior active/enabled service state; package changes are not reversed.",
         needs_root: true,
         undo_note: "Restores the observed state from before the app action.",
     }
@@ -205,6 +239,9 @@ mod tests {
         assert_eq!(plan.steps[0].command, "sudo apt-get update");
         assert_eq!(plan.steps[1].command, "sudo apt-get install -y xrdp");
         assert_eq!(plan.steps[2].command, "sudo systemctl enable --now xrdp.service");
+        assert!(plan.steps[0].effect.contains("package metadata"));
+        assert!(plan.steps[1].effect.contains("does not remove packages"));
+        assert!(plan.steps[2].effect.contains("starts it now"));
         assert!(plan.steps.iter().all(|step| step.needs_root));
     }
 
@@ -241,6 +278,7 @@ mod tests {
             assert_eq!(plan.summary, summary);
             assert_eq!(plan.steps.len(), 1);
             assert_eq!(plan.steps[0].command, command);
+            assert!(!plan.steps[0].effect.is_empty());
             assert!(plan.steps[0].needs_root);
         }
     }

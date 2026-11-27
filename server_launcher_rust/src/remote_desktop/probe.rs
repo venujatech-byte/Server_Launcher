@@ -224,12 +224,28 @@ impl ServerDetection {
                     }
                     Err(error) => {
                         let cancelled = error.starts_with("Cancelled");
-                        let (label, color) = if cancelled {
-                            ("Remote action cancelled", ui.visuals().warn_fg_color)
+                        if cancelled {
+                            ui.colored_label(
+                                ui.visuals().warn_fg_color,
+                                format!("Remote action cancelled: {error}"),
+                            );
                         } else {
-                            ("Remote action failed", ui.visuals().error_fg_color)
-                        };
-                        ui.colored_label(color, format!("{label}: {error}"));
+                            ui.colored_label(
+                                ui.visuals().error_fg_color,
+                                format!(
+                                    "Remote action failed. {}",
+                                    action_error_hint(error).unwrap_or(
+                                        "Review the remote output for the cause and next step."
+                                    )
+                                ),
+                            );
+                            egui::CollapsingHeader::new("Remote error details")
+                                .id_salt(("service_action_error", protocol as u8))
+                                .show(ui, |ui| {
+                                    let detail = error.chars().take(4096).collect::<String>();
+                                    ui.add(egui::Label::new(detail).wrap());
+                                });
+                        }
                     }
                 }
             }
@@ -450,6 +466,39 @@ impl ServerDetection {
             let _ = sender.send(detect_servers(&host, timeout));
             ctx.request_repaint();
         });
+    }
+}
+
+fn action_error_hint(error: &str) -> Option<&'static str> {
+    let message = error.chars().take(8192).collect::<String>().to_ascii_lowercase();
+    if message.contains("could not get lock")
+        || message.contains("unable to acquire")
+        || message.contains("lock-frontend")
+    {
+        Some("The package manager is busy. Let the current update finish, then retry.")
+    } else if message.contains("unable to locate package")
+        || message.contains("has no installation candidate")
+    {
+        Some("The package is unavailable from the configured repositories. Check the distribution and repository setup.")
+    } else if message.contains("not in the sudoers")
+        || message.contains("not allowed to execute")
+        || message.contains("sudo is not available")
+    {
+        Some("This SSH account does not have permission to run the approved administrator command.")
+    } else if message.contains("no space left on device") {
+        Some("The remote system is out of disk space. Free space before retrying.")
+    } else if message.contains("temporary failure resolving")
+        || message.contains("could not resolve")
+        || message.contains("network is unreachable")
+        || message.contains("failed to fetch")
+    {
+        Some("The remote system could not reach its package source. Check its network and repository configuration.")
+    } else if message.contains("unit ") && message.contains("not found") {
+        Some("The expected systemd unit is missing. Rescan the host and use the manual instructions if it remains absent.")
+    } else if message.contains("timed out") || message.contains("deadline") {
+        Some("The remote command timed out. Check the server and retry when it is responsive.")
+    } else {
+        None
     }
 }
 
@@ -1344,6 +1393,18 @@ mod tests {
         detection.last = Some((key, Ok(report), started + Duration::from_secs(2)));
         assert_eq!(detection.take_action_port_update(&host, DesktopProtocol::Rdp), Some(3390));
         assert_eq!(detection.take_action_port_update(&host, DesktopProtocol::Rdp), None);
+    }
+
+    #[test]
+    fn action_failures_get_specific_hints_without_treating_unknown_text_as_known() {
+        assert!(action_error_hint("Could not get lock /var/lib/dpkg/lock-frontend")
+            .unwrap()
+            .contains("package manager is busy"));
+        assert!(action_error_hint("Unable to locate package xrdp")
+            .unwrap()
+            .contains("unavailable"));
+        assert!(action_error_hint("user is not in the sudoers file").is_some());
+        assert_eq!(action_error_hint("unexpected remote output"), None);
     }
 
     #[test]

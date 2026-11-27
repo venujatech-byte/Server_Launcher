@@ -238,20 +238,20 @@ fn record(
                 buffer.clear();
                 buffer.extend(frame.pixels.iter().flat_map(|pixel| pixel.to_array()));
             }
-            match pipe_sender.try_send(Arc::clone(&pixels)) {
-                Ok(()) => {}
-                Err(mpsc::TrySendError::Full(_)) => return Ok(()),
-                Err(mpsc::TrySendError::Disconnected(_)) => {
-                    return Err("FFmpeg stopped accepting recording frames.".into())
-                }
+            if !enqueue_recording_frame(
+                &pipe_sender,
+                Arc::clone(&pixels),
+                &mut frames,
+                frame_micros,
+                &progress,
+            )? {
+                return Ok(());
             }
-            frames += 1;
             if frames % u64::from(fps) == 0 {
                 if let Ok(metadata) = std::fs::metadata(&output) {
                     output_bytes.store(metadata.len(), Ordering::Relaxed);
                 }
             }
-            progress.store(frames * frame_micros, Ordering::Relaxed);
             Ok(())
         },
     );
@@ -388,6 +388,26 @@ fn normalize_fps(fps: u32) -> u32 {
     match fps {
         15 | 24 | 30 | 60 => fps,
         _ => 30,
+    }
+}
+
+fn enqueue_recording_frame(
+    sender: &mpsc::SyncSender<Arc<Vec<u8>>>,
+    pixels: Arc<Vec<u8>>,
+    frames: &mut u64,
+    frame_micros: u64,
+    progress: &AtomicU64,
+) -> Result<bool, String> {
+    match sender.try_send(pixels) {
+        Ok(()) => {
+            *frames += 1;
+            progress.store(*frames * frame_micros, Ordering::Relaxed);
+            Ok(true)
+        }
+        Err(mpsc::TrySendError::Full(_)) => Ok(false),
+        Err(mpsc::TrySendError::Disconnected(_)) => {
+            Err("FFmpeg stopped accepting recording frames.".into())
+        }
     }
 }
 
@@ -529,5 +549,32 @@ mod tests {
         assert!(webm.1.contains(&"libvpx-vp9"));
         assert!(webm.2.is_empty());
         assert!(ffmpeg_video_options(crate::config::RemoteRecordingFormat::PngSequence).is_none());
+    }
+
+    #[test]
+    fn dropped_encoder_frames_do_not_advance_recording_duration() {
+        let (sender, _receiver) = mpsc::sync_channel(1);
+        let progress = AtomicU64::new(0);
+        let mut frames = 0;
+
+        assert!(enqueue_recording_frame(
+            &sender,
+            Arc::new(vec![1]),
+            &mut frames,
+            10,
+            &progress,
+        )
+        .unwrap());
+        assert!(!enqueue_recording_frame(
+            &sender,
+            Arc::new(vec![2]),
+            &mut frames,
+            10,
+            &progress,
+        )
+        .unwrap());
+
+        assert_eq!(frames, 1);
+        assert_eq!(progress.load(Ordering::Relaxed), 10);
     }
 }

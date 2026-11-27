@@ -453,73 +453,156 @@ impl ServerDetection {
         let mut window_open = true;
         let mut window = egui::Window::new("Review remote service action")
             .id(egui::Id::new(("service_action_review", key)))
+            .title_bar(false)
             .collapsible(false)
             .resizable(false)
-            .default_width(460.0);
+            .default_width(440.0);
         if !running {
             window = window.open(&mut window_open);
         }
         window.show(ui.ctx(), |ui| {
-                ui.heading(action.plan.summary);
-                ui.label(egui::RichText::new("Review the exact commands. Nothing runs until you select Run.").weak());
+                // — compact custom title bar —
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Service action review").size(13.0).strong());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if !running && ui.small_button("✕").on_hover_text("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+                ui.separator();
+                ui.add_space(4.0);
+
+                // — action title + subtitle —
+                ui.label(egui::RichText::new(action.plan.summary).size(15.0).strong());
+                ui.label(
+                    egui::RichText::new("Review the commands below. Nothing runs until you click Run.")
+                        .small()
+                        .weak(),
+                );
                 ui.add_space(8.0);
-                for (idx, step) in action.plan.steps.iter().enumerate() {
-                    egui::Frame::group(ui.style())
-                        .inner_margin(egui::Margin::same(8.0))
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.strong(format!("{}. {}", idx + 1, step.title));
-                            ui.label(step.effect);
-                            ui.label(egui::RichText::new(format!("Undo: {}", step.undo_note)).small().weak());
-                            ui.add_space(4.0);
-                            let command = super::setup::exec::command_for_step(
-                                step,
-                                action.host.user == "root",
-                                action.needs_password,
-                            )
-                            .unwrap_or_else(|_| "Unsupported plan command".into());
-                            egui::Frame::none()
-                                .fill(ui.visuals().extreme_bg_color)
-                                .rounding(egui::Rounding::same(4.0))
-                                .inner_margin(egui::Margin::symmetric(8.0, 5.0))
-                                .show(ui, |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.add(egui::Label::new(egui::RichText::new(command).monospace().small()).wrap());
+
+                egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                    for (idx, step) in action.plan.steps.iter().enumerate() {
+                        egui::Frame::group(ui.style())
+                            .rounding(egui::Rounding::same(6.0))
+                            .inner_margin(egui::Margin::same(8.0))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(format!("{}", idx + 1))
+                                            .small()
+                                            .weak()
+                                            .monospace(),
+                                    );
+                                    ui.label(egui::RichText::new(step.title).strong().size(13.0));
                                 });
-                        });
-                    ui.add_space(6.0);
-                }
-                if !action.plan.warnings.is_empty() {
-                    ui.add_space(2.0);
-                    for warning in &action.plan.warnings {
-                        ui.colored_label(ui.visuals().warn_fg_color, *warning);
+                                ui.add_space(2.0);
+                                ui.label(egui::RichText::new(step.effect).size(12.0));
+                                ui.label(
+                                    egui::RichText::new(format!("↩ {}", step.undo_note))
+                                        .small()
+                                        .weak(),
+                                );
+                                ui.add_space(5.0);
+                                let command = super::setup::exec::command_for_step(
+                                    step,
+                                    action.host.user == "root",
+                                    action.needs_password,
+                                )
+                                .unwrap_or_else(|_| "Unsupported plan command".into());
+                                egui::Frame::none()
+                                    .fill(ui.visuals().extreme_bg_color)
+                                    .rounding(egui::Rounding::same(4.0))
+                                    .inner_margin(egui::Margin::symmetric(8.0, 5.0))
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(command).monospace().size(11.0),
+                                            )
+                                            .wrap(),
+                                        );
+                                    });
+                            });
+                        if idx + 1 < action.plan.steps.len() {
+                            ui.add_space(5.0);
+                        }
                     }
-                    ui.add_space(4.0);
+                });
+
+                if !action.plan.warnings.is_empty() {
+                    ui.add_space(6.0);
+                    for warning in &action.plan.warnings {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("⚠").color(ui.visuals().warn_fg_color));
+                            ui.label(egui::RichText::new(*warning).small().color(ui.visuals().warn_fg_color));
+                        });
+                    }
                 }
-                if !action.sudo_available {
-                    ui.colored_label(ui.visuals().error_fg_color, "sudo is not available for this SSH user. Use the manual instructions.");
-                } else if action.needs_password {
-                    ui.label(format!("Administrator password · attempt {}/3 · used only for this action, never saved:", action.password_attempts + 1));
-                    ui.monospace("sudo -k -S -p '' -- true");
-                    ui.add(egui::TextEdit::singleline(&mut *self.action_password).password(true).desired_width(f32::INFINITY));
-                } else {
-                    ui.label("This account can run the approved command without an administrator password.");
-                }
+
                 ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(4.0);
+
+                // — sudo / password section —
+                if !action.sudo_available {
+                    ui.colored_label(
+                        ui.visuals().error_fg_color,
+                        "sudo is not available for this SSH user. Use the manual instructions.",
+                    );
+                } else if action.needs_password {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "🔒 Administrator password — attempt {}/3 (used only for this action, never saved)",
+                            action.password_attempts + 1
+                        ))
+                        .size(12.0),
+                    );
+                    ui.add_space(3.0);
+                    ui.add(
+                        egui::TextEdit::singleline(&mut *self.action_password)
+                            .password(true)
+                            .hint_text("Enter sudo password…")
+                            .desired_width(f32::INFINITY),
+                    );
+                } else {
+                    ui.label(
+                        egui::RichText::new("✓ No administrator password required for this action.")
+                            .small()
+                            .weak(),
+                    );
+                }
+
                 if self.action_status.starts_with("Sudo password was rejected") {
+                    ui.add_space(2.0);
                     ui.colored_label(ui.visuals().error_fg_color, &self.action_status);
                 }
+
+                ui.add_space(8.0);
+
+                // — footer buttons —
                 ui.horizontal(|ui| {
                     if running {
                         ui.spinner();
-                        ui.label(if self.action_status.is_empty() { "Starting approved steps…" } else { self.action_status.as_str() });
-                        if ui.button("Cancel after this step").clicked() {
-                            cancel_after_step = true;
-                        }
+                        ui.label(
+                            egui::RichText::new(if self.action_status.is_empty() {
+                                "Running approved steps…"
+                            } else {
+                                self.action_status.as_str()
+                            })
+                            .small(),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("Cancel after this step").clicked() {
+                                cancel_after_step = true;
+                            }
+                        });
                     } else {
                         let can_run = action.sudo_available
                             && (!action.needs_password || !self.action_password.is_empty());
-                        if ui.add_enabled(can_run, egui::Button::new("Run")).clicked() {
+                        if ui.add_enabled(can_run, egui::Button::new("▶  Run")).clicked() {
                             approve = true;
                         }
                         if ui.button("Cancel").clicked() {
@@ -527,9 +610,11 @@ impl ServerDetection {
                         }
                     }
                 });
+
                 if running && !self.action_logs.is_empty() {
-                    egui::ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
-                        ui.add(egui::Label::new(egui::RichText::new(&self.action_logs).monospace()).wrap());
+                    ui.add_space(4.0);
+                    egui::ScrollArea::vertical().max_height(120.0).show(ui, |ui| {
+                        ui.add(egui::Label::new(egui::RichText::new(&self.action_logs).monospace().size(11.0)).wrap());
                     });
                 }
             });

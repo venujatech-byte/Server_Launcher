@@ -5,9 +5,8 @@ Use this handoff with [`SERVICE_MANAGER_ROADMAP.md`](SERVICE_MANAGER_ROADMAP.md)
 ## Repository state
 
 - Branch: `vnc/rdp`
-- Last verified commit: `8f2adfd refactor(setup): derive readiness outside the UI`
-- Local branch, GitHub branch, and the authorized SSH-PC clone were synchronized at `8f2adfd`.
-- Worktree was clean after that sync. This handoff is a new documentation-only change.
+- Latest code change: `3f8471e fix(probe): honor detected listener address through SSH tunnel`.
+- It passed `cargo check --locked --all-targets` on the SSH PC in a temporary worktree.
 - SSH build/check PC: use the connection details already provided by the user; do not copy its address, username, or credentials into repository files. Its clone is `~/coding/Server_Launcher`.
 - The user has asked that checks run on that SSH PC and that changes be pushed and pulled there.
 
@@ -35,6 +34,7 @@ The following changes are on `vnc/rdp` and passed `cargo check --locked --all-ta
 - `dd79c28`: the legacy SSH host compatibility test now exercises `servers.json` file load → save → reload and verifies old SSH fields survive while omitted RDP/VNC profiles stay omitted.
 - `6e12801`: VNC port selection prefers a detected TigerVNC display and can use its port when listener inspection is missing; it avoids preferring an unrelated listener over that display.
 - `8f2adfd`: pure readiness derivation covers install/service/reachability/handshake states and drives the service-card summary.
+- `3f8471e`: scan-triggered RDP/VNC handshakes use the matching listener's parsed bind address through SSH; wildcard and loopback listeners map to `127.0.0.1`, and tunnel defaults for regular sessions remain loopback.
 
 Tests were not executed. UI changes were not visually runtime-tested. The SSH-PC compiler check is evidence of compilation only; it does not verify remote xrdp/VNC behavior.
 
@@ -48,7 +48,7 @@ The latest readiness model distinguishes `Ready` (service state running and hand
 
 Do not claim the roadmap is complete until each required item is implemented and verified or explicitly documented as manual-only.
 
-1. **Finish read-only scan/probe correctness (Stages 2–4).** Audit every parser fixture in the roadmap, especially wildcard/IPv6 binds, missing `ss`, malformed/truncated records, multiple VNC displays, and incomplete evidence. Review `probe.rs` and `tunnel.rs` callers: tunneled probes currently need to be checked for using a detected specific bind address instead of always targeting loopback. Keep the SSH scan cached, on-demand, protocol-scoped, and read-only. Authentication/login remains distinct from handshake and must not be implied.
+1. **Finish read-only scan/probe correctness (Stages 2–4).** Audit every parser fixture in the roadmap, especially wildcard/IPv6 binds, missing `ss`, malformed/truncated records, multiple VNC displays, and incomplete evidence. The automatic scan handshake now routes through the detected bind address; the editor's manual Test Connection and the real viewer session still use loopback. Decide how to pass fresh listener evidence into those paths without adding polling or overwriting user configuration. Keep the scan cached, on-demand, protocol-scoped, and read-only. Authentication/login remains distinct from handshake and must not be implied.
 2. **Complete service cards and editor status dots (Stage 5).** The current card is still a plain egui group with rows. Match the roadmap's status chip/accent, scan affordance, compact check rows, stable checking placeholder, protocol-specific raw-output disclosure, manual-process details, and tab dots. Show a VNC display selector only when multiple verified displays are present. Keep all content keyboard-accessible and use theme tokens.
 3. **Finish manual guidance (Stage 6).** Verify each command against authoritative sources before displaying it. Improve current Debian/Ubuntu instructions and tests. Add other distro families only after package, unit, startup, and rollback facts are confirmed. Unknown or unsupported systems remain manual-only; do not generate guessed commands.
 4. **Audit plans against the safety contract (Stage 7).** Plans currently use fixed static xrdp commands. Preserve the closed intent set, but complete explicit capability checks, evidence-based display/effect descriptions, and plan tests. Do not introduce user-controlled shell interpolation. Any future command argument must be validated and passed positionally.
@@ -61,7 +61,7 @@ Do not claim the roadmap is complete until each required item is implemented and
 
 ## Next recommended coding change
 
-Continue with item 1: audit and correct the tunneled probe target using the detected listener address, while preserving existing tunnel callers. Before editing, grep every tunnel/probe caller and read the API and its tests. Add a focused pure unit test for wildcard/loopback versus specific-address target selection, then run the required SSH-PC `cargo check --locked --all-targets`, commit, push, and pull.
+Continue with item 1: connect the editor's manual Test Connection and live viewer startup to detected listener targets. Keep the regular tunnel default at loopback when no trustworthy listener address is available. The selection and IPv4/IPv6 target-format tests exist; run the required SSH-PC `cargo check --locked --all-targets` before committing.
 
 ## Do not misreport
 

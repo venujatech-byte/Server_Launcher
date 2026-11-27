@@ -667,9 +667,12 @@ fn show_service_inventory(
     let readiness = report.readiness(protocol);
     let color = match readiness {
         Readiness::Ready => ui.visuals().hyperlink_color,
-        Readiness::InstalledStopped | Readiness::RunningNotReachable | Readiness::NotReachable => {
-            ui.visuals().warn_fg_color
-        }
+        Readiness::InstalledStopped
+        | Readiness::RunningSystemd
+        | Readiness::RunningManual
+        | Readiness::RunningNotReachable
+        | Readiness::NotReachable
+        | Readiness::HandshakeSucceededUnconfirmed => ui.visuals().warn_fg_color,
         Readiness::Failed => ui.visuals().error_fg_color,
         _ => ui.visuals().weak_text_color(),
     };

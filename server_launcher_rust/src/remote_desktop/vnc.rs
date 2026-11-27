@@ -198,7 +198,9 @@ pub(crate) struct Connection {
     pub(crate) clipboard_unsupported: Arc<AtomicBool>,
     pub(crate) clipboard_text: Option<String>,
     pub(crate) clipboard_image: Option<super::clipboard_image::ClipboardImage>,
+    pub(crate) remote_clipboard_paths: Vec<String>,
     pub(crate) remote_clipboard_file_count: usize,
+    clipboard_download_active: bool,
     pub(crate) clipboard_file_download: Option<String>,
     pub(crate) vnc_screen: Option<[u8; 16]>,
     pub(crate) vnc_cursor: Option<Arc<egui::ColorImage>>,
@@ -254,7 +256,9 @@ impl Connection {
             clipboard_unsupported: Arc::new(AtomicBool::new(false)),
             clipboard_text: None,
             clipboard_image: None,
+            remote_clipboard_paths: Vec::new(),
             remote_clipboard_file_count: 0,
+            clipboard_download_active: false,
             clipboard_file_download: None,
             vnc_screen: None,
             vnc_cursor: None,
@@ -297,7 +301,9 @@ impl Connection {
                 state.clipboard_unsupported = Arc::new(AtomicBool::new(false));
                 state.clipboard_text = None;
                 state.clipboard_image = None;
+                state.remote_clipboard_paths.clear();
                 state.remote_clipboard_file_count = 0;
+                state.clipboard_download_active = false;
                 state.clipboard_file_download = None;
                 state.clipboard_too_large = false;
                 state.vnc_screen = None;
@@ -593,8 +599,41 @@ fn run(
         let clipboard_sent = state.lock().unwrap().clipboard_sent.clone();
         let clipboard_unsupported = state.lock().unwrap().clipboard_unsupported.clone();
         let ctx = ctx.clone();
+        let download_host = host.clone();
+        let download_state = state.clone();
         std::thread::spawn(move || {
             while let Ok(event) = pending.recv() {
+                if let Input::DownloadClipboardFiles(directory) = event {
+                    let paths = {
+                        let mut state = download_state.lock().unwrap();
+                        if state.clipboard_download_active {
+                            state.clipboard_file_download =
+                                Some("A clipboard file download is already running.".into());
+                            ctx.request_repaint();
+                            continue;
+                        }
+                        state.clipboard_download_active = true;
+                        state.clipboard_file_download =
+                            Some("Downloading clipboard files over SSH…".into());
+                        state.remote_clipboard_paths.clone()
+                    };
+                    ctx.request_repaint();
+                    let host = download_host.clone();
+                    let state = download_state.clone();
+                    let ctx = ctx.clone();
+                    std::thread::spawn(move || {
+                        let result = download_clipboard_files(&host, &paths, &directory);
+                        let mut state = state.lock().unwrap();
+                        state.clipboard_download_active = false;
+                        state.clipboard_file_download = Some(match result {
+                            Ok(message) => message,
+                            Err(error) => format!("Clipboard download failed: {error}"),
+                        });
+                        drop(state);
+                        ctx.request_repaint();
+                    });
+                    continue;
+                }
                 let mut writer = writer.lock().unwrap();
                 if overflow.load(Ordering::Acquire) {
                     writer.disconnect();
@@ -704,14 +743,166 @@ fn run(
                 } else {
                     let mut text = vec![0; size as usize];
                     stream.read_exact(&mut text)?;
-                    state.lock().unwrap().clipboard_text =
-                        Some(text.into_iter().map(char::from).collect());
+                    let text: String = text.into_iter().map(char::from).collect();
+                    let paths = remote_file_uri_paths(&text);
+                    let mut state = state.lock().unwrap();
+                    state.remote_clipboard_file_count = paths.len();
+                    state.remote_clipboard_paths = paths;
+                    state.clipboard_text = Some(text);
+                    drop(state);
                     ctx.request_repaint();
                 }
             }
             _ => return Err(error("The VNC server sent an unsupported message.")),
         }
     }
+}
+
+fn remote_file_uri_paths(text: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    for line in text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+    {
+        let Some(uri) = line.strip_prefix("file://") else {
+            continue;
+        };
+        let path = if uri.starts_with('/') {
+            uri.to_owned()
+        } else if let Some((authority, path)) = uri.split_once('/') {
+            if !authority.eq_ignore_ascii_case("localhost") {
+                continue;
+            }
+            format!("/{path}")
+        } else {
+            continue;
+        };
+        let Some(path) = percent_decode_uri_path(&path) else {
+            continue;
+        };
+        let parsed = std::path::Path::new(&path);
+        if !parsed.is_absolute()
+            || parsed
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+            || path.contains(['\0', '\r', '\n'])
+        {
+            continue;
+        }
+        if !paths.contains(&path) {
+            paths.push(path);
+            if paths.len() == 128 {
+                break;
+            }
+        }
+    }
+    paths
+}
+
+fn percent_decode_uri_path(path: &str) -> Option<String> {
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = *bytes.get(index + 1)?;
+            let low = *bytes.get(index + 2)?;
+            decoded.push((hex_digit(high)? << 4) | hex_digit(low)?);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn download_clipboard_files(
+    host: &crate::config::SshRemoteHost,
+    sources: &[String],
+    directory: &std::path::Path,
+) -> Result<String, String> {
+    if !directory.is_dir() {
+        return Err("Choose an existing local folder.".into());
+    }
+    if sources.is_empty() {
+        return Err("The remote clipboard did not contain downloadable file paths.".into());
+    }
+    let mut host = host.clone();
+    if let Some(reference) = &host.credential_ref {
+        host.password =
+            crate::ssh_credentials::load(reference, &crate::ssh_credentials::binding(&host))?;
+    }
+    let sources = sources.iter().take(128).collect::<Vec<_>>();
+    let mut destinations = Vec::with_capacity(sources.len());
+    let mut names = std::collections::HashSet::new();
+    for source in &sources {
+        let remote_path = std::path::Path::new(source);
+        let name = remote_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty() && *name != "." && *name != "..")
+            .ok_or("The remote clipboard contains an invalid file name.")?;
+        if name.chars().any(char::is_control) || name.contains(['/', '\\']) {
+            return Err("The remote clipboard contains an unsafe file name.".into());
+        }
+        if !names.insert(name.to_lowercase()) {
+            return Err(format!("More than one clipboard item is named {name:?}."));
+        }
+        let destination = directory.join(name);
+        if std::fs::symlink_metadata(&destination).is_ok() {
+            return Err(format!("A local item named {name:?} already exists."));
+        }
+        destinations.push((source, destination));
+    }
+    for (source, destination) in destinations {
+        let mut literal = String::with_capacity(source.len());
+        for ch in source.chars() {
+            if matches!(ch, '\\' | '*' | '?' | '[' | ']') {
+                literal.push('\\');
+            }
+            literal.push(ch);
+        }
+        let hostname = host
+            .host
+            .trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']');
+        let target = if hostname.contains(':') {
+            format!("{}@[{hostname}]:{literal}", host.user.trim())
+        } else {
+            format!("{}@{hostname}:{literal}", host.user.trim())
+        };
+        let output = crate::remote::build_scp_command(&host)
+            .arg("-r")
+            .arg("--")
+            .arg(target)
+            .arg(&destination)
+            .output()
+            .map_err(|error| format!("Could not start SCP: {error}"))?;
+        if !output.status.success() {
+            let message = String::from_utf8_lossy(&output.stderr);
+            return Err(if message.trim().is_empty() {
+                format!("SCP exited with status {:?}.", output.status.code())
+            } else {
+                message.trim().chars().take(400).collect()
+            });
+        }
+    }
+    Ok(format!(
+        "Downloaded {} clipboard item(s) over SSH.",
+        sources.len()
+    ))
 }
 
 fn discard_clipboard(stream: &mut impl Read, mut remaining: u32) -> io::Result<()> {

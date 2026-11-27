@@ -27,7 +27,7 @@ fn toolbar_icon_button(
     ui.add_enabled(
         enabled,
         egui::Button::new(toolbar_icon_text(icon))
-            .min_size(egui::vec2(32.0, 28.0))
+            .min_size(egui::vec2(30.0, 28.0))
             .rounding(egui::Rounding::same(8.0)),
     )
     .on_hover_text(tooltip)
@@ -44,7 +44,7 @@ fn toolbar_toggle_button(
         enabled,
         egui::Button::new(toolbar_icon_text(icon))
             .selected(selected)
-            .min_size(egui::vec2(32.0, 28.0))
+            .min_size(egui::vec2(30.0, 28.0))
             .rounding(egui::Rounding::same(8.0)),
     )
     .on_hover_text(tooltip)
@@ -73,9 +73,8 @@ pub(crate) fn run(
     let recording_fps = config.remote_desktop.recording_fps;
     let recording_format = config.remote_desktop.recording_format;
     let copy_screenshots_to_clipboard = config.remote_desktop.copy_screenshots_to_clipboard;
-    let clipboard_image_limit_bytes = usize::from(
-        config.remote_desktop.clipboard_image_limit_mb.clamp(1, 64),
-    ) * 1024 * 1024;
+    let clipboard_image_limit_bytes =
+        usize::from(config.remote_desktop.clipboard_image_limit_mb.clamp(1, 64)) * 1024 * 1024;
     let warn_unencrypted_vnc = config.remote_desktop.warn_unencrypted_vnc;
     let default_scaling = config.remote_desktop.default_scaling;
     let profile = config.ssh_hosts.iter().find(|host| host.id == host_id);
@@ -340,12 +339,9 @@ fn start_connection(
                 ctx.clone(),
             )
         }
-        DesktopProtocol::Vnc => Connection::start(
-            host,
-            config_path.to_owned(),
-            session_password,
-            ctx.clone(),
-        ),
+        DesktopProtocol::Vnc => {
+            Connection::start(host, config_path.to_owned(), session_password, ctx.clone())
+        }
     }
 }
 
@@ -1164,7 +1160,19 @@ impl eframe::App for Viewer {
             }
         }
         let toolbar = |ui: &mut egui::Ui| {
-            ui.horizontal_wrapped(|ui| {
+            let show_rates = self.show_update_rate && connected;
+            let rates_width = if show_rates { 270.0 } else { 0.0 };
+            let controls_width = (ui.available_width() - rates_width - 8.0).max(0.0);
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(controls_width, 30.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        egui::ScrollArea::horizontal()
+                            .id_salt("remote_desktop_toolbar_controls")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
                 let status_text = if self.test_pattern {
                     "Test pattern"
                 } else if connected {
@@ -1315,13 +1323,9 @@ impl eframe::App for Viewer {
                     self.show_update_rate = !self.show_update_rate;
                     ctx.request_repaint();
                 }
-                if self.show_update_rate && connected {
-                    ui.label(format!("{} {:.1} FPS", crate::lucide::GAUGE, self.live_fps));
-                    ui.label(format!("{} {}/s", crate::lucide::DOWNLOAD, crate::sensors::format_bytes(self.download_bytes_per_second as u64)));
-                    ui.label(format!("{} {}/s", crate::lucide::UPLOAD, crate::sensors::format_bytes(self.upload_bytes_per_second as u64)));
-                }
                 ui.add_enabled_ui(connected, |ui| {
                     let stats = ui.menu_button(toolbar_icon_text(crate::lucide::INFO), |ui| {
+                        ui.set_min_width(360.0);
                         ui.label(self.protocol.label());
                         ui.label(&status);
                         if let Some(texture) = &self.texture {
@@ -1477,20 +1481,23 @@ impl eframe::App for Viewer {
                     self.fullscreen = !fullscreen;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
                 }
-                if self.protocol == DesktopProtocol::Rdp {
+                if remote_clipboard_file_count > 0 {
                     let response = ui.add_enabled(
                         connected
                             && !self.view_only
                             && self.receive_clipboard
-                            && remote_clipboard_file_count > 0,
-                        egui::Button::new(format!(
-                            "{} {remote_clipboard_file_count}",
-                            crate::lucide::DOWNLOAD
-                        ))
-                        .min_size(egui::vec2(30.0, 26.0)),
+                            && self.session_host.is_some(),
+                        egui::Button::new(
+                            toolbar_icon_text(&format!("{} {remote_clipboard_file_count}", crate::lucide::DOWNLOAD)),
+                        )
+                        .min_size(egui::vec2(30.0, 28.0)),
                     );
                     if response
-                        .on_hover_text("Save files currently offered by the remote clipboard.")
+                        .on_hover_text(if self.protocol == DesktopProtocol::Vnc {
+                            "Download remote clipboard files over SSH."
+                        } else {
+                            "Save files currently offered by the remote clipboard."
+                        })
                         .clicked()
                     {
                         if let Some(directory) = rfd::FileDialog::new()
@@ -1505,10 +1512,12 @@ impl eframe::App for Viewer {
                             }
                         }
                     }
+                }
+                if self.protocol == DesktopProtocol::Rdp {
                     let response = ui.add_enabled(
                         connected && !self.view_only && self.send_clipboard,
-                        egui::Button::new(crate::lucide::CLIPBOARD)
-                            .min_size(egui::vec2(30.0, 26.0)),
+                        egui::Button::new(toolbar_icon_text(crate::lucide::CLIPBOARD))
+                            .min_size(egui::vec2(30.0, 28.0)),
                     );
                     if response
                         .on_hover_text("Share files through the remote clipboard")
@@ -1575,8 +1584,8 @@ impl eframe::App for Viewer {
                 } else if ui
                     .add_enabled(
                         connected && self.texture.is_some(),
-                        egui::Button::new(crate::lucide::CIRCLE_DOT)
-                            .min_size(egui::vec2(30.0, 26.0)),
+                        egui::Button::new(toolbar_icon_text(crate::lucide::CIRCLE_DOT))
+                            .min_size(egui::vec2(30.0, 28.0)),
                     )
                     .on_hover_text("Start recording")
                     .clicked()
@@ -1689,6 +1698,21 @@ impl eframe::App for Viewer {
                 {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
+                                });
+                            });
+                    },
+                );
+                if show_rates {
+                    ui.separator();
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            ui.label(format!("{} {}/s", crate::lucide::UPLOAD, crate::sensors::format_bytes(self.upload_bytes_per_second as u64)));
+                            ui.label(format!("{} {}/s", crate::lucide::DOWNLOAD, crate::sensors::format_bytes(self.download_bytes_per_second as u64)));
+                            ui.label(format!("{} {:.1} FPS", crate::lucide::GAUGE, self.live_fps));
+                        },
+                    );
+                }
             });
         };
         if pinned {
@@ -1720,7 +1744,9 @@ impl eframe::App for Viewer {
                                 ui.horizontal(|ui| {
                                     ui.label(toolbar_icon_text(crate::lucide::ALERT_TRIANGLE));
                                     ui.label(label);
-                                    dismiss = ui.small_button(toolbar_icon_text(crate::lucide::X)).clicked();
+                                    dismiss = ui
+                                        .small_button(toolbar_icon_text(crate::lucide::X))
+                                        .clicked();
                                 });
                             });
                     });

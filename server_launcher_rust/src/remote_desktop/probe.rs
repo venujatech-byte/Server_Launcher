@@ -561,6 +561,33 @@ fn show_service_inventory_card(
     }
     if service.unit_failed == Some(true) {
         ui.colored_label(ui.visuals().error_fg_color, "Service unit reports a failed state");
+        let prefix = match protocol {
+            DesktopProtocol::Rdp => "# RDP log ",
+            DesktopProtocol::Vnc => "# VNC log ",
+        };
+        let log_tail = report
+            .raw_output
+            .lines()
+            .filter_map(|line| line.strip_prefix(prefix))
+            .rev()
+            .take(20)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !log_tail.is_empty() {
+            egui::CollapsingHeader::new("Recent service logs")
+                .id_salt(("service_logs", protocol as u8))
+                .show(ui, |ui| {
+                    if ui.small_button("Copy logs").clicked() {
+                        ui.ctx().copy_text(log_tail.clone());
+                    }
+                    egui::ScrollArea::vertical().max_height(120.0).show(ui, |ui| {
+                        ui.add(egui::Label::new(egui::RichText::new(&log_tail).monospace()).wrap());
+                    });
+                });
+        }
     }
 
     let mut ports = service

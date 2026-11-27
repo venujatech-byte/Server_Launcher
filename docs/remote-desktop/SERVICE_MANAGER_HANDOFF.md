@@ -5,7 +5,7 @@ Use this handoff with [`SERVICE_MANAGER_ROADMAP.md`](SERVICE_MANAGER_ROADMAP.md)
 ## Repository state
 
 - Branch: `vnc/rdp`
-- Latest code change: `dfb2e48 feat(setup): record verified distro in action history`.
+- Latest code change: `b8e89dc fix(setup): match VNC guide display to port`.
 - Latest Rust changes passed `cargo check --locked --all-targets` on the SSH PC in temporary worktrees.
 - SSH build/check PC: use the connection details already provided by the user; do not copy its address, username, or credentials into repository files. Its clone is `~/coding/Server_Launcher`.
 - The user has asked that checks run on that SSH PC and that changes be pushed and pulled there.
@@ -57,6 +57,7 @@ The following changes are on `vnc/rdp` and passed `cargo check --locked --all-ta
 - `532bbdf`: action review shows each fixed command's effect and undo note before approval.
 - `e9eaeef`: xrdp install review now separates starting the service from enabling it at boot.
 - `dfb2e48`: action history records the scanned distro and reads older records without that optional field.
+- `b8e89dc`: VNC manual start guidance selects the matching display for common ports 5901–5999 while keeping the selected RFB port explicit.
 - `8a1eba7` and `c47f26f`: README and service-manager notes describe the current limits and checked evidence.
 
 Tests were not executed. UI changes were not visually runtime-tested. The SSH-PC compiler check is evidence of compilation only; it does not verify remote xrdp/VNC behavior or execute detector fallback branches.
@@ -73,7 +74,7 @@ Do not claim the roadmap is complete until each required item is implemented and
 
 1. **Finish read-only scan/probe correctness (Stages 2–4).** Parser fixtures now include wildcard/IPv6 binds, `*`, specific binds, multiple VNC displays, and truncated records. A source-level regression check guards the `ss` → `netstat` → `/proc/net/tcp*` fallback chain, but it does not execute the shell script with mocked command availability. Keep scans read-only and on-demand; keep authentication/login distinct from handshake.
 2. **Finish service-card details (Stage 5).** The card has a theme-derived status outline/pill, compact three-column SSH/install/service rows, collapsed host details, a first-scan placeholder, protocol-specific raw-output disclosure, manual-process details, and cached editor status dots. A VNC display selector appears only with multiple verified displays. Remaining: visual/keyboard checks across themes and narrow windows.
-3. **Finish manual guidance (Stage 6).** Current Debian/Ubuntu command groups support per-command and Copy all actions, and RDP verification uses the selected port. Verify the remaining command details against authoritative sources before displaying them. Add other distro families only after package, unit, startup, and rollback facts are confirmed. Unknown or unsupported systems remain manual-only; do not generate guessed commands.
+3. **Finish manual guidance (Stage 6).** Debian/Ubuntu command groups support per-command and Copy all actions, RDP verification uses the selected port, and VNC start guidance maps common selected ports to matching displays. Verify remaining command details against authoritative sources before displaying them. Add other distro families only after package, unit, startup, and rollback facts are confirmed. Unknown or unsupported systems remain manual-only; do not generate guessed commands.
 4. **Audit plans against the safety contract (Stage 7).** Plans use fixed static xrdp commands, require verified OS/init, and require detected APT for installation. The review now shows each command's effect and undo note. Remaining: broader capability/intent tests. Preserve the closed intent set; do not introduce user-controlled shell interpolation.
 5. **Complete action execution/progress (Stages 8–10).** The UI reports command-step boundaries, not live output/progress inside a package operation. xrdp install now displays separate start-now and enable-at-boot commands. Add bounded streaming only if it can reuse the SSH layer safely. Preserve operation-scoped sudo, exact approved commands, safe cancellation boundaries, bounded logs, and a post-action rescan. Test event order/failure/cancellation by type-checking fixtures; do not run remote mutations during coding checks.
 6. **Install/start support (Stage 11).** xrdp install/start exists only for verified Debian/Ubuntu systemd hosts, and has not been runtime-tested by this app. Add lock timeout and explicit optional desktop setup only if exact commands and rollback are verified. TigerVNC start/install must remain manual-only until per-user service mapping and password provisioning can be made safe without argv, history, or config storage.

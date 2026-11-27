@@ -206,7 +206,13 @@ impl ServerDetection {
                         ui.colored_label(ui.visuals().hyperlink_color, format!("Action completed ({count} step(s)); checking the service again…"));
                     }
                     Err(error) => {
-                        ui.colored_label(ui.visuals().error_fg_color, format!("Remote action failed: {error}"));
+                        let cancelled = error.starts_with("Cancelled");
+                        let (label, color) = if cancelled {
+                            ("Remote action cancelled", ui.visuals().warn_fg_color)
+                        } else {
+                            ("Remote action failed", ui.visuals().error_fg_color)
+                        };
+                        ui.colored_label(color, format!("{label}: {error}"));
                     }
                 }
             }

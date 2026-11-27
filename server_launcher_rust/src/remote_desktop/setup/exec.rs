@@ -75,6 +75,9 @@ pub(crate) fn run_approved_plan(
             title: step.title,
             output: output_tail(&output, 8 * 1024),
         });
+        if cancel.load(Ordering::Relaxed) {
+            return Err(format!("Cancelled after {completed} completed step(s)."));
+        }
     }
     Ok(completed)
 }

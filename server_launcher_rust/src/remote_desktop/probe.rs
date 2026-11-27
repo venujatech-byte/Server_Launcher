@@ -222,12 +222,16 @@ impl ServerDetection {
         let mut approve = false;
         let mut cancel = false;
         let mut cancel_after_step = false;
-        egui::Window::new("Review remote service action")
+        let mut window_open = true;
+        let mut window = egui::Window::new("Review remote service action")
             .id(egui::Id::new(("service_action_review", key)))
             .collapsible(false)
             .resizable(false)
-            .default_width(460.0)
-            .show(ui.ctx(), |ui| {
+            .default_width(460.0);
+        if !running {
+            window = window.open(&mut window_open);
+        }
+        window.show(ui.ctx(), |ui| {
                 ui.heading(action.plan.summary);
                 ui.label("Review the exact commands. Nothing runs until you select Run.");
                 ui.add_space(6.0);
@@ -248,7 +252,7 @@ impl ServerDetection {
                     ui.colored_label(ui.visuals().error_fg_color, "sudo is not available for this SSH user. Use the manual instructions.");
                 } else if action.needs_password {
                     ui.label(format!("Administrator password · attempt {}/3 · used only for this action, never saved:", action.password_attempts + 1));
-                    ui.monospace("sudo -S -p '' -- true");
+                    ui.monospace("sudo -k -S -p '' -- true");
                     ui.add(egui::TextEdit::singleline(&mut *self.action_password).password(true).desired_width(f32::INFINITY));
                 } else {
                     ui.label("This account can run the approved command without an administrator password.");
@@ -281,6 +285,9 @@ impl ServerDetection {
                     });
                 }
             });
+        if !window_open {
+            self.action_review = None;
+        }
         if cancel_after_step {
             if let Some(cancel) = &self.action_cancel {
                 cancel.store(true, std::sync::atomic::Ordering::Relaxed);

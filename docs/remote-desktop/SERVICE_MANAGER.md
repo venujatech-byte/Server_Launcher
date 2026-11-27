@@ -10,7 +10,7 @@ The inventory script emits bounded `SLD/1` tab-separated records. Raw output rem
 
 | Platform | RDP | VNC | Automation status |
 |---|---|---|---|
-| Debian/Ubuntu | Ubuntu publishes `xrdp`; its Noble package includes `xrdp.service` and `xrdp-sesman.service`. Upstream documents port 3389 and the `apt install xrdp` package. | Ubuntu publishes `tigervnc-standalone-server`; TigerVNC documents `-localhost`, `-rfbport`, and the default `5900 + display` mapping. | Package and basic service facts are documented, but unattended install/start remains disabled until sudo is operation-scoped, desktop/session requirements are checked, and a complete approval/rollback plan is implemented. |
+| Debian/Ubuntu | Ubuntu publishes `xrdp`; its Noble package includes `xrdp.service` and `xrdp-sesman.service`. Upstream documents port 3389 and the `apt install xrdp` package. | Ubuntu publishes `tigervnc-standalone-server`; TigerVNC documents `-localhost`, `-rfbport`, and the default `5900 + display` mapping. | xrdp install/start and systemd controls are available through a reviewed plan for detected Debian/Ubuntu systemd hosts. TigerVNC remains manual-only because per-user service mapping and password setup are not yet verified by this app. |
 | Fedora/RHEL | Fedora publishes `xrdp`; upstream says non-Fedora RHEL derivatives need EPEL. | Fedora publishes `tigervnc-server`; unit and per-user mapping vary by release/configuration. | Manual instructions only for now. No EPEL enablement or package/service mutation is automated. |
 | Arch, openSUSE, other/unknown | Not verified for this feature. | Not verified for this feature. | Manual-only; no guessed package names or units. |
 

@@ -5,7 +5,7 @@ Use this handoff with [`SERVICE_MANAGER_ROADMAP.md`](SERVICE_MANAGER_ROADMAP.md)
 ## Repository state
 
 - Branch: `vnc/rdp`
-- Latest code change: `a0757ea fix(setup): report completed steps on failure`.
+- Latest code change: `a0757ea fix(setup): report completed steps on failure` (next change pending commit: redact operation passwords from action output).
 - Latest Rust changes passed `cargo check --locked --all-targets` on the SSH PC in temporary worktrees.
 - SSH build/check PC: use the connection details already provided by the user; do not copy its address, username, or credentials into repository files. Its clone is `~/coding/Server_Launcher`.
 - The user has asked that checks run on that SSH PC and that changes be pushed and pulled there.
@@ -59,6 +59,7 @@ The following changes are on `vnc/rdp` and passed `cargo check --locked --all-ta
 - `dfb2e48`: action history records the scanned distro and reads older records without that optional field.
 - `b8e89dc`: VNC manual start guidance selects the matching display for common ports 5901–5999 while keeping the selected RFB port explicit.
 - `a0757ea`: failed or cancelled service actions report how many approved steps completed and name them.
+- Pending change: service action output and sudo-validation details redact the operation-scoped password before they reach UI logs or errors; the regression test type-checks with the SSH-PC compile gate.
 - `8a1eba7` and `c47f26f`: README and service-manager notes describe the current limits and checked evidence.
 
 Tests were not executed. UI changes were not visually runtime-tested. The SSH-PC compiler check is evidence of compilation only; it does not verify remote xrdp/VNC behavior or execute detector fallback branches.

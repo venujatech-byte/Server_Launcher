@@ -66,6 +66,7 @@ pub(crate) fn run_approved_plan(
             } else {
                 stderr.trim()
             };
+            let detail = redact_secret(detail, password.as_deref().map(String::as_str));
             return Err(if detail.is_empty() {
                 format!("{} failed (exit {:?}).", step.title, result.status.code())
             } else {
@@ -78,7 +79,10 @@ pub(crate) fn run_approved_plan(
             index: index + 1,
             total,
             title: step.title,
-            output: output_tail(&output, 8 * 1024),
+            output: output_tail(
+                &redact_secret(&output, password.as_deref().map(String::as_str)),
+                8 * 1024,
+            ),
         });
         if cancel.load(Ordering::Relaxed) {
             return Err(format!("Cancelled after {completed} completed step(s)."));
@@ -105,6 +109,7 @@ fn validate_sudo_password(
     if crate::systemd::needs_sudo_password(&detail) {
         return Err("Sudo password was rejected. Re-enter it and try again.".into());
     }
+    let detail = redact_secret(&detail, Some(password));
     Err(if detail.trim().is_empty() {
         "Sudo access could not be validated for this SSH user.".into()
     } else {
@@ -123,6 +128,13 @@ fn output_tail(output: &str, max_chars: usize) -> String {
     let mut tail = output.chars().rev().take(max_chars).collect::<Vec<_>>();
     tail.reverse();
     tail.into_iter().collect()
+}
+
+fn redact_secret(output: &str, secret: Option<&str>) -> String {
+    match secret.filter(|secret| !secret.is_empty()) {
+        Some(secret) => output.replace(secret, "[redacted]"),
+        None => output.to_owned(),
+    }
 }
 
 pub(crate) fn command_for_step(
@@ -206,6 +218,15 @@ mod tests {
     fn action_output_keeps_only_a_bounded_unicode_safe_tail() {
         assert_eq!(output_tail("αβγδε", 3), "γδε");
         assert_eq!(output_tail("short", 20), "short");
+    }
+
+    #[test]
+    fn action_output_redacts_the_operation_password() {
+        assert_eq!(
+            redact_secret("received hunter2 from remote", Some("hunter2")),
+            "received [redacted] from remote"
+        );
+        assert_eq!(redact_secret("ordinary output", Some("")), "ordinary output");
     }
 
     #[test]

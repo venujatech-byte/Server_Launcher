@@ -26,7 +26,9 @@ fn toolbar_icon_button(
 ) -> egui::Response {
     ui.add_enabled(
         enabled,
-        egui::Button::new(icon).min_size(egui::vec2(30.0, 26.0)),
+        egui::Button::new(egui::RichText::new(icon).size(13.0))
+            .min_size(egui::vec2(32.0, 28.0))
+            .rounding(egui::Rounding::same(8.0)),
     )
     .on_hover_text(tooltip)
 }
@@ -42,7 +44,8 @@ fn toolbar_toggle_button(
         enabled,
         egui::Button::new(icon)
             .selected(selected)
-            .min_size(egui::vec2(30.0, 26.0)),
+            .min_size(egui::vec2(32.0, 28.0))
+            .rounding(egui::Rounding::same(8.0)),
     )
     .on_hover_text(tooltip)
 }
@@ -1130,10 +1133,28 @@ impl eframe::App for Viewer {
                 } else {
                     crate::lucide::ALERT_TRIANGLE
                 };
-                ui.label(format!("{status_icon} {status_text}"));
+                let status_color = if self.test_pattern {
+                    ui.visuals().text_color()
+                } else if connected {
+                    egui::Color32::from_rgb(52, 211, 153)
+                } else {
+                    ui.visuals().warn_fg_color
+                };
+                egui::Frame::none()
+                    .fill(ui.visuals().widgets.inactive.bg_fill)
+                    .rounding(egui::Rounding::same(999.0))
+                    .inner_margin(egui::Margin::symmetric(9.0, 4.0))
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{status_icon} {status_text}"))
+                                .size(11.5)
+                                .color(status_color),
+                        );
+                    });
                 ui.separator();
                 egui::ComboBox::from_id_salt("remote_scaling")
                     .selected_text(format!("{} {}", crate::lucide::MAXIMIZE, scale_label(self.scaling)))
+                    .width(88.0)
                     .show_ui(ui, |ui| {
                         for scale in [Scaling::Fit, Scaling::Native, Scaling::Fill] {
                             ui.selectable_value(&mut self.scaling, scale, scale_label(scale));
@@ -1303,14 +1324,15 @@ impl eframe::App for Viewer {
                 if self.protocol == DesktopProtocol::Rdp {
                     if let Some(connection) = &self.connection {
                         let mut connection = connection.lock().unwrap();
-                        let response = ui.add_enabled(
+                        let response = toolbar_toggle_button(
+                            ui,
+                            crate::lucide::SCREEN_SHARE,
+                            "Resize the remote desktop to fit this window",
+                            self.dynamic_resize,
                             connected && connection.rdp_resize_supported,
-                            egui::Checkbox::new(
-                                &mut self.dynamic_resize,
-                                format!("{} Fit", crate::lucide::SCREEN_SHARE),
-                            ),
                         );
-                        if response.changed() {
+                        if response.clicked() {
+                            self.dynamic_resize = !self.dynamic_resize;
                             connection.rdp_resize_enabled = self.dynamic_resize;
                             connection.resize_request = None;
                             self.last_window_size = None;
@@ -1556,7 +1578,12 @@ impl eframe::App for Viewer {
                 if connected {
                     let label = if self.toolbar_pinned { "Unpin" } else { "Pin" };
                     if ui
-                        .add(egui::Button::new(label).selected(self.toolbar_pinned))
+                        .add(
+                            egui::Button::new(label)
+                                .selected(self.toolbar_pinned)
+                                .min_size(egui::vec2(48.0, 28.0))
+                                .rounding(egui::Rounding::same(8.0)),
+                        )
                         .on_hover_text(if self.toolbar_pinned {
                             "Unpin toolbar"
                         } else {

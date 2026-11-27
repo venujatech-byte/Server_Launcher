@@ -15,9 +15,19 @@ struct RemoteDownload {
     index: i32,
     data_id: Option<u32>,
     path: PathBuf,
-    file: File,
+    file: Option<File>,
     size: Option<u64>,
     position: u64,
+    completed: bool,
+}
+
+impl Drop for RemoteDownload {
+    fn drop(&mut self) {
+        if !self.completed {
+            drop(self.file.take());
+            let _ = fs::remove_file(&self.path);
+        }
+    }
 }
 
 #[derive(Default)]
@@ -170,9 +180,10 @@ impl ClipboardBackend {
                 index,
                 data_id,
                 path,
-                file,
+                file: Some(file),
                 size: None,
                 position: 0,
+                completed: false,
             });
             self.queue_remote_file_request(FileContentsFlags::SIZE, 0, 8);
             return;
@@ -228,6 +239,7 @@ impl ClipboardBackend {
             }
             active.size = Some(size);
             if size == 0 {
+                active.completed = true;
                 self.active_remote_download = None;
                 self.completed_remote_files += 1;
                 self.advance_remote_download();
@@ -243,13 +255,17 @@ impl ClipboardBackend {
         if response.data().is_empty()
             || response.data().len() > MAX_FILE_CHUNK
             || response.data().len() as u64 > remaining
-            || active.file.write_all(response.data()).is_err()
+            || active
+                .file
+                .as_mut()
+                .is_none_or(|file| file.write_all(response.data()).is_err())
         {
             self.fail_active_remote_download();
             return;
         }
         active.position += response.data().len() as u64;
         if active.position == size {
+            active.completed = true;
             self.active_remote_download = None;
             self.completed_remote_files += 1;
             self.advance_remote_download();
@@ -262,8 +278,7 @@ impl ClipboardBackend {
 
     fn fail_active_remote_download(&mut self) {
         if let Some(active) = self.active_remote_download.take() {
-            drop(active.file);
-            let _ = fs::remove_file(active.path);
+            drop(active);
             self.failed_remote_files += 1;
         }
         self.advance_remote_download();
@@ -667,6 +682,30 @@ mod tests {
             },
         );
         assert!(invalid.is_error());
+    }
+
+    #[test]
+    fn dropping_backend_removes_incomplete_remote_download() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("partial.bin");
+        let mut file = File::create(&path).unwrap();
+        file.write_all(b"partial").unwrap();
+        let backend = ClipboardBackend {
+            active_remote_download: Some(RemoteDownload {
+                stream_id: 1,
+                index: 0,
+                data_id: None,
+                path: path.clone(),
+                file: Some(file),
+                size: Some(100),
+                position: 7,
+                completed: false,
+            }),
+            ..Default::default()
+        };
+
+        drop(backend);
+        assert!(!path.exists());
     }
 
     #[test]

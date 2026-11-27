@@ -5,12 +5,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-type DetectionResult = Result<String, String>;
+type DetectionResult = Result<super::setup::model::ServiceInventoryReport, String>;
 
 #[derive(Default)]
 pub(crate) struct ServerDetection {
     pending: Option<(String, std::sync::mpsc::Receiver<DetectionResult>)>,
-    last: Option<(String, DetectionResult)>,
+    last: Option<(String, DetectionResult, Instant)>,
 }
 
 impl ServerDetection {
@@ -18,20 +18,30 @@ impl ServerDetection {
         &mut self,
         ui: &mut egui::Ui,
         host: &crate::config::SshRemoteHost,
+        protocol: DesktopProtocol,
         timeout: Duration,
     ) {
-        let key = format!("{}:{}@{}", host.user, host.port, host.host);
+        let key = detection_key(host);
         if let Some((_, receiver)) = &self.pending {
             use std::sync::mpsc::TryRecvError;
             match receiver.try_recv() {
                 Ok(result) => {
-                    self.last = self.pending.take().map(|(key, _)| (key, result));
+                    self.last = self
+                        .pending
+                        .take()
+                        .map(|(key, _)| (key, result, Instant::now()));
                 }
                 Err(TryRecvError::Disconnected) => {
                     self.last = self
                         .pending
                         .take()
-                        .map(|(key, _)| (key, Err("The server scan stopped unexpectedly.".into())));
+                        .map(|(key, _)| {
+                            (
+                                key,
+                                Err("The server scan stopped unexpectedly.".into()),
+                                Instant::now(),
+                            )
+                        });
                 }
                 Err(TryRecvError::Empty) => {}
             }
@@ -43,13 +53,18 @@ impl ServerDetection {
             && self
                 .last
                 .as_ref()
-                .map_or(true, |(tested, _)| tested != &key);
+                .map_or(true, |(tested, _, scanned)| {
+                    tested != &key || scanned.elapsed() >= Duration::from_secs(60)
+                });
         if should_scan {
             self.start(host.clone(), key.clone(), timeout, ui.ctx().clone());
         }
 
         ui.horizontal(|ui| {
-            ui.strong("Remote desktop server detection");
+            ui.strong(match protocol {
+                DesktopProtocol::Rdp => "xrdp service",
+                DesktopProtocol::Vnc => "TigerVNC service",
+            });
             if self.pending.is_some() {
                 ui.spinner();
                 ui.label("Checking over SSH…");
@@ -64,11 +79,9 @@ impl ServerDetection {
                 self.start(host.clone(), key.clone(), timeout, ui.ctx().clone());
             }
         });
-        if let Some((_, result)) = self.last.as_ref().filter(|(tested, _)| tested == &key) {
+        if let Some((_, result, _)) = self.last.as_ref().filter(|(tested, _, _)| tested == &key) {
             match result {
-                Ok(report) => {
-                    ui.add(egui::Label::new(report.as_str()).selectable(true).wrap());
-                }
+                Ok(report) => show_service_inventory(ui, report, protocol),
                 Err(error) => {
                     ui.colored_label(ui.visuals().error_fg_color, error);
                 }
@@ -76,6 +89,32 @@ impl ServerDetection {
         } else if !can_scan {
             ui.label("Enter the SSH host and username to scan.");
         }
+    }
+
+    pub(crate) fn indicator(
+        &self,
+        host: &crate::config::SshRemoteHost,
+        protocol: DesktopProtocol,
+    ) -> Option<&'static str> {
+        let key = detection_key(host);
+        let (_, result, _) = self.last.as_ref().filter(|(tested, _, scanned)| {
+            tested == &key && scanned.elapsed() < Duration::from_secs(60)
+        })?;
+        let report = result.as_ref().ok()?;
+        if let Some(handshake) = report.handshake(protocol) {
+            return Some(match handshake {
+                Ok(_) => "●",
+                Err(_) => "◐",
+            });
+        }
+        Some(match report.service(protocol).state() {
+            super::setup::model::ServiceState::NotInstalled => "○",
+            super::setup::model::ServiceState::InstalledStopped
+            | super::setup::model::ServiceState::RunningSystemd
+            | super::setup::model::ServiceState::RunningManual => "◐",
+            super::setup::model::ServiceState::Failed => "!",
+            super::setup::model::ServiceState::Unknown => "?",
+        })
     }
 
     fn start(
@@ -94,55 +133,285 @@ impl ServerDetection {
     }
 }
 
-fn detect_servers(host: &crate::config::SshRemoteHost, timeout: Duration) -> DetectionResult {
-    let command = crate::remote::build_ssh_command(
-        host,
-        "if command -v ss >/dev/null 2>&1; then ss -ltnp 2>/dev/null | awk 'NR == 1 || /:3389([^0-9]|$)|:590[0-9]([^0-9]|$)|:5910([^0-9]|$)/'; else echo 'ss is unavailable'; fi; ps -eo comm= 2>/dev/null | grep -E '^(xrdp|Xvnc|x11vnc|Xtigervnc|vncserver)$' || true",
-    );
-    let output = crate::remote::ssh_probe_output(command, timeout)
-        .map_err(|error| format!("SSH scan failed: {error}"))?;
-    if !output.status.success() {
-        let error = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        return Err(if error.is_empty() {
-            format!("SSH scan exited with status {:?}.", output.status.code())
+fn detection_key(host: &crate::config::SshRemoteHost) -> String {
+    format!(
+        "{}:{}@{}|{}|{}|{}|{}|{}",
+        host.id,
+        host.port,
+        host.host,
+        host.user,
+        host.key_path,
+        host.credential_ref.as_deref().unwrap_or_default(),
+        host.use_agent,
+        host.strict_host_key
+    )
+}
+
+fn detect_servers(
+    host: &crate::config::SshRemoteHost,
+    timeout: Duration,
+) -> DetectionResult {
+    let mut report = super::setup::detect::scan(host, timeout)?;
+    if let Some(profile) = host.rdp.as_ref().filter(|profile| profile.enabled) {
+        if let Some(port) = detected_port(&report.rdp, profile.port) {
+            let mut ssh_host = host.clone();
+            ssh_host.password.clear();
+            let request = ProbeRequest {
+                host: host.host.trim().trim_matches(['[', ']']).to_owned(),
+                port,
+                protocol: DesktopProtocol::Rdp,
+                rdp_security: profile.security,
+                ssh_host: Some(ssh_host),
+                tunnel_via_ssh: profile.tunnel_via_ssh,
+                gateway: (!profile.gateway.trim().is_empty()).then(|| profile.gateway.clone()),
+                config_path: None,
+            };
+            report.rdp_handshake = Some(run(&request, timeout));
+        }
+    }
+    if let Some(profile) = host.vnc.as_ref().filter(|profile| profile.enabled) {
+        if let Some(port) = detected_port(&report.vnc, profile.port) {
+            let mut ssh_host = host.clone();
+            ssh_host.password.clear();
+            let request = ProbeRequest {
+                host: host.host.trim().trim_matches(['[', ']']).to_owned(),
+                port,
+                protocol: DesktopProtocol::Vnc,
+                rdp_security: RdpSecurity::default(),
+                ssh_host: Some(ssh_host),
+                tunnel_via_ssh: profile.tunnel_via_ssh,
+                gateway: None,
+                config_path: None,
+            };
+            report.vnc_handshake = Some(run(&request, timeout));
+        }
+    }
+    Ok(report)
+}
+
+fn detected_port(
+    service: &super::setup::model::ServiceInventory,
+    configured_port: u16,
+) -> Option<u16> {
+    service
+        .listeners
+        .iter()
+        .find(|listener| listener.port == configured_port)
+        .or_else(|| service.listeners.iter().min_by_key(|listener| listener.port))
+        .map(|listener| listener.port)
+}
+
+fn show_service_inventory(
+    ui: &mut egui::Ui,
+    report: &super::setup::model::ServiceInventoryReport,
+    protocol: DesktopProtocol,
+) {
+    use super::setup::model::{Exposure, InitSystem, ServiceState};
+
+    let service = report.service(protocol);
+    let (label, color) = match service.state() {
+        ServiceState::NotInstalled => ("Not installed", ui.visuals().weak_text_color()),
+        ServiceState::InstalledStopped => ("Installed, not running", ui.visuals().warn_fg_color),
+        ServiceState::RunningSystemd => ("Service running", ui.visuals().hyperlink_color),
+        ServiceState::RunningManual => ("Running process", ui.visuals().hyperlink_color),
+        ServiceState::Failed => ("Service failed", ui.visuals().error_fg_color),
+        ServiceState::Unknown => ("Status unknown", ui.visuals().weak_text_color()),
+    };
+    let handshake = report.handshake(protocol);
+    let (label, color) = match handshake {
+        Some(Ok(_)) => ("OK · protocol handshake succeeded", ui.visuals().hyperlink_color),
+        Some(Err(_)) if matches!(service.state(), ServiceState::RunningSystemd | ServiceState::RunningManual) => {
+            ("Running, not reachable", ui.visuals().warn_fg_color)
+        }
+        _ => (label, color),
+    };
+    ui.horizontal(|ui| {
+        ui.colored_label(color, format!("● {label}"));
+        if let Some(version) = &service.version {
+            ui.label(format!("Version {version}"));
+        }
+    });
+
+    let os_name = report
+        .os_pretty_name
+        .as_deref()
+        .or(report.os_id.as_deref())
+        .unwrap_or("Operating system unknown");
+    ui.label(format!(
+        "{os_name}{} · {}",
+        report
+            .os_version
+            .as_deref()
+            .map_or(String::new(), |version| format!(" {version}")),
+        match report.init_system {
+            Some(InitSystem::Systemd) => "systemd",
+            Some(InitSystem::Other) => "non-systemd init",
+            Some(InitSystem::Unknown) | None => "init system unknown",
+        }
+    ));
+
+    let ssh_user = report.user.as_deref().unwrap_or("SSH user unknown");
+    ui.label(format!("✓ SSH reachable as {ssh_user}"));
+    if let Some(installed) = service.installed {
+        ui.label(if installed {
+            "✓ Service executable detected"
         } else {
-            format!("SSH scan failed: {error}")
+            "– Service executable not detected"
+        });
+    } else {
+        ui.label("– Installation could not be determined");
+    }
+    if service.unit_active == Some(true) {
+        ui.label(format!(
+            "✓ systemd unit active{}",
+            service.unit_enabled.map_or(String::new(), |enabled| if enabled {
+                " · enabled at boot".into()
+            } else {
+                " · not enabled at boot".into()
+            })
+        ));
+    } else if service.manual_process == Some(true) {
+        ui.label("✓ Running as a process outside the detected systemd unit");
+    } else if service.unit_active == Some(false) {
+        ui.label("– systemd unit inactive");
+    } else {
+        ui.label("– Service manager state unavailable");
+    }
+    if service.unit_failed == Some(true) {
+        ui.colored_label(ui.visuals().error_fg_color, "Service unit reports a failed state");
+    }
+
+    let mut ports = service
+        .listeners
+        .iter()
+        .map(|listener| format!("{}:{}", listener.address, listener.port))
+        .collect::<Vec<_>>();
+    ports.sort();
+    ports.dedup();
+    if ports.is_empty() {
+        ui.label("– No matching listener found");
+    } else {
+        ui.label(format!("✓ Listening on {}", ports.join(", ")));
+        for listener in &service.listeners {
+            let process = listener.process.as_deref().unwrap_or("process unknown");
+            let pid = listener.pid.map_or(String::new(), |pid| format!(" · PID {pid}"));
+            let owner = listener
+                .owner
+                .as_deref()
+                .map_or(String::new(), |owner| format!(" · {owner}"));
+            ui.label(format!(
+                "{}:{} · {process}{pid}{owner}",
+                listener.address, listener.port
+            ));
+        }
+    }
+
+    match service.exposure() {
+        Exposure::AllInterfaces => {
+            ui.colored_label(ui.visuals().warn_fg_color, "⚠ Listener is bound to all interfaces");
+        }
+        Exposure::SpecificAddress(address) => {
+            ui.label(format!("Listener bound to {address}"));
+        }
+        Exposure::LocalhostOnly => {
+            ui.label("Listener is bound to localhost");
+        }
+        Exposure::Unknown => {
+            ui.label("– Listener exposure unknown");
+        }
+    }
+    if protocol == DesktopProtocol::Vnc {
+        for display in &service.displays {
+            ui.label(format!(
+                "Display {} → port {}{}",
+                display.display,
+                display.port,
+                display.user.as_deref().map_or(String::new(), |user| format!(" · {user}"))
+            ));
+        }
+    }
+    if let Some(port) = service.configured_port {
+        ui.label(format!("Configured port {port}"));
+    }
+    if let Some(package_manager) = &report.package_manager {
+        ui.label(format!("Package manager: {package_manager}"));
+    }
+    if report.sudo_available == Some(false) {
+        ui.label("sudo is unavailable for this SSH user");
+    } else if report.sudo_available == Some(true) {
+        ui.label(if report.passwordless_sudo == Some(true) {
+            "Passwordless sudo is available"
+        } else {
+            "sudo is available; it may require authentication"
         });
     }
-    Ok(format_detection_report(&String::from_utf8_lossy(
-        &output.stdout,
-    )))
-}
-
-fn format_detection_report(report: &str) -> String {
-    let matches = report
+    if !report.desktop_sessions.is_empty() {
+        ui.label(format!(
+            "Desktop sessions: {}",
+            report.desktop_sessions.join(", ")
+        ));
+    }
+    for hint in &report.firewall_hints {
+        ui.label(format!("Firewall: {hint}"));
+    }
+    if let Some(memory) = report.available_memory_mb {
+        ui.label(format!("Available memory: {memory} MiB"));
+    }
+    if let Some(disk) = report.free_disk_mb {
+        ui.label(format!("Free disk in home filesystem: {disk} MiB"));
+    }
+    match handshake {
+        Some(Ok(info)) => {
+            ui.label(format!("✓ Protocol handshake · {info}"));
+        }
+        Some(Err(error)) => {
+            ui.colored_label(ui.visuals().warn_fg_color, format!("◐ {error}"));
+        }
+        None if service.state() == ServiceState::RunningSystemd || service.state() == ServiceState::RunningManual => {
+            ui.label("Protocol handshake not tested");
+        }
+        None => {}
+    }
+    let raw_protocol = protocol.label();
+    let raw_output = report
+        .raw_output
         .lines()
         .filter(|line| {
-            [
-                3389, 5900, 5901, 5902, 5903, 5904, 5905, 5906, 5907, 5908, 5909, 5910,
-            ]
-            .into_iter()
-            .any(|port| contains_port(line, port))
-                || matches!(
-                    line.trim(),
-                    "xrdp" | "Xvnc" | "x11vnc" | "Xtigervnc" | "vncserver"
-                )
+            line.starts_with(&format!("# {raw_protocol} "))
+                || line.starts_with("# Listener snapshot")
+                || line.starts_with("SLD/1\tfield\thost\t")
+                || (line.starts_with("SLD/1\tfield\trdp\t")
+                    && protocol == DesktopProtocol::Rdp)
+                || (line.starts_with("SLD/1\tfield\tvnc\t")
+                    && protocol == DesktopProtocol::Vnc)
+                || (line.starts_with("SLD/1\tlistener\trdp\t")
+                    && protocol == DesktopProtocol::Rdp)
+                || (line.starts_with("SLD/1\tlistener\tvnc\t")
+                    && protocol == DesktopProtocol::Vnc)
+                || (line.starts_with("SLD/1\tdisplay\tvnc\t")
+                    && protocol == DesktopProtocol::Vnc)
+                || *line == "SLD/1\tbegin"
+                || *line == "SLD/1\tend"
         })
-        .collect::<Vec<_>>();
-    if matches.is_empty() {
-        "No listener found on RDP 3389 or VNC 5900–5910. Linux setup examples (run on the remote host):\nFedora RDP: sudo dnf install xrdp && sudo systemctl enable --now xrdp\nUbuntu/Debian RDP: sudo apt install xrdp && sudo systemctl enable --now xrdp\nVNC: install TigerVNC, set its password, then start a display (for example: vncserver :1).\nA graphical desktop session is required. This scan did not change the host.".into()
-    } else {
-        format!("Detected remote desktop services:\n{}", matches.join("\n"))
-    }
-}
-
-fn contains_port(line: &str, port: u16) -> bool {
-    let needle = format!(":{port}");
-    line.match_indices(&needle).any(|(start, _)| {
-        line.as_bytes()
-            .get(start + needle.len())
-            .map_or(true, |byte| !byte.is_ascii_digit())
-    })
+        .collect::<Vec<_>>()
+        .join("\n");
+    egui::CollapsingHeader::new("Show raw output")
+        .id_salt(("service_inventory_raw", protocol as u8))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if ui.small_button("Copy").clicked() {
+                    ui.ctx().copy_text(raw_output.clone());
+                }
+            });
+            egui::ScrollArea::vertical()
+                .max_height(120.0)
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(raw_output.as_str()).monospace())
+                            .wrap(),
+                    );
+                });
+        });
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -581,24 +850,6 @@ mod tests {
         assert!(run(&request, Duration::from_secs(1))
             .unwrap_err()
             .contains("only be used for RDP"));
-    }
-
-    #[test]
-    fn server_detection_reports_only_rdp_vnc_ports_and_processes() {
-        let report = format_detection_report(
-            "State Local Address:Port\nLISTEN 0 128 0.0.0.0:3389 0.0.0.0:*\nLISTEN 0 64 *:5901 *:*\nLISTEN 0 64 *:8080 *:*\nxrdp\nnginx\n",
-        );
-        assert!(report.contains(":3389"));
-        assert!(report.contains(":5901"));
-        assert!(report.contains("xrdp"));
-        assert!(!report.contains("8080"));
-        assert!(!report.contains("nginx"));
-        assert!(!contains_port("*:59010", 5901));
-        let missing = format_detection_report("ss is unavailable");
-        assert!(missing.contains("No listener found"));
-        assert!(missing.contains("sudo dnf install xrdp"));
-        assert!(missing.contains("sudo apt install xrdp"));
-        assert!(missing.contains("vncserver :1"));
     }
 
     struct Peer {

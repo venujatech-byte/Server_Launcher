@@ -10,6 +10,7 @@ pub(crate) mod profile;
 pub(crate) mod rdp;
 pub(crate) mod rdp_drives;
 pub(crate) mod rdp_clipboard;
+pub(crate) mod setup;
 pub(crate) mod rdp_input;
 mod recording;
 pub(crate) mod screenshot;

@@ -1761,6 +1761,7 @@ pub fn render_ssh_host_modal(
             ui.add_space(4.0);
             ui.set_max_width(ui.available_width());
 
+            let detection_host = state.remote_detection_host();
             ui.horizontal_wrapped(|ui| {
                 for (tab, label) in [
                     (RemotePcTab::General, "General"),
@@ -1768,7 +1769,32 @@ pub fn render_ssh_host_modal(
                     (RemotePcTab::Rdp, "RDP"),
                     (RemotePcTab::Vnc, "VNC"),
                 ] {
-                    ui.selectable_value(&mut state.tab, tab, label);
+                    let protocol = match tab {
+                        RemotePcTab::Rdp => {
+                            Some(crate::remote_desktop::credentials::DesktopProtocol::Rdp)
+                        }
+                        RemotePcTab::Vnc => {
+                            Some(crate::remote_desktop::credentials::DesktopProtocol::Vnc)
+                        }
+                        _ => None,
+                    };
+                    let indicator = protocol.and_then(|protocol| {
+                        state.server_detection.indicator(&detection_host, protocol)
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.selectable_label(state.tab == tab, label).clicked() {
+                            state.tab = tab;
+                        }
+                        if let Some(indicator) = indicator {
+                            let color = match indicator {
+                                "●" => palette.success,
+                                "◐" => palette.warning,
+                                "!" => palette.danger,
+                                _ => palette.text_muted,
+                            };
+                            ui.label(RichText::new(indicator).color(color));
+                        }
+                    });
                 }
             });
 
@@ -1934,15 +1960,16 @@ pub fn render_ssh_host_modal(
                             });
                         }
                         RemotePcTab::Rdp => {
+                            state.server_detection.show(
+                                ui,
+                                &state.remote_detection_host(),
+                                crate::remote_desktop::credentials::DesktopProtocol::Rdp,
+                                std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))),
+                            );
                             crate::remote_desktop::editor::rdp(
                                 ui,
                                 &mut state.rdp,
                                 desktop_defaults,
-                            );
-                            state.server_detection.show(
-                                ui,
-                                &state.remote_detection_host(),
-                                std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))),
                             );
                             let request = if state.rdp.as_ref().is_some_and(|profile| profile.enabled) {
                                 let (port, security, tunnel_via_ssh, gateway) = {
@@ -1977,17 +2004,18 @@ pub fn render_ssh_host_modal(
                             state.rdp_probe.show(ui, request, "Enter the host and port first.", std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))));
                         }
                         RemotePcTab::Vnc => {
+                            state.server_detection.show(
+                                ui,
+                                &state.remote_detection_host(),
+                                crate::remote_desktop::credentials::DesktopProtocol::Vnc,
+                                std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))),
+                            );
                             crate::remote_desktop::editor::vnc(
                                 ui,
                                 &mut state.vnc,
                                 &mut state.vnc_port_text,
                                 &state.host,
                                 desktop_defaults,
-                            );
-                            state.server_detection.show(
-                                ui,
-                                &state.remote_detection_host(),
-                                std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))),
                             );
                             let tunnel_via_ssh = if let Some(profile) = state.vnc.as_mut().filter(|profile| profile.enabled) {
                                 state.vnc_password.show(ui, &mut profile.credential_ref);

@@ -4,9 +4,14 @@ use egui::{ComboBox, DragValue, TextEdit, Ui};
 fn choice<T: Copy + PartialEq>(ui: &mut Ui, label: &str, value: &mut T, items: &[(T, &str)]) {
     let selected = items.iter().find(|(option, _)| option == value);
     ui.horizontal(|ui| {
-        ui.label(label);
+        ui.add_sized(
+            [112.0, ui.spacing().interact_size.y],
+            egui::Label::new(label),
+        );
+        let width = (ui.available_width() - 8.0).clamp(80.0, 250.0);
         ComboBox::from_id_salt(label)
             .selected_text(selected.map_or("Custom", |(_, title)| *title))
+            .width(width)
             .show_ui(ui, |ui| {
                 for &(option, title) in items {
                     ui.selectable_value(value, option, title);
@@ -17,18 +22,35 @@ fn choice<T: Copy + PartialEq>(ui: &mut Ui, label: &str, value: &mut T, items: &
 
 fn inline_text(ui: &mut Ui, label: &str, value: &mut String) {
     ui.horizontal(|ui| {
-        ui.add_sized([112.0, ui.spacing().interact_size.y], egui::Label::new(label));
+        ui.add_sized(
+            [112.0, ui.spacing().interact_size.y],
+            egui::Label::new(label),
+        );
         ui.add(TextEdit::singleline(value).desired_width(f32::INFINITY));
     });
 }
 
 fn section_header(ui: &mut Ui, icon: &str, title: &str) {
-    ui.add_space(5.0);
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(icon).color(ui.visuals().hyperlink_color));
-        ui.label(egui::RichText::new(title).strong());
-    });
-    ui.separator();
+    ui.add_space(8.0);
+    egui::Frame::none()
+        .fill(ui.visuals().faint_bg_color)
+        .rounding(egui::Rounding::same(6.0))
+        .inner_margin(egui::Margin::symmetric(8.0, 5.0))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(icon).color(ui.visuals().hyperlink_color));
+                ui.label(egui::RichText::new(title).strong());
+            });
+        });
+    ui.add_space(3.0);
+}
+
+fn help_text(ui: &mut Ui, text: impl Into<String>) {
+    ui.label(
+        egui::RichText::new(text)
+            .small()
+            .color(ui.visuals().weak_text_color()),
+    );
 }
 
 fn clipboard(ui: &mut Ui, value: &mut Clipboard) {
@@ -88,8 +110,13 @@ fn rdp_color_profile(ui: &mut Ui, value: &mut Option<RdpColorProfile>) {
     ];
     let selected = value.unwrap_or(RdpColorProfile::Automatic);
     ui.horizontal(|ui| {
-        ui.label("Color profile");
+        ui.add_sized(
+            [112.0, ui.spacing().interact_size.y],
+            egui::Label::new("Color profile"),
+        );
+        let width = (ui.available_width() - 8.0).clamp(80.0, 250.0);
         ComboBox::from_id_salt("RDP color profile")
+            .width(width)
             .selected_text(
                 SUPPORTED
                     .iter()
@@ -102,7 +129,8 @@ fn rdp_color_profile(ui: &mut Ui, value: &mut Option<RdpColorProfile>) {
                 }
             });
     });
-    ui.label(
+    help_text(
+        ui,
         "AVC profiles require a Cisco OpenH264 library selected in Settings → Remote Desktop.",
     );
 }
@@ -117,7 +145,10 @@ pub(crate) fn rdp(
     ui.add_enabled_ui(profile.enabled, |ui| {
         section_header(ui, crate::lucide::SERVER, "Connection & security");
         ui.horizontal(|ui| {
-            ui.label("Port *");
+            ui.add_sized(
+                [112.0, ui.spacing().interact_size.y],
+                egui::Label::new("Port *"),
+            );
             ui.add(DragValue::new(&mut profile.port).range(1..=u16::MAX));
         });
         ui.checkbox(&mut profile.same_username_as_ssh, "Same username as SSH");
@@ -135,7 +166,7 @@ pub(crate) fn rdp(
                 (RdpSecurity::Tls, "TLS"),
             ],
         );
-        ui.label("Auto negotiates NLA or TLS. Unencrypted legacy RDP is disabled.");
+        help_text(ui, "Auto negotiates NLA or TLS. Unencrypted legacy RDP is disabled.");
         section_header(ui, crate::lucide::MONITOR, "Display & performance");
         choice(
             ui,
@@ -146,7 +177,8 @@ pub(crate) fn rdp(
                 (RdpPainting::Fast, "Fast / crisp"),
             ],
         );
-        ui.label(
+        help_text(
+            ui,
             "Smooth filtering blends scaled pixels; Fast uses sharper nearest-neighbor sampling.",
         );
         choice(
@@ -158,11 +190,12 @@ pub(crate) fn rdp(
                 (RdpFramePainting::FullFrame, "Full-frame compatibility mode"),
             ],
         );
-        ui.label(
+        help_text(
+            ui,
             "Full-frame mode uploads the complete local image after each update. It can use more CPU and memory; it does not change remote rendering, codec, or network behavior.",
         );
         rdp_color_profile(ui, &mut profile.color_profile);
-        ui.label("RemoteFX is advertised to the server; the server still chooses the negotiated codec.");
+        help_text(ui, "RemoteFX is advertised to the server; the server still chooses the negotiated codec.");
         choice(
             ui,
             "Initial scaling",
@@ -198,7 +231,7 @@ pub(crate) fn rdp(
             });
         }
         ui.checkbox(&mut profile.multi_monitor, "Two side-by-side remote monitors");
-        ui.label("Uses the selected resolution as a combined display; server support is required.");
+        help_text(ui, "Uses the selected resolution as a combined display; server support is required.");
         section_header(ui, crate::lucide::KEYBOARD, "Input & sharing");
         ui.collapsing("Input", |ui| {
             ui.checkbox(&mut profile.view_only, "Start in view-only mode");
@@ -274,9 +307,9 @@ pub(crate) fn rdp(
             ui.checkbox(&mut profile.themes, "Themes");
         });
         ui.checkbox(&mut profile.admin_session, "Administrative session");
-        ui.label("Requests the server's administrative session; server policy and permissions apply.");
+        help_text(ui, "Requests the server's administrative session; server policy and permissions apply.");
         inline_text(ui, "RD Gateway host", &mut profile.gateway);
-        ui.label("Uses the RDP username and password for gateway sign-in. Gateway TLS certificates must be system-trusted.");
+        help_text(ui, "Uses the RDP username and password for gateway sign-in. Gateway TLS certificates must be system-trusted.");
         ui.add_enabled_ui(profile.gateway.trim().is_empty(), |ui| {
             ui.checkbox(&mut profile.tunnel_via_ssh, "Tunnel via SSH");
         });
@@ -353,7 +386,7 @@ pub(crate) fn vnc(
             profile.port = port;
         }
         inline_text(ui, "Username", &mut profile.username);
-        ui.label(format!(
+        help_text(ui, format!(
             "{} Username/password auth requires VeNCrypt Plain through an SSH tunnel; direct plaintext auth is blocked.",
             crate::lucide::SHIELD
         ));

@@ -1102,7 +1102,7 @@ impl eframe::App for Viewer {
                     };
                     if ui
                         .selectable_label(keyboard_capture, label)
-                        .on_hover_text("When enabled, all keys (including Super and Alt+Tab) go to the remote while this viewer is focused. The Right Ctrl host key remains available for viewer shortcuts.")
+                        .on_hover_text("Forwards keyboard input while this viewer is focused. The desktop may reserve shortcuts such as Super or Alt+Tab; use Send keys if they stay local. The Right Ctrl host key remains available for viewer shortcuts.")
                         .clicked()
                     {
                         if let Some(connection) = &self.connection {

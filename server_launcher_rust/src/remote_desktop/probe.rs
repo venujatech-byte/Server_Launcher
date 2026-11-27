@@ -29,6 +29,7 @@ pub(crate) struct ServerDetection {
     action_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     action_status: String,
     action_logs: String,
+    action_history_warning: Option<(String, DesktopProtocol, String)>,
     action_result: Option<(String, DesktopProtocol, ActionResult)>,
     action_port_update: Option<(String, DesktopProtocol, Instant)>,
 }
@@ -65,6 +66,15 @@ impl ServerDetection {
                             let boundary = self.action_logs.char_indices().find(|(i, _)| *i >= excess).map_or(self.action_logs.len(), |(i, _)| i);
                             self.action_logs.drain(..boundary);
                         }
+                    }
+                }
+                super::setup::exec::ActionEvent::HistoryWarning(warning) => {
+                    if let Some(action) = &self.action_review {
+                        self.action_history_warning = Some((
+                            action.key.clone(),
+                            action.protocol,
+                            warning,
+                        ));
                     }
                 }
                 super::setup::exec::ActionEvent::Finished(result) => {
@@ -257,6 +267,14 @@ impl ServerDetection {
                 }
             }
         }
+        if let Some((warning_key, warning_protocol, warning)) = &self.action_history_warning {
+            if warning_key == &key && *warning_protocol == protocol {
+                ui.colored_label(
+                    ui.visuals().warn_fg_color,
+                    format!("Action ran, but local change history was not saved: {warning}"),
+                );
+            }
+        }
         self.show_action_review(ui, &key);
     }
 
@@ -348,6 +366,7 @@ impl ServerDetection {
             if let Some(action) = self.action_review.as_ref() {
                 let host = action.host.clone();
                 let plan = action.plan.clone();
+                let protocol = action.protocol;
                 let password = if action.needs_password {
                     Some(std::mem::take(&mut self.action_password))
                 } else {
@@ -357,20 +376,41 @@ impl ServerDetection {
                 self.action_pending = Some(receiver);
                 self.action_status.clear();
                 self.action_logs.clear();
+                self.action_history_warning = None;
                 let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                 self.action_cancel = Some(cancel.clone());
                 let ctx = ui.ctx().clone();
                 std::thread::spawn(move || {
+                    let mut completed_steps = Vec::new();
                     let result = super::setup::exec::run_approved_plan(
                         &host,
                         &plan,
                         password,
                         &cancel,
                         |event| {
+                            if let super::setup::exec::ActionEvent::StepFinished { index, .. } = &event {
+                                if let Some(step) = plan.steps.get(index.saturating_sub(1)) {
+                                    completed_steps.push(step.id.to_owned());
+                                }
+                            }
                             let _ = sender.send(event);
                             ctx.request_repaint();
                         },
                     );
+                    if !completed_steps.is_empty() {
+                        let action_completed = result.is_ok() || completed_steps.len() == plan.steps.len();
+                        if let Err(warning) = super::setup::history::record_action(
+                            &host,
+                            protocol.label(),
+                            plan.summary,
+                            completed_steps,
+                            action_completed,
+                        ) {
+                            let _ = sender.send(
+                                super::setup::exec::ActionEvent::HistoryWarning(warning),
+                            );
+                        }
+                    }
                     let _ = sender.send(super::setup::exec::ActionEvent::Finished(result));
                     ctx.request_repaint();
                 });

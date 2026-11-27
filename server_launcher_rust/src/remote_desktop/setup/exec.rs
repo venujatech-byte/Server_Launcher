@@ -7,6 +7,7 @@ use zeroize::{Zeroize, Zeroizing};
 pub(crate) enum ActionEvent {
     StepStarted { index: usize, total: usize, title: &'static str },
     StepFinished { index: usize, total: usize, title: &'static str, output: String },
+    HistoryWarning(String),
     Finished(Result<usize, String>),
 }
 

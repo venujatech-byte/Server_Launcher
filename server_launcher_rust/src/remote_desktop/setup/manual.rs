@@ -30,21 +30,27 @@ pub(crate) fn instructions(
             ],
             note: "A graphical desktop session is required. xrdp uses its configured port (normally 3389); review your installed xrdp.ini before changing a custom port. The app will not change firewall or cloud security rules.",
         },
-        DesktopProtocol::Vnc => ManualInstructions {
-            install: vec![
-                "sudo apt-get update".into(),
-                "sudo apt-get install tigervnc-standalone-server".into(),
-            ],
-            start: vec![
-                "vncpasswd".into(),
-                format!("vncserver :1 -rfbport {port} -localhost yes -geometry 1920x1080 -depth 24"),
-            ],
-            verify: vec![
-                "vncserver -list".into(),
-                format!("ss -ltn | grep ':{port}'"),
-            ],
-            note: "Run as the intended desktop user, not root. Classic VNC passwords use at most eight bytes. The SSH tunnel is recommended; this server is bound to localhost. A desktop startup script may be needed for a usable session.",
-        },
+        DesktopProtocol::Vnc => {
+            let display = port
+                .checked_sub(5900)
+                .filter(|display| (1..=99).contains(display))
+                .unwrap_or(1);
+            ManualInstructions {
+                install: vec![
+                    "sudo apt-get update".into(),
+                    "sudo apt-get install tigervnc-standalone-server".into(),
+                ],
+                start: vec![
+                    "vncpasswd".into(),
+                    format!("vncserver :{display} -rfbport {port} -localhost yes -geometry 1920x1080 -depth 24"),
+                ],
+                verify: vec![
+                    "vncserver -list".into(),
+                    format!("ss -ltn | grep ':{port}'"),
+                ],
+                note: "Run as the intended desktop user, not root. Classic VNC passwords use at most eight bytes. The SSH tunnel is recommended; this server is bound to localhost. A desktop startup script may be needed for a usable session.",
+            }
+        }
     })
 }
 
@@ -58,6 +64,8 @@ mod tests {
         assert!(vnc.install.iter().any(|command| command.contains("tigervnc-standalone-server")));
         assert!(vnc.start.iter().any(|command| command.contains("-rfbport 5901")));
         assert!(vnc.start.iter().any(|command| command.contains("-localhost yes")));
+        let display_two = instructions(Some("ubuntu"), DesktopProtocol::Vnc, 5902).unwrap();
+        assert!(display_two.start.iter().any(|command| command.contains("vncserver :2")));
 
         let rdp = instructions(Some("debian"), DesktopProtocol::Rdp, 3389).unwrap();
         assert!(rdp.start.iter().any(|command| command.contains("xrdp.service")));

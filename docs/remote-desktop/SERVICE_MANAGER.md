@@ -43,8 +43,10 @@ Rust keeps `ssh_hosts` and all existing keys; new protocol fields must remain se
 
 ## Validation record
 
-- Parser fixtures cover the supplied 3389 listener without process metadata, a manual TigerVNC process on `:1`/5901, percent-escaped owner data, malformed records, duplicate singleton fields, localhost/wildcard exposure, and unknown service state.
-- Manual command generation is limited to `ID=debian` and `ID=ubuntu`; unknown distributions receive no guessed package/service commands. The VNC start command includes localhost binding and the selected numeric port.
+- Parser fixtures cover the supplied 3389 listener without process metadata, a manual TigerVNC process on `:1`/5901, percent-escaped owner data, malformed/truncated records, duplicate singleton fields, IPv4/IPv6 wildcard binds, `*`, localhost, a specific address, multiple VNC displays, and unknown service state.
+- Manual command generation is limited to `ID=debian` and `ID=ubuntu`; unknown distributions receive no guessed package/service commands. RDP listener verification uses the selected profile port. The VNC start command includes localhost binding and the selected numeric port.
+- The service card presents a status-colored outline/pill, a first-scan placeholder, collapsed host-wide details, protocol-filtered raw output, and manual commands with per-command and Copy all controls. These UI changes have been compile-checked but not visually tested.
+- Planner tests now cover the fixed command for each supported xrdp service intent. Test targets have only been type-checked; unit tests were not executed.
 - The xrdp plan builder is limited to Debian/Ubuntu with systemd and both xrdp units detected. Restrict-to-localhost plans and all VNC service plans are rejected until their configuration/user-unit behavior is verified.
 - Listener inspection tries `ss`, then `netstat`, then `/proc/net/tcp*`; IPv6 fallback entries without a reliable address decode are explicitly classified as unknown exposure.
 - `cargo check --locked --all-targets` passed on the authorized SSH build PC after syncing the read-only inventory implementation.

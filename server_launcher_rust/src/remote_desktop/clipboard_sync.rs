@@ -142,18 +142,18 @@ impl ClipboardSync {
                             None
                         };
                         if let Some(image) = local_image {
-                            let image = ClipboardImage {
-                                width: image.width,
-                                height: image.height,
-                                rgba: image.bytes.to_vec(),
-                            };
-                            if image
+                            let valid_size = image
                                 .width
                                 .checked_mul(image.height)
                                 .and_then(|pixels| pixels.checked_mul(4))
-                                == Some(image.rgba.len())
-                                && image.rgba.len() <= max_image_bytes.saturating_sub(124)
-                            {
+                                == Some(image.bytes.len())
+                                && image.bytes.len() <= max_image_bytes.saturating_sub(124);
+                            if valid_size {
+                                let image = ClipboardImage {
+                                    width: image.width,
+                                    height: image.height,
+                                    rgba: image.bytes.to_vec(),
+                                };
                                 let fingerprint = image_fingerprint(&image.rgba);
                                 if last_image != Some(fingerprint) {
                                     last_image = Some(fingerprint);

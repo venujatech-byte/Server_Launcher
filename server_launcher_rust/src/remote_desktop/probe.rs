@@ -1597,13 +1597,13 @@ fn show_service_inventory_card(
     };
     let svc_active = service.unit_active == Some(true) || service.manual_process == Some(true);
     let svc_val = if service.manual_process == Some(true) {
-        "Manual process".into()
+        "Manual process"
     } else if service.unit_active == Some(true) {
-        "Systemd active".into()
+        "Systemd active"
     } else if service.unit_active == Some(false) {
-        "Inactive".into()
+        "Inactive"
     } else {
-        "Unavailable".into()
+        "Unavailable"
     };
     let hs_ok = matches!(handshake, Some(Ok(_)));
     let hs_val = match handshake {
@@ -1625,7 +1625,7 @@ fn show_service_inventory_card(
         };
         kpi(&mut cols[0], true, "SSH", ssh_user);
         kpi(&mut cols[1], service.installed == Some(true), "Installed", &installed_val);
-        kpi(&mut cols[2], svc_active, "Service", &svc_val);
+        kpi(&mut cols[2], svc_active, "Service", svc_val);
         kpi(&mut cols[3], hs_ok, "Handshake", hs_val);
     });
     if service.unit_failed == Some(true) {

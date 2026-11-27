@@ -1680,13 +1680,16 @@ pub fn render_ssh_host_modal(
     desktop_defaults: &crate::config::RemoteDesktopSettings,
     config_path: &std::path::Path,
 ) -> ModalAction {
+    if !state.open && state.server_detection.action_running() {
+        state.open = true;
+    }
     if !state.open {
         state.pending_test = None;
         state.clear_desktop_passwords();
         return ModalAction::None;
     }
 
-    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+    if ctx.input(|i| i.key_pressed(Key::Escape)) && !state.server_detection.action_running() {
         state.open = false;
         state.pending_test = None;
         state.clear_desktop_passwords();
@@ -1726,6 +1729,7 @@ pub fn render_ssh_host_modal(
     let saving = state.pending_save.is_some();
 
     let testing = state.pending_test.is_some();
+    let service_action_running = state.server_detection.action_running();
 
     let mut action = ModalAction::None;
     let title = if state.is_edit { "Edit Remote PC" } else { "Add Remote PC" };
@@ -2180,7 +2184,7 @@ pub fn render_ssh_host_modal(
                     if let Some(id_to_del) = state.editing_id.clone() {
                         let del_btn = egui::Button::new(RichText::new("Delete Host").size(11.5).color(palette.danger))
                             .fill(palette.danger_subtle);
-                        if ui.add_enabled(!saving, del_btn).clicked() {
+                        if ui.add_enabled(!saving && !service_action_running, del_btn).clicked() {
                             action = ModalAction::DeleteSshHost(id_to_del);
                             state.open = false;
                         }
@@ -2193,7 +2197,7 @@ pub fn render_ssh_host_modal(
                         .rounding(Rounding::same(8.0))
                         .min_size(egui::vec2(95.0, 28.0));
 
-                    if ui.add_enabled(!testing && !saving && validation_error.is_none(), save_btn).clicked() {
+                    if ui.add_enabled(!testing && !saving && !service_action_running && validation_error.is_none(), save_btn).clicked() {
                         let port = state.port_str.trim().parse::<u16>().unwrap_or(22);
                         let name = if state.name.trim().is_empty() {
                             state.host.trim().to_string()
@@ -2239,7 +2243,7 @@ pub fn render_ssh_host_modal(
                         .stroke(Stroke::NONE)
                         .rounding(Rounding::same(8.0))
                         .min_size(egui::vec2(75.0, 28.0));
-                    if ui.add(cancel_btn).clicked() {
+                    if ui.add_enabled(!service_action_running, cancel_btn).clicked() {
                         state.open = false;
                         is_open = false;
                     }
@@ -2247,6 +2251,10 @@ pub fn render_ssh_host_modal(
             });
         });
 
+    if service_action_running {
+        is_open = true;
+        window_open = true;
+    }
     if !is_open || !window_open {
         state.open = false;
     }

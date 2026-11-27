@@ -164,6 +164,67 @@ pub(crate) fn ssh_probe_output(command: Command, timeout: std::time::Duration) -
     ssh_probe_output_cancellable(command, timeout, None)
 }
 
+pub(crate) fn ssh_probe_output_with_stdin(
+    mut command: Command,
+    timeout: std::time::Duration,
+    input: &[u8],
+) -> std::io::Result<std::process::Output> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    let mut stdout = tempfile::tempfile()?;
+    let mut stderr = tempfile::tempfile()?;
+    command
+        .stdin(Stdio::piped())
+        .stdout(stdout.try_clone()?)
+        .stderr(stderr.try_clone()?);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+
+    let mut child = command.spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        if let Err(error) = stdin.write_all(input) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+    }
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
+            result => {
+                #[cfg(unix)]
+                unsafe {
+                    libc::kill(-(child.id() as i32), libc::SIGKILL);
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(result.err().unwrap_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::TimedOut, "SSH command exceeded its deadline")
+                }));
+            }
+        }
+    };
+
+    const MAX_OUTPUT: u64 = 4 * 1024 * 1024;
+    let read_output = |file: &mut std::fs::File| -> std::io::Result<Vec<u8>> {
+        file.seek(SeekFrom::Start(0))?;
+        let mut bytes = Vec::new();
+        file.take(MAX_OUTPUT + 1).read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > MAX_OUTPUT {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "SSH command output exceeded 4 MiB"));
+        }
+        Ok(bytes)
+    };
+    Ok(std::process::Output { status, stdout: read_output(&mut stdout)?, stderr: read_output(&mut stderr)? })
+}
+
 pub(crate) fn ssh_probe_output_cancellable(
     mut command: Command,
     timeout: std::time::Duration,

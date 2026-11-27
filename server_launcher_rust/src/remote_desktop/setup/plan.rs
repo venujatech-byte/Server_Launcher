@@ -70,7 +70,7 @@ pub(crate) fn build_plan(
             "Install and start xrdp",
             &[
                 ("package-index", "Update package index", "sudo apt-get update"),
-                ("install", "Install xrdp", "sudo apt-get install xrdp"),
+                ("install", "Install xrdp", "sudo apt-get install -y xrdp"),
                 (
                     "enable-start",
                     "Enable and start xrdp",
@@ -148,6 +148,7 @@ mod tests {
         .unwrap();
         assert_eq!(plan.steps.len(), 3);
         assert_eq!(plan.steps[0].command, "sudo apt-get update");
+        assert_eq!(plan.steps[1].command, "sudo apt-get install -y xrdp");
         assert_eq!(plan.steps[2].command, "sudo systemctl enable --now xrdp.service");
         assert!(plan.steps.iter().all(|step| step.needs_root));
     }

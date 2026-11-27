@@ -6,14 +6,32 @@ use std::{
 };
 
 type DetectionResult = Result<super::setup::model::ServiceInventoryReport, String>;
+type ActionResult = Result<usize, String>;
+
+struct PendingAction {
+    host: crate::config::SshRemoteHost,
+    key: String,
+    protocol: DesktopProtocol,
+    plan: super::setup::plan::ActionPlan,
+    needs_password: bool,
+    sudo_available: bool,
+}
 
 #[derive(Default)]
 pub(crate) struct ServerDetection {
     pending: Option<(String, std::sync::mpsc::Receiver<DetectionResult>)>,
     last: Option<(String, DetectionResult, Instant)>,
+    action_review: Option<PendingAction>,
+    action_password: zeroize::Zeroizing<String>,
+    action_pending: Option<std::sync::mpsc::Receiver<ActionResult>>,
+    action_result: Option<(String, DesktopProtocol, ActionResult)>,
 }
 
 impl ServerDetection {
+    pub(crate) fn action_running(&self) -> bool {
+        self.action_pending.is_some()
+    }
+
     pub(crate) fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -22,6 +40,31 @@ impl ServerDetection {
         timeout: Duration,
     ) {
         let key = detection_key(host);
+        if let Some(receiver) = &self.action_pending {
+            match receiver.try_recv() {
+                Ok(result) => {
+                    self.action_pending = None;
+                    if let Some(action) = self.action_review.take() {
+                        self.action_result = Some((action.key.clone(), action.protocol, result));
+                        self.start(action.host, action.key, timeout, ui.ctx().clone());
+                    }
+                    self.action_password.clear();
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.action_pending = None;
+                    if let Some(action) = self.action_review.take() {
+                        self.action_result = Some((
+                            action.key.clone(),
+                            action.protocol,
+                            Err("The remote action stopped unexpectedly.".into()),
+                        ));
+                        self.start(action.host, action.key, timeout, ui.ctx().clone());
+                    }
+                    self.action_password.clear();
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+        }
         if let Some((_, receiver)) = &self.pending {
             use std::sync::mpsc::TryRecvError;
             match receiver.try_recv() {
@@ -79,6 +122,7 @@ impl ServerDetection {
                 self.start(host.clone(), key.clone(), timeout, ui.ctx().clone());
             }
         });
+        let mut requested_intent = None;
         if let Some((_, result, _)) = self.last.as_ref().filter(|(tested, _, _)| tested == &key) {
             match result {
                 Ok(report) => {
@@ -86,7 +130,7 @@ impl ServerDetection {
                         DesktopProtocol::Rdp => host.rdp.as_ref().map_or(3389, |profile| profile.port),
                         DesktopProtocol::Vnc => host.vnc.as_ref().map_or(5900, |profile| profile.port),
                     };
-                    show_service_inventory(ui, report, protocol, port);
+                    requested_intent = show_service_inventory(ui, report, protocol, port);
                 }
                 Err(error) => {
                     ui.colored_label(ui.visuals().error_fg_color, error);
@@ -94,6 +138,116 @@ impl ServerDetection {
             }
         } else if !can_scan {
             ui.label("Enter the SSH host and username to scan.");
+        }
+
+        if let Some(intent) = requested_intent {
+            if let Some((_, Ok(report), _)) = self.last.as_ref().filter(|(tested, _, _)| tested == &key) {
+                if let Ok(plan) = super::setup::plan::build_plan(report, protocol, intent) {
+                    self.action_password.clear();
+                    self.action_review = Some(PendingAction {
+                        host: host.clone(),
+                        key: key.clone(),
+                        protocol,
+                        plan,
+                        needs_password: report.uid != Some(0) && report.passwordless_sudo != Some(true),
+                        sudo_available: report.uid == Some(0) || report.sudo_available != Some(false),
+                    });
+                }
+            }
+        }
+
+        if let Some((result_key, result_protocol, result)) = &self.action_result {
+            if result_key == &key && *result_protocol == protocol {
+                match result {
+                    Ok(count) => {
+                        ui.colored_label(ui.visuals().hyperlink_color, format!("Action completed ({count} step(s)); checking the service again…"));
+                    }
+                    Err(error) => {
+                        ui.colored_label(ui.visuals().error_fg_color, format!("Remote action failed: {error}"));
+                    }
+                }
+            }
+        }
+        self.show_action_review(ui, &key);
+    }
+
+    fn show_action_review(&mut self, ui: &mut egui::Ui, key: &str) {
+        let Some(action) = self.action_review.as_ref().filter(|action| action.key == key) else {
+            return;
+        };
+        let running = self.action_pending.is_some();
+        let mut approve = false;
+        let mut cancel = false;
+        egui::Window::new("Review remote service action")
+            .id(egui::Id::new(("service_action_review", key)))
+            .collapsible(false)
+            .resizable(false)
+            .default_width(460.0)
+            .show(ui.ctx(), |ui| {
+                ui.heading(action.plan.summary);
+                ui.label("Review the exact commands. Nothing runs until you select Run.");
+                ui.add_space(6.0);
+                for step in &action.plan.steps {
+                    ui.label(format!("{} — {}", step.title, step.undo_note));
+                    let command = super::setup::exec::command_for_step(
+                        step,
+                        action.host.user == "root",
+                        action.needs_password,
+                    )
+                    .unwrap_or_else(|_| "Unsupported plan command".into());
+                    ui.monospace(command);
+                }
+                for warning in &action.plan.warnings {
+                    ui.colored_label(ui.visuals().warn_fg_color, *warning);
+                }
+                if !action.sudo_available {
+                    ui.colored_label(ui.visuals().error_fg_color, "sudo is not available for this SSH user. Use the manual instructions.");
+                } else if action.needs_password {
+                    ui.label("Administrator password (used only for this action; never saved):");
+                    ui.add(egui::TextEdit::singleline(&mut *self.action_password).password(true).desired_width(f32::INFINITY));
+                } else {
+                    ui.label("This account can run the approved command without an administrator password.");
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if running {
+                        ui.spinner();
+                        ui.label("Running approved steps…");
+                    } else {
+                        let can_run = action.sudo_available
+                            && (!action.needs_password || !self.action_password.is_empty());
+                        if ui.add_enabled(can_run, egui::Button::new("Run")).clicked() {
+                            approve = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    }
+                });
+            });
+        if cancel {
+            self.action_password.clear();
+            self.action_review = None;
+        }
+        if approve {
+            if let Some(action) = self.action_review.as_ref() {
+                let host = action.host.clone();
+                let plan = action.plan.clone();
+                let password = if action.needs_password {
+                    Some(std::mem::take(&mut self.action_password))
+                } else {
+                    None
+                };
+                let (sender, receiver) = std::sync::mpsc::channel();
+                self.action_pending = Some(receiver);
+                let ctx = ui.ctx().clone();
+                std::thread::spawn(move || {
+                    let result = super::setup::exec::run_approved_plan(&host, &plan, password)
+                        .map(|outputs| outputs.len());
+                    let _ = sender.send(result);
+                    ctx.request_repaint();
+                });
+            }
         }
     }
 
@@ -233,10 +387,12 @@ fn show_service_inventory(
     report: &super::setup::model::ServiceInventoryReport,
     protocol: DesktopProtocol,
     configured_port: u16,
-) {
+) -> Option<super::setup::plan::Intent> {
+    let mut requested = None;
     ui.group(|ui| {
-        show_service_inventory_card(ui, report, protocol, configured_port);
+        requested = show_service_inventory_card(ui, report, protocol, configured_port);
     });
+    requested
 }
 
 fn show_service_inventory_card(
@@ -244,7 +400,7 @@ fn show_service_inventory_card(
     report: &super::setup::model::ServiceInventoryReport,
     protocol: DesktopProtocol,
     configured_port: u16,
-) {
+) -> Option<super::setup::plan::Intent> {
     use super::setup::model::{Exposure, InitSystem, ServiceState};
 
     let service = report.service(protocol);
@@ -474,6 +630,36 @@ fn show_service_inventory_card(
             show_manual_commands(ui, "Verify", &instructions.verify);
             ui.label("After a manual change, select Scan again above to refresh status.");
         });
+
+    let mut requested = None;
+    let mut actions = Vec::new();
+    match service.state() {
+        ServiceState::NotInstalled => actions.push(("Install and start", super::setup::plan::Intent::InstallAndStart)),
+        ServiceState::InstalledStopped | ServiceState::Failed => {
+            actions.push(("Start", super::setup::plan::Intent::Start));
+            actions.push(("Restart", super::setup::plan::Intent::Restart));
+        }
+        ServiceState::RunningSystemd => {
+            actions.push(("Restart", super::setup::plan::Intent::Restart));
+            actions.push(("Stop", super::setup::plan::Intent::Stop));
+            if service.unit_enabled != Some(true) {
+                actions.push(("Enable at boot", super::setup::plan::Intent::EnableAtBoot));
+            }
+        }
+        ServiceState::RunningManual | ServiceState::Unknown => {}
+    }
+    if protocol == DesktopProtocol::Rdp {
+        ui.horizontal_wrapped(|ui| {
+            for (title, intent) in actions {
+                if super::setup::plan::build_plan(report, protocol, intent).is_ok()
+                    && ui.button(title).clicked()
+                {
+                    requested = Some(intent);
+                }
+            }
+        });
+    }
+    requested
 }
 
 fn show_manual_commands(ui: &mut egui::Ui, title: &str, commands: &[String]) {

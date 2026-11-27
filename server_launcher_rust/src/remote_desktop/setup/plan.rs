@@ -154,6 +154,30 @@ mod tests {
     }
 
     #[test]
+    fn builds_only_the_fixed_command_for_each_supported_service_intent() {
+        for (intent, summary, command) in [
+            (Intent::Start, "Start xrdp", "sudo systemctl start xrdp.service"),
+            (Intent::Stop, "Stop xrdp", "sudo systemctl stop xrdp.service"),
+            (
+                Intent::Restart,
+                "Restart xrdp",
+                "sudo systemctl restart xrdp.service",
+            ),
+            (
+                Intent::EnableAtBoot,
+                "Enable xrdp at boot",
+                "sudo systemctl enable xrdp.service",
+            ),
+        ] {
+            let plan = build_plan(&verified_ubuntu(), DesktopProtocol::Rdp, intent).unwrap();
+            assert_eq!(plan.summary, summary);
+            assert_eq!(plan.steps.len(), 1);
+            assert_eq!(plan.steps[0].command, command);
+            assert!(plan.steps[0].needs_root);
+        }
+    }
+
+    #[test]
     fn refuses_unverified_hosts_and_unverified_mutations() {
         let mut report = verified_ubuntu();
         report.os_id = Some("fedora".into());

@@ -149,7 +149,15 @@ pub(crate) fn rdp(
                 [112.0, ui.spacing().interact_size.y],
                 egui::Label::new("Port *"),
             );
-            ui.add(DragValue::new(&mut profile.port).range(1..=u16::MAX));
+            if ui
+                .add(DragValue::new(&mut profile.port).range(1..=u16::MAX))
+                .changed()
+            {
+                profile.port_auto = false;
+            }
+            if profile.port_auto {
+                ui.label(egui::RichText::new("auto").small().color(ui.visuals().weak_text_color()));
+            }
         });
         ui.checkbox(&mut profile.same_username_as_ssh, "Same username as SSH");
         ui.add_enabled_ui(!profile.same_username_as_ssh, |ui| {
@@ -381,7 +389,20 @@ pub(crate) fn vnc(
     ui.checkbox(&mut profile.enabled, "Enable VNC");
     ui.add_enabled_ui(profile.enabled, |ui| {
         section_header(ui, crate::lucide::SERVER, "Connection");
-        inline_text(ui, "Port or display *", port_text);
+        let port_changed = ui.horizontal(|ui| {
+            ui.add_sized(
+                [112.0, ui.spacing().interact_size.y],
+                egui::Label::new("Port or display *"),
+            );
+            ui.add(TextEdit::singleline(port_text).desired_width(f32::INFINITY))
+                .changed()
+        }).inner;
+        if port_changed {
+            profile.port_auto = false;
+        }
+        if profile.port_auto {
+            help_text(ui, "Port assigned from the detected VNC display.");
+        }
         if let Some(port) = vnc_port(port_text, host) {
             profile.port = port;
         }

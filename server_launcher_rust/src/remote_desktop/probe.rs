@@ -117,6 +117,19 @@ impl ServerDetection {
         })
     }
 
+    pub(crate) fn suggested_port(
+        &self,
+        host: &crate::config::SshRemoteHost,
+        protocol: DesktopProtocol,
+        configured_port: u16,
+    ) -> Option<u16> {
+        let key = detection_key(host);
+        let (_, result, _) = self.last.as_ref().filter(|(tested, _, scanned)| {
+            tested == &key && scanned.elapsed() < Duration::from_secs(60)
+        })?;
+        find_port_suggestion(result.as_ref().ok()?.service(protocol), configured_port)
+    }
+
     fn start(
         &mut self,
         host: crate::config::SshRemoteHost,
@@ -199,6 +212,14 @@ fn detected_port(
         .find(|listener| listener.port == configured_port)
         .or_else(|| service.listeners.iter().min_by_key(|listener| listener.port))
         .map(|listener| listener.port)
+}
+
+fn find_port_suggestion(
+    service: &super::setup::model::ServiceInventory,
+    configured_port: u16,
+) -> Option<u16> {
+    let detected = detected_port(service, configured_port)?;
+    (detected != configured_port).then_some(detected)
 }
 
 fn show_service_inventory(
@@ -805,6 +826,23 @@ impl ProbeControl {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn port_suggestion_uses_detected_listener_without_overriding_matching_port() {
+        let service = crate::remote_desktop::setup::model::ServiceInventory {
+            listeners: vec![crate::remote_desktop::setup::model::Listener {
+                address: "0.0.0.0".into(),
+                port: 5901,
+                process: Some("Xtigervnc".into()),
+                pid: Some(42),
+                owner: Some("ubuntu".into()),
+            }],
+            ..Default::default()
+        };
+        assert_eq!(find_port_suggestion(&service, 5900), Some(5901));
+        assert_eq!(find_port_suggestion(&service, 5901), None);
+        assert_eq!(find_port_suggestion(&Default::default(), 5900), None);
+    }
 
     #[test]
     fn protocol_probe_state_is_scoped_to_host() {

@@ -1960,12 +1960,29 @@ pub fn render_ssh_host_modal(
                             });
                         }
                         RemotePcTab::Rdp => {
+                            let protocol = crate::remote_desktop::credentials::DesktopProtocol::Rdp;
+                            let detection_host = state.remote_detection_host();
                             state.server_detection.show(
                                 ui,
-                                &state.remote_detection_host(),
-                                crate::remote_desktop::credentials::DesktopProtocol::Rdp,
+                                &detection_host,
+                                protocol,
                                 std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))),
                             );
+                            let configured_port = state.rdp.as_ref().map_or(3389, |profile| profile.port);
+                            if let Some(port) = state.server_detection.suggested_port(
+                                &detection_host,
+                                protocol,
+                                configured_port,
+                            ) {
+                                ui.horizontal(|ui| {
+                                    ui.label(format!("Detected RDP listener on port {port}."));
+                                    if ui.button(format!("Use {port}")).clicked() {
+                                        let profile = state.rdp.get_or_insert_with(Default::default);
+                                        profile.port = port;
+                                        profile.port_auto = true;
+                                    }
+                                });
+                            }
                             crate::remote_desktop::editor::rdp(
                                 ui,
                                 &mut state.rdp,
@@ -2004,12 +2021,30 @@ pub fn render_ssh_host_modal(
                             state.rdp_probe.show(ui, request, "Enter the host and port first.", std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))));
                         }
                         RemotePcTab::Vnc => {
+                            let protocol = crate::remote_desktop::credentials::DesktopProtocol::Vnc;
+                            let detection_host = state.remote_detection_host();
                             state.server_detection.show(
                                 ui,
-                                &state.remote_detection_host(),
-                                crate::remote_desktop::credentials::DesktopProtocol::Vnc,
+                                &detection_host,
+                                protocol,
                                 std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))),
                             );
+                            let configured_port = state.vnc.as_ref().map_or(5900, |profile| profile.port);
+                            if let Some(port) = state.server_detection.suggested_port(
+                                &detection_host,
+                                protocol,
+                                configured_port,
+                            ) {
+                                ui.horizontal(|ui| {
+                                    ui.label(format!("Detected VNC listener on port {port}."));
+                                    if ui.button(format!("Use {port}")).clicked() {
+                                        state.vnc_port_text = port.to_string();
+                                        let profile = state.vnc.get_or_insert_with(Default::default);
+                                        profile.port = port;
+                                        profile.port_auto = true;
+                                    }
+                                });
+                            }
                             crate::remote_desktop::editor::vnc(
                                 ui,
                                 &mut state.vnc,

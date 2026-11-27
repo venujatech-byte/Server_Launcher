@@ -77,6 +77,8 @@ pub(crate) struct DriveShare {
 pub(crate) struct RdpProfile {
     pub enabled: bool,
     pub port: u16,
+    #[serde(default)]
+    pub port_auto: bool,
     pub username: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credential_ref: Option<String>,
@@ -116,6 +118,7 @@ impl Default for RdpProfile {
         Self {
             enabled: false,
             port: 3389,
+            port_auto: false,
             username: String::new(),
             credential_ref: None,
             domain: String::new(),
@@ -156,6 +159,8 @@ impl Default for RdpProfile {
 pub(crate) struct VncProfile {
     pub enabled: bool,
     pub port: u16,
+    #[serde(default)]
+    pub port_auto: bool,
     pub username: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credential_ref: Option<String>,
@@ -179,6 +184,7 @@ impl Default for VncProfile {
         Self {
             enabled: false,
             port: 5900,
+            port_auto: false,
             username: String::new(),
             credential_ref: None,
             quality: Quality::Auto,
@@ -256,8 +262,10 @@ mod tests {
         let input = r#"{"id":"test","name":"Test","host":"test.example","rdp":{"enabled":true,"password":"must-not-save"},"vnc":{"enabled":true,"password":"must-not-save"}}"#;
         let host: crate::config::SshRemoteHost = serde_json::from_str(input).unwrap();
         assert_eq!(host.rdp.as_ref().unwrap().port, 3389);
+        assert!(!host.rdp.as_ref().unwrap().port_auto);
         let vnc = host.vnc.as_ref().unwrap();
         assert_eq!(vnc.port, 5900);
+        assert!(!vnc.port_auto);
         assert!(vnc.show_remote_cursor);
         assert!(vnc.tunnel_via_ssh);
         assert!(!vnc.close_on_failure);

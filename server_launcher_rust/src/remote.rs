@@ -225,6 +225,140 @@ pub(crate) fn ssh_probe_output_with_stdin(
     Ok(std::process::Output { status, stdout: read_output(&mut stdout)?, stderr: read_output(&mut stderr)? })
 }
 
+pub(crate) fn ssh_probe_output_with_stdin_stream(
+    mut command: Command,
+    timeout: std::time::Duration,
+    input: &[u8],
+    mut on_output: impl FnMut(bool, &[u8]),
+) -> std::io::Result<std::process::Output> {
+    use std::io::{Read, Write};
+    use std::process::Stdio;
+    use std::sync::mpsc::{self, Receiver, SyncSender};
+    use std::time::{Duration, Instant};
+
+    fn forward<R: Read + Send + 'static>(
+        mut reader: R,
+        is_stderr: bool,
+        sender: SyncSender<(bool, Vec<u8>)>,
+    ) {
+        let mut buffer = [0_u8; 4096];
+        loop {
+            let count = match reader.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(count) => count,
+            };
+            if sender.send((is_stderr, buffer[..count].to_vec())).is_err() {
+                break;
+            }
+        }
+    }
+
+    fn terminate(child: &mut std::process::Child) {
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(-(child.id() as i32), libc::SIGKILL);
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    const MAX_OUTPUT: usize = 4 * 1024 * 1024;
+    let (sender, receiver) = mpsc::sync_channel(16);
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = command.spawn()?;
+    let stdout = child.stdout.take().ok_or_else(|| std::io::Error::other("SSH stdout was not captured"))?;
+    let stderr = child.stderr.take().ok_or_else(|| std::io::Error::other("SSH stderr was not captured"))?;
+    std::thread::spawn({
+        let sender = sender.clone();
+        move || forward(stdout, false, sender)
+    });
+    std::thread::spawn(move || forward(stderr, true, sender));
+
+    if let Some(mut stdin) = child.stdin.take() {
+        if let Err(error) = stdin.write_all(input) {
+            terminate(&mut child);
+            return Err(error);
+        }
+    }
+
+    let deadline = Instant::now() + timeout;
+    let mut status = None;
+    let mut receiver_closed = false;
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    loop {
+        if status.is_none() {
+            match child.try_wait() {
+                Ok(Some(exit_status)) => status = Some(exit_status),
+                Ok(None) if Instant::now() < deadline => {}
+                Ok(None) => {
+                    drop(receiver);
+                    terminate(&mut child);
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "SSH command exceeded its deadline",
+                    ));
+                }
+                Err(error) => {
+                    drop(receiver);
+                    terminate(&mut child);
+                    return Err(error);
+                }
+            }
+        }
+        if status.is_some() && receiver_closed {
+            break;
+        }
+        match recv_chunk(&receiver, &mut receiver_closed) {
+            Some((is_stderr, chunk)) => {
+                if stdout.len().saturating_add(stderr.len()).saturating_add(chunk.len()) > MAX_OUTPUT {
+                    drop(receiver);
+                    terminate(&mut child);
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "SSH command output exceeded 4 MiB",
+                    ));
+                }
+                if is_stderr {
+                    stderr.extend_from_slice(&chunk);
+                } else {
+                    stdout.extend_from_slice(&chunk);
+                }
+                on_output(is_stderr, &chunk);
+            }
+            None => {}
+        }
+    }
+
+    Ok(std::process::Output {
+        status: status.expect("child status is set before stream closure"),
+        stdout,
+        stderr,
+    })
+}
+
+fn recv_chunk(
+    receiver: &std::sync::mpsc::Receiver<(bool, Vec<u8>)>,
+    receiver_closed: &mut bool,
+) -> Option<(bool, Vec<u8>)> {
+    match receiver.recv_timeout(std::time::Duration::from_millis(25)) {
+        Ok(chunk) => Some(chunk),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            *receiver_closed = true;
+            None
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
+    }
+}
+
 pub(crate) fn ssh_probe_output_cancellable(
     mut command: Command,
     timeout: std::time::Duration,

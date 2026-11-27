@@ -97,14 +97,14 @@ pub(crate) fn build_plan(
                 (
                     "package-index",
                     "Update package index",
-                    "sudo apt-get update",
-                    "Refreshes package metadata from configured repositories.",
+                    "sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 update",
+                    "Refreshes package metadata; uses noninteractive mode and waits up to 60 seconds for APT locks.",
                 ),
                 (
                     "install",
                     "Install xrdp",
-                    "sudo apt-get install -y xrdp",
-                    "Installs xrdp and dependencies; automatic undo does not remove packages.",
+                    "sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 install -y xrdp",
+                    "Installs xrdp and dependencies without prompts; waits up to 60 seconds for APT locks. Automatic undo does not remove packages.",
                 ),
                 (
                     "start",
@@ -242,8 +242,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(plan.steps.len(), 4);
-        assert_eq!(plan.steps[0].command, "sudo apt-get update");
-        assert_eq!(plan.steps[1].command, "sudo apt-get install -y xrdp");
+        assert_eq!(
+            plan.steps[0].command,
+            "sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 update"
+        );
+        assert_eq!(
+            plan.steps[1].command,
+            "sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 install -y xrdp"
+        );
         assert_eq!(plan.steps[2].command, "sudo systemctl start xrdp.service");
         assert_eq!(plan.steps[3].command, "sudo systemctl enable xrdp.service");
         assert!(plan.steps[0].effect.contains("package metadata"));

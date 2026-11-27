@@ -42,7 +42,7 @@ pub(crate) fn run_approved_plan(
         }
         report(ActionEvent::StepStarted { index: index + 1, total, title: step.title });
         let remote_command = command_for_step(step, host.user == "root", password.is_some())?;
-        let (program, _) = parse_fixed_command(step.command)?;
+        let timeout = if matches!(step.id, "package-index" | "install") { 300 } else { 45 };
         let mut input = Zeroizing::new(Vec::new());
         if step.needs_root && host.user != "root" {
             if let Some(password) = password.as_ref() {
@@ -53,7 +53,7 @@ pub(crate) fn run_approved_plan(
         let command = crate::remote::build_ssh_command(host, &remote_command);
         let result = crate::remote::ssh_probe_output_with_stdin(
             command,
-            Duration::from_secs(if program == "apt-get" { 300 } else { 45 }),
+            Duration::from_secs(timeout),
             &input,
         )
         .map_err(|error| format!("{} failed: {error}", step.title))?;
@@ -172,7 +172,7 @@ fn parse_fixed_command(command: &str) -> Result<(&str, Vec<&str>), String> {
         !value.is_empty()
             && value
                 .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || b"-./_".contains(&byte))
+                .all(|byte| byte.is_ascii_alphanumeric() || b"-./_=:".contains(&byte))
     };
     if !allowed(program) || args.iter().any(|arg| !allowed(arg)) {
         return Err("The approved plan contains unsupported command syntax.".into());
@@ -189,6 +189,24 @@ mod tests {
         assert_eq!(
             parse_fixed_command("sudo systemctl enable --now xrdp.service").unwrap(),
             ("systemctl", vec!["enable", "--now", "xrdp.service"])
+        );
+        assert_eq!(
+            parse_fixed_command(
+                "sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 install -y xrdp"
+            )
+            .unwrap(),
+            (
+                "env",
+                vec![
+                    "DEBIAN_FRONTEND=noninteractive",
+                    "apt-get",
+                    "-o",
+                    "DPkg::Lock::Timeout=60",
+                    "install",
+                    "-y",
+                    "xrdp"
+                ]
+            )
         );
         for hostile in [
             "sudo systemctl start xrdp; id",

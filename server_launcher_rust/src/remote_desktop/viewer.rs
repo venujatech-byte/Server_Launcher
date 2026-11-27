@@ -1160,6 +1160,7 @@ impl eframe::App for Viewer {
             }
         }
         let toolbar = |ui: &mut egui::Ui| {
+            ui.set_min_height(36.0);
             let show_rates = self.show_update_rate && connected;
             let rates_width = if show_rates { 270.0 } else { 0.0 };
             let controls_width = (ui.available_width() - rates_width - 8.0).max(0.0);

@@ -171,7 +171,7 @@ if [ -r /proc/meminfo ]; then
     memory=$(awk '/^MemAvailable:/ { print int($2 / 1024); exit }' /proc/meminfo)
     case "$memory" in ''|*[!0-9]*) ;; *) field host available_memory_mb "$memory" ;; esac
 fi
-disk=$(df -Pm "$HOME" 2>/dev/null | awk 'NR == 2 { print $4; exit }')
+disk=$(df -Pm "${HOME:-/}" 2>/dev/null | awk 'NR == 2 { print $4; exit }')
 case "$disk" in ''|*[!0-9]*) ;; *) field host free_disk_mb "$disk" ;; esac
 
 if command -v ss >/dev/null 2>&1; then
@@ -215,5 +215,30 @@ elif command -v netstat >/dev/null 2>&1; then
             printf "SLD/1\tlistener\t%s\t%s\t%d\t%s\t%s\t%s\n", protocol, address, port, process, pid, owner
         }
     '
+else
+    awk '
+        function hexbyte(value, i, digit, number) {
+            value = toupper(value); number = 0
+            for (i = 1; i <= length(value); i++) {
+                digit = index("0123456789ABCDEF", substr(value, i, 1)) - 1
+                if (digit < 0) return 0
+                number = number * 16 + digit
+            }
+            return number
+        }
+        FNR > 1 && $4 == "0A" {
+            split($2, endpoint, ":")
+            port = hexbyte(endpoint[2])
+            if (port != 3389 && (port < 5900 || port > 5910)) next
+            if (FILENAME ~ /tcp6$/) {
+                address = endpoint[1] ~ /^0+$/ ? "::" : "unknown"
+            } else {
+                hex = endpoint[1]
+                address = sprintf("%d.%d.%d.%d", hexbyte(substr(hex, 7, 2)), hexbyte(substr(hex, 5, 2)), hexbyte(substr(hex, 3, 2)), hexbyte(substr(hex, 1, 2)))
+            }
+            protocol = port == 3389 ? "rdp" : "vnc"
+            printf "SLD/1\tlistener\t%s\t%s\t%d\t-\t-\t-\n", protocol, address, port
+        }
+    ' /proc/net/tcp /proc/net/tcp6 2>/dev/null
 fi
 printf 'SLD/1\tend\n'

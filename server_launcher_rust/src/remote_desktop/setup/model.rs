@@ -79,8 +79,13 @@ impl ServiceInventory {
 
     pub(crate) fn exposure(&self) -> Exposure {
         let mut specific = None;
+        let mut unknown = false;
         for listener in &self.listeners {
             let address = listener.address.trim_matches(['[', ']']);
+            if address == "unknown" {
+                unknown = true;
+                continue;
+            }
             if address == "*"
                 || address
                     .parse::<IpAddr>()
@@ -98,7 +103,13 @@ impl ServiceInventory {
             specific = Some(listener.address.clone());
         }
         if let Some(address) = specific {
-            Exposure::SpecificAddress(address)
+            if unknown {
+                Exposure::Unknown
+            } else {
+                Exposure::SpecificAddress(address)
+            }
+        } else if unknown {
+            Exposure::Unknown
         } else if !self.listeners.is_empty() {
             Exposure::LocalhostOnly
         } else {
@@ -453,5 +464,16 @@ mod tests {
         let report = parse_inventory("SLD/1\tbegin\nSLD/1\tfield\thost\tdesktop_session\txfce\nSLD/1\tfield\thost\tdesktop_session\tgnome\nSLD/1\tlistener\trdp\t127.0.0.1\t3389\t-\t-\t-\nSLD/1\tend\n").unwrap();
         assert_eq!(report.desktop_sessions, ["xfce", "gnome"]);
         assert_eq!(report.rdp.exposure(), Exposure::LocalhostOnly);
+        let unknown_listener = ServiceInventory {
+            listeners: vec![Listener {
+                address: "unknown".into(),
+                port: 5901,
+                process: None,
+                pid: None,
+                owner: None,
+            }],
+            ..Default::default()
+        };
+        assert_eq!(unknown_listener.exposure(), Exposure::Unknown);
     }
 }

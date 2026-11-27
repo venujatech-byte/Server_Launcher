@@ -45,5 +45,6 @@ Rust keeps `ssh_hosts` and all existing keys; new protocol fields must remain se
 
 - Parser fixtures cover the supplied 3389 listener without process metadata, a manual TigerVNC process on `:1`/5901, percent-escaped owner data, malformed records, duplicate singleton fields, localhost/wildcard exposure, and unknown service state.
 - Manual command generation is limited to `ID=debian` and `ID=ubuntu`; unknown distributions receive no guessed package/service commands. The VNC start command includes localhost binding and the selected numeric port.
+- Listener inspection tries `ss`, then `netstat`, then `/proc/net/tcp*`; IPv6 fallback entries without a reliable address decode are explicitly classified as unknown exposure.
 - `cargo check --locked --all-targets` passed on the authorized SSH build PC after syncing the read-only inventory implementation.
 - Parser and manual-command unit tests were type-checked as targets but not executed. No live service install/start or distro runtime test was performed.

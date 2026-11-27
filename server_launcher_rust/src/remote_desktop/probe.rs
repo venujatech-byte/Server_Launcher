@@ -1628,57 +1628,41 @@ fn show_service_inventory_card(
         }
     }
 
-    let mut ports = service
-        .listeners
-        .iter()
-        .map(|listener| format!("{}:{}", listener.address, listener.port))
-        .collect::<Vec<_>>();
-    ports.sort();
-    ports.dedup();
-    if ports.is_empty() {
-        ui.label("– No matching listener found");
+    // Compact listener + exposure + display into a single row each
+    let unique_ports: Vec<u16> = {
+        let mut ps: Vec<u16> = service.listeners.iter().map(|l| l.port).collect();
+        ps.sort();
+        ps.dedup();
+        ps
+    };
+    let exposure_suffix = match service.exposure() {
+        Exposure::AllInterfaces => " · all interfaces ⚠",
+        Exposure::LocalhostOnly => " · localhost only",
+        Exposure::SpecificAddress(_) => " · specific address",
+        Exposure::Unknown => "",
+    };
+    if unique_ports.is_empty() {
+        ui.label(egui::RichText::new("– No matching listener found").weak());
     } else {
-        ui.label(format!("✓ Listening on {}", ports.join(", ")));
-        for listener in &service.listeners {
-            let process = listener.process.as_deref().unwrap_or("process unknown");
-            let pid = listener.pid.map_or(String::new(), |pid| format!(" · PID {pid}"));
-            let owner = listener
-                .owner
-                .as_deref()
-                .map_or(String::new(), |owner| format!(" · {owner}"));
-            ui.label(format!(
-                "{}:{} · {process}{pid}{owner}",
-                listener.address, listener.port
-            ));
-        }
-    }
-
-    match service.exposure() {
-        Exposure::AllInterfaces => {
-            ui.colored_label(ui.visuals().warn_fg_color, "⚠ Listener is bound to all interfaces");
-        }
-        Exposure::SpecificAddress(address) => {
-            ui.label(format!("Listener bound to {address}"));
-        }
-        Exposure::LocalhostOnly => {
-            ui.label("Listener is bound to localhost");
-        }
-        Exposure::Unknown => {
-            ui.label("– Listener exposure unknown");
+        let ports_str = unique_ports.iter().map(|p| format!(":{p}")).collect::<Vec<_>>().join(", ");
+        let line = format!("✓ Listening on {ports_str}{exposure_suffix}");
+        if service.exposure() == Exposure::AllInterfaces {
+            ui.colored_label(ui.visuals().warn_fg_color, line);
+        } else {
+            ui.label(line);
         }
     }
     if protocol == DesktopProtocol::Vnc {
         for display in &service.displays {
-            ui.label(format!(
-                "Display {} → port {}{}",
-                display.display,
-                display.port,
-                display.user.as_deref().map_or(String::new(), |user| format!(" · {user}"))
-            ));
+            let user = display.user.as_deref().map_or(String::new(), |u| format!(" · {u}"));
+            ui.label(
+                egui::RichText::new(format!("Display {} → :{}{}", display.display, display.port, user))
+                    .weak()
+            );
         }
     }
     if let Some(port) = service.configured_port {
-        ui.label(format!("Configured port {port}"));
+        ui.label(egui::RichText::new(format!("Configured port {port}")).weak());
     }
     egui::CollapsingHeader::new("Host details")
         .id_salt(("service_inventory_host_details", protocol as u8))

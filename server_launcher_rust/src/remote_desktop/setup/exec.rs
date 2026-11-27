@@ -18,6 +18,11 @@ pub(crate) fn run_approved_plan(
     cancel: &AtomicBool,
     mut report: impl FnMut(ActionEvent),
 ) -> Result<usize, String> {
+    if host.user != "root" {
+        if let Some(password) = password.as_ref() {
+            validate_sudo_password(host, password)?;
+        }
+    }
     let total = plan.steps.len();
     let mut completed = 0;
     for (index, step) in plan.steps.iter().enumerate() {
@@ -66,6 +71,31 @@ pub(crate) fn run_approved_plan(
         });
     }
     Ok(completed)
+}
+
+fn validate_sudo_password(
+    host: &SshRemoteHost,
+    password: &str,
+) -> Result<(), String> {
+    let mut input = Zeroizing::new(password.as_bytes().to_vec());
+    input.push(b'\n');
+    let command = crate::remote::build_ssh_command(host, "sudo -S -p '' -- true");
+    let result = crate::remote::ssh_probe_output_with_stdin(command, Duration::from_secs(20), &input)
+        .map_err(|error| format!("Could not validate sudo access: {error}"));
+    input.zeroize();
+    let result = result?;
+    if result.status.success() {
+        return Ok(());
+    }
+    let detail = String::from_utf8_lossy(&result.stderr);
+    if crate::systemd::needs_sudo_password(&detail) {
+        return Err("Sudo password was rejected. Re-enter it and try again.".into());
+    }
+    Err(if detail.trim().is_empty() {
+        "Sudo access could not be validated for this SSH user.".into()
+    } else {
+        format!("Sudo access could not be validated: {}", detail.trim())
+    })
 }
 
 fn output_tail(output: &str, max_chars: usize) -> String {
@@ -154,5 +184,11 @@ mod tests {
     fn action_output_keeps_only_a_bounded_unicode_safe_tail() {
         assert_eq!(output_tail("αβγδε", 3), "γδε");
         assert_eq!(output_tail("short", 20), "short");
+    }
+
+    #[test]
+    fn recognizes_sudo_authentication_failures_for_retry() {
+        assert!(crate::systemd::needs_sudo_password("sudo: 1 incorrect password attempt"));
+        assert!(!crate::systemd::needs_sudo_password("user is not in the sudoers file"));
     }
 }

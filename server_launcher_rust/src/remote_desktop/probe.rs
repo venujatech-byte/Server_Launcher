@@ -15,6 +15,7 @@ struct PendingAction {
     plan: super::setup::plan::ActionPlan,
     needs_password: bool,
     sudo_available: bool,
+    password_attempts: u8,
 }
 
 #[derive(Default)]
@@ -67,7 +68,28 @@ impl ServerDetection {
                 super::setup::exec::ActionEvent::Finished(result) => {
                     self.action_pending = None;
                     self.action_cancel = None;
-                    if let Some(action) = self.action_review.take() {
+                    let rejected = matches!(&result, Err(error) if error.starts_with("Sudo password was rejected."));
+                    let retry = if rejected {
+                        self.action_review.as_mut().is_some_and(|action| {
+                            action.password_attempts += 1;
+                            action.password_attempts < 3
+                        })
+                    } else {
+                        false
+                    };
+                    if retry {
+                        if let Some(action) = &self.action_review {
+                            self.action_status = format!(
+                                "Sudo password was rejected ({}/3). Enter it again.",
+                                action.password_attempts
+                            );
+                        }
+                    } else if let Some(action) = self.action_review.take() {
+                        let result = if rejected {
+                            Err("Three sudo password attempts failed. Use the manual instructions or verify the account's sudo access.".into())
+                        } else {
+                            result
+                        };
                         self.action_result = Some((action.key.clone(), action.protocol, result));
                         self.start(action.host, action.key, timeout, ui.ctx().clone());
                     }
@@ -171,6 +193,7 @@ impl ServerDetection {
                         plan,
                         needs_password: report.uid != Some(0) && report.passwordless_sudo != Some(true),
                         sudo_available: report.uid == Some(0) || report.sudo_available != Some(false),
+                        password_attempts: 0,
                     });
                 }
             }
@@ -224,12 +247,16 @@ impl ServerDetection {
                 if !action.sudo_available {
                     ui.colored_label(ui.visuals().error_fg_color, "sudo is not available for this SSH user. Use the manual instructions.");
                 } else if action.needs_password {
-                    ui.label("Administrator password (used only for this action; never saved):");
+                    ui.label(format!("Administrator password · attempt {}/3 · used only for this action, never saved:", action.password_attempts + 1));
+                    ui.monospace("sudo -S -p '' -- true");
                     ui.add(egui::TextEdit::singleline(&mut *self.action_password).password(true).desired_width(f32::INFINITY));
                 } else {
                     ui.label("This account can run the approved command without an administrator password.");
                 }
                 ui.add_space(8.0);
+                if self.action_status.starts_with("Sudo password was rejected") {
+                    ui.colored_label(ui.visuals().error_fg_color, &self.action_status);
+                }
                 ui.horizontal(|ui| {
                     if running {
                         ui.spinner();

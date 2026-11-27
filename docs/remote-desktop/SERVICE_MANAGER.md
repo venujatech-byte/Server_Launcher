@@ -2,7 +2,7 @@
 
 ## Current boundary
 
-The current implementation performs a read-only SSH inventory scan and a client-side protocol handshake. It shows copyable manual instructions for documented Debian and Ubuntu hosts. For verified Debian/Ubuntu xrdp systemd units, the RDP tab offers a review dialog for install/start, start, stop, restart, and enable-at-boot. The Run button executes only the displayed fixed command plan on a background worker, then rescans. Sudo passwords are held in zeroizing memory for this operation and sent only on SSH stdin; they are not cached. Other distributions, TigerVNC mutations, listener configuration edits, and firewall changes remain manual-only. The action dialog reports each command boundary and bounded output summaries; cancellation waits for the current command to finish. It does not yet show byte/percentage progress within a package command, and there is one password attempt per approval.
+The current implementation performs a read-only SSH inventory scan and a client-side protocol handshake. It shows copyable manual instructions for documented Debian and Ubuntu hosts. For verified Debian/Ubuntu xrdp systemd units, the RDP tab offers a review dialog for install/start, start, stop, restart, and enable-at-boot. The Run button executes only the displayed fixed command plan on a background worker, then rescans. Sudo passwords are held in zeroizing memory for this operation, validated with `sudo true`, and sent only on SSH stdin; they are not cached. A rejected password can be re-entered up to three times before the flow stops. Other distributions, TigerVNC mutations, listener configuration edits, and firewall changes remain manual-only. The action dialog reports each command boundary and bounded output summaries; cancellation waits for the current command to finish. It does not yet show byte/percentage progress within a package command.
 
 The inventory script emits bounded `SLD/1` tab-separated records. Raw output remains available in the UI for troubleshooting. The RDP and VNC views filter their protocol records independently; shared host facts are shown in both.
 
@@ -19,7 +19,7 @@ Documentation does not equal runtime verification. No distro has yet been exerci
 ## Security and execution decisions
 
 - Scans are read-only and start only when the RDP/VNC editor is shown or the user requests a rescan; results are cached briefly.
-- The existing application has a session-level remote sudo password cache. Service actions do not reuse it. The review dialog uses one operation-scoped password; retry and cancellation between plan steps remain future work.
+- The existing application has a session-level remote sudo password cache. Service actions do not reuse it. The review dialog uses an operation-scoped password with up to three attempts; cancellation is available between plan steps only.
 - Do not start TigerVNC without a password. Do not place a VNC password in argv, shell history, logs, or `servers.json`.
 - Never alter host firewalls or cloud security groups. Prefer a verified loopback listener and SSH tunnel; do not claim a listener is private when evidence is incomplete.
 - Do not edit xrdp listen-address configuration until the installed version’s syntax and a backup/restore path are verified.

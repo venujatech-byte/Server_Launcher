@@ -12,13 +12,17 @@ Latest implementation commit is `febaf61` on `vnc/rdp`; the local test PC remain
 | 2. Rendering and performance | RDP damage conversion falls back to one full-frame update after 32 disjoint regions. Viewer reports received update batches/s separately from local texture uploads/s, not as FPS. Changes compile at `febaf61`. | Reproduce stale regions on a real server. Compare full and changed-region uploads and record real latency and resource measurements. |
 | 3. Clipboard and files | Shared image validation checks dimensions, shape and configured size before cloning local clipboard bytes. Incomplete RDP file downloads remove partial output on failure or backend drop; completed downloads are kept. Regression checks compile at `febaf61`. | Run both clipboard directions, offer fallback and file transfer tests on supported desktops and servers, including interrupted transfer cleanup. |
 | 4. Recorder and lifecycle | FFmpeg writes use a one-frame queue and a supervisor with a two-second stop grace period. The pipe writer fills skipped frame indexes from its last complete frame, including the trailing gap on stop, preserving CFR cadence. Queue-saturation/CFR and Unix stuck-child regression checks compile at `febaf61`. | Run regression checks when the workspace permits test execution. Test normal/forced recording shutdown, output integrity, launcher close, tunnel cleanup, and Windows process behavior. |
-| 5. Interoperability | Test PC has no listener on TCP 3389 or 5900–5910; it is not currently an RDP/VNC target. | Run the RDP, VNC, gateway, certificate, audio, microphone, drive, multi-monitor, credential and Windows/Linux matrix in `TESTING.md` against a verified target. |
+| 5. Interoperability | Credential-free test-PC probes receive an RDP X.224 response selecting TLS and VNC RFB 3.8 security negotiation. The VNC server does not offer VeNCrypt Plain, which the configured username/password path requires. | Run full viewer authentication and desktop checks, then the gateway, certificate, audio, microphone, drive, multi-monitor, credential and Windows/Linux matrix in `TESTING.md`. |
 | 6. Release | CI run `45921034260` passed Linux and Windows all-target checks at `4754177`. Local `cargo check --locked --all-targets` passed at `febaf61`. No current-revision CI, package or runtime evidence. | Run CI and package checks on the current revision. Record results and check the packaged viewer process. |
 | 7. Follow-up | Direct VNC TLS, extended VNC clipboard and native Wayland shortcut capture remain unsupported or unverified. | Work these only after the core protocol and release gates pass. |
 
-### Test PC listener probe — 2026-11-27
+### Earlier test PC listener probe — 2026-11-27
 
 The authorized SSH test PC answered a read-only TCP listener check. No listener was found on TCP 3389 or 5900–5910. The `xrdp` unit is installed but failed with a systemd start timeout; its recent logs include TLS accept failures. The process list showed `xrdp-sesman`, an Xorg `:10` session, and `xrdp-chansrv`, but no RDP listener process. This host is not currently a usable RDP/VNC interoperability target. No services or files were changed. Resolve the server-side xrdp failure, or use a verified xrdp/VNC server, before running stage 5 protocol checks.
+
+### Updated test PC protocol probes — 2026-11-27
+
+The authorized SSH test PC now has listeners on TCP 3389 and 5901. From the PC itself, a read-only RDP X.224 connection request received a valid connection confirm with selected protocol `1` (TLS). VNC port 5901 returned `RFB 003.008`, security types `19` (VeNCrypt) and `2` (classic VNC authentication), and VeNCrypt version 0.2 with subtypes `2` and `258`. Subtype `256` (VeNCrypt Plain) was not offered, so the client's configured username/password VeNCrypt Plain path cannot authenticate to this server; classic VNC password auth is advertised. These probes sent no credentials and did not validate app login, framebuffer, input, or clipboard. No server files or services were changed.
 
 ## Start here
 
@@ -98,4 +102,4 @@ Files `recording.rs`, `viewer.rs`, `session.rs`, `tunnel.rs`.
 
 ## Audit limits
 
-The execution status above is based on source inspection and local compile output at `febaf61`. No runtime protocol tests, current-revision CI, package checks, or performance measurements were run in this pass. Prior results in `DESIGN.md` and `TESTING.md` apply only to their recorded revisions. The audit excludes Python, the separate Windows crate, Android Cockpit, and unrelated launcher features. No dependencies were added.
+The execution status above is based on source inspection, local compile output at `febaf61`, and the credential-free protocol probes recorded above. No application-level protocol session, current-revision CI, package check, or performance measurement was run in this pass. Prior results in `DESIGN.md` and `TESTING.md` apply only to their recorded revisions. The audit excludes Python, the separate Windows crate, Android Cockpit, and unrelated launcher features. No dependencies were added.

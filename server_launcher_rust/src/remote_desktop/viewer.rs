@@ -1374,7 +1374,7 @@ impl eframe::App for Viewer {
                                 self.texture_uploads_per_second
                             ));
                         }
-                    });
+                    })
                     }).inner;
                     stats.response.on_hover_text("Connection statistics");
                 });
@@ -1440,7 +1440,7 @@ impl eframe::App for Viewer {
                             .add_enabled_ui(
                                 connected && !self.view_only && connection.vnc_screen.is_some(),
                                 |ui| {
-                                    let mon = ui.scope(|ui| {
+                                    ui.scope(|ui| {
                                         ui.spacing_mut().interact_size = egui::vec2(30.0, 28.0);
                                         ui.spacing_mut().button_padding = egui::vec2(6.0, 5.0);
                                         ui.menu_button(toolbar_icon_text(crate::lucide::MONITOR), |ui| {

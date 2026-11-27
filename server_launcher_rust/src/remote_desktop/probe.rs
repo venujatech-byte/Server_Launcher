@@ -1387,7 +1387,11 @@ fn show_service_history(
         .id_salt(("service_history", protocol as u8))
         .default_open(false)
         .show(ui, |ui| {
-            for (index, record) in records.iter().enumerate() {
+            egui::ScrollArea::vertical()
+                .id_salt(("service_history_scroll", protocol as u8))
+                .max_height(180.0)
+                .show(ui, |ui| {
+                    for (index, record) in records.iter().enumerate() {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(&record.action);
                     ui.weak(&record.at);
@@ -1421,6 +1425,7 @@ fn show_service_history(
                 });
             }
             ui.weak(format!("History for {} · {}@{}:{}", host.name, host.user, host.host, host.port));
+                });
         });
     requested_undo
 }

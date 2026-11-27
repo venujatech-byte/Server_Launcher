@@ -663,13 +663,28 @@ fn show_service_inventory(
     request_manual_scan: &mut bool,
 ) -> Option<super::setup::plan::Intent> {
     let mut requested = None;
-    ui.group(|ui| {
+    use super::setup::model::Readiness;
+    let readiness = report.readiness(protocol);
+    let color = match readiness {
+        Readiness::Ready => ui.visuals().hyperlink_color,
+        Readiness::InstalledStopped | Readiness::RunningNotReachable | Readiness::NotReachable => {
+            ui.visuals().warn_fg_color
+        }
+        Readiness::Failed => ui.visuals().error_fg_color,
+        _ => ui.visuals().weak_text_color(),
+    };
+    egui::Frame::group(ui.style())
+        .stroke(egui::Stroke::new(1.0_f32, color))
+        .rounding(egui::Rounding::same(10.0))
+        .inner_margin(10.0)
+        .show(ui, |ui| {
         requested = show_service_inventory_card(
             ui,
             report,
             protocol,
             configured_port,
             request_manual_scan,
+            color,
         );
     });
     requested
@@ -681,12 +696,13 @@ fn show_service_inventory_card(
     protocol: DesktopProtocol,
     configured_port: u16,
     request_manual_scan: &mut bool,
+    color: egui::Color32,
 ) -> Option<super::setup::plan::Intent> {
     use super::setup::model::{Exposure, InitSystem, Readiness, ServiceState};
 
     let service = report.service(protocol);
     let handshake = report.handshake(protocol);
-    let (label, color) = match report.readiness(protocol) {
+    let (label, _) = match report.readiness(protocol) {
         Readiness::NotInstalled => ("Not installed", ui.visuals().weak_text_color()),
         Readiness::InstalledStopped => {
             ("Installed, not running", ui.visuals().warn_fg_color)
@@ -722,7 +738,18 @@ fn show_service_inventory_card(
         Readiness::Unknown => ("Status unknown", ui.visuals().weak_text_color()),
     };
     ui.horizontal(|ui| {
-        ui.colored_label(color, format!("● {label}"));
+        egui::Frame::none()
+            .fill(egui::Color32::from_rgba_unmultiplied(
+                color.r(),
+                color.g(),
+                color.b(),
+                30,
+            ))
+            .rounding(egui::Rounding::same(999.0))
+            .inner_margin(egui::Margin::symmetric(8.0, 3.0))
+            .show(ui, |ui| {
+                ui.colored_label(color, format!("● {label}"));
+            });
         if let Some(version) = &service.version {
             ui.label(format!("Version {version}"));
         }

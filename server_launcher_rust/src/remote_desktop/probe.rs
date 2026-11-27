@@ -8,6 +8,30 @@ use std::{
 type DetectionResult = Result<super::setup::model::ServiceInventoryReport, String>;
 type ActionResult = Result<usize, String>;
 
+fn with_partial_progress(
+    result: ActionResult,
+    completed_steps: &[String],
+    total_steps: usize,
+) -> ActionResult {
+    let Err(error) = result else {
+        return result;
+    };
+    if completed_steps.is_empty() {
+        return Err(error);
+    }
+    let progress = format!(
+        "{}/{} approved step(s) completed: {}",
+        completed_steps.len(),
+        total_steps,
+        completed_steps.join(", ")
+    );
+    if error.starts_with("Cancelled") {
+        Err(format!("{error} Progress: {progress}."))
+    } else {
+        Err(format!("Partial completion ({progress}). {error}"))
+    }
+}
+
 struct PendingAction {
     host: crate::config::SshRemoteHost,
     key: String,
@@ -94,7 +118,11 @@ impl ServerDetection {
                         ));
                     }
                 }
-                super::setup::exec::ActionEvent::Finished(result) => {
+                super::setup::exec::ActionEvent::Finished {
+                    result,
+                    completed_step_titles,
+                    total_steps,
+                } => {
                     self.action_pending = None;
                     self.action_cancel = None;
                     self.history_cache = None;
@@ -118,7 +146,7 @@ impl ServerDetection {
                         let result = if rejected {
                             Err("Three sudo password attempts failed. Use the manual instructions or verify the account's sudo access.".into())
                         } else {
-                            result
+                            with_partial_progress(result, &completed_step_titles, total_steps)
                         };
                         if result.is_ok()
                             && matches!(
@@ -473,6 +501,7 @@ impl ServerDetection {
                 let ctx = ui.ctx().clone();
                 std::thread::spawn(move || {
                     let mut completed_steps = Vec::new();
+                    let mut completed_step_titles = Vec::new();
                     let result = super::setup::exec::run_approved_plan(
                         &host,
                         &plan,
@@ -482,6 +511,7 @@ impl ServerDetection {
                             if let super::setup::exec::ActionEvent::StepFinished { index, .. } = &event {
                                 if let Some(step) = plan.steps.get(index.saturating_sub(1)) {
                                     completed_steps.push(step.id.to_owned());
+                                    completed_step_titles.push(step.title.to_owned());
                                 }
                             }
                             let _ = sender.send(event);
@@ -505,7 +535,11 @@ impl ServerDetection {
                             );
                         }
                     }
-                    let _ = sender.send(super::setup::exec::ActionEvent::Finished(result));
+                    let _ = sender.send(super::setup::exec::ActionEvent::Finished {
+                        result,
+                        completed_step_titles,
+                        total_steps: plan.steps.len(),
+                    });
                     ctx.request_repaint();
                 });
             }
@@ -1816,6 +1850,29 @@ impl ProbeControl {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_actions_name_completed_steps_and_keep_cancellation_classifiable() {
+        let completed = vec!["Update package index".to_owned()];
+        let error = with_partial_progress(
+            Err("Install xrdp failed".into()),
+            &completed,
+            4,
+        )
+        .unwrap_err();
+        assert!(error.starts_with("Partial completion (1/4"));
+        assert!(error.contains("Update package index"));
+        assert!(error.contains("Install xrdp failed"));
+
+        let cancelled = with_partial_progress(
+            Err("Cancelled after 1 completed step(s).".into()),
+            &completed,
+            4,
+        )
+        .unwrap_err();
+        assert!(cancelled.starts_with("Cancelled"));
+        assert!(cancelled.contains("Update package index"));
+    }
 
     #[test]
     fn connection_failures_get_safe_actionable_summaries() {

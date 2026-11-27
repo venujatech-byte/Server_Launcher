@@ -8,7 +8,11 @@ pub(crate) enum ActionEvent {
     StepStarted { index: usize, total: usize, title: &'static str },
     StepFinished { index: usize, total: usize, title: &'static str, output: String },
     HistoryWarning(String),
-    Finished(Result<usize, String>),
+    Finished {
+        result: Result<usize, String>,
+        completed_step_titles: Vec<String>,
+        total_steps: usize,
+    },
 }
 
 /// Run only the fixed commands in a plan after the caller has obtained approval.

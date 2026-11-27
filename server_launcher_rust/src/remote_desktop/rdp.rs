@@ -263,7 +263,13 @@ fn run(
             )?
         } else if profile.tunnel_via_ssh {
             (
-                tunnel::open(host, profile.port, CONNECT_TIMEOUT, Some(config_path))?,
+                tunnel::open(
+                    host,
+                    std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                    profile.port,
+                    CONNECT_TIMEOUT,
+                    Some(config_path),
+                )?,
                 SocketAddr::from(([127, 0, 0, 1], 0)),
             )
         } else {

@@ -5,6 +5,7 @@ use std::sync::{
 };
 use std::{
     io::{self, Read, Write},
+    net::IpAddr,
     path::Path,
     time::Duration,
 };
@@ -35,6 +36,7 @@ pub(crate) struct Tunnel {
 impl Tunnel {
     pub(crate) fn open(
         host: &SshRemoteHost,
+        target_address: IpAddr,
         port: u16,
         timeout: Duration,
         _config_path: Option<&Path>,
@@ -104,7 +106,7 @@ impl Tunnel {
         let target = format!("{}@{}", host.user.trim(), host.host.trim());
         command
             .arg("-W")
-            .arg(format!("127.0.0.1:{port}"))
+            .arg(format_ssh_target(target_address, port))
             .arg("--")
             .arg(target)
             .stdin(Stdio::from(OwnedFd::from(ssh_stream.try_clone()?)))
@@ -193,6 +195,7 @@ impl Drop for KillOnCloseJob {
 impl Tunnel {
     pub(crate) fn open(
         host: &SshRemoteHost,
+        target_address: IpAddr,
         port: u16,
         timeout: Duration,
         config_path: Option<&Path>,
@@ -212,7 +215,11 @@ impl Tunnel {
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
         let local_addr = listener.local_addr()?;
 
-        let forward = format!("127.0.0.1:{}:127.0.0.1:{port}", local_addr.port());
+        let forward = format!(
+            "127.0.0.1:{}:{}:{port}",
+            local_addr.port(),
+            format_ssh_host(target_address)
+        );
         let target = format!("{}@{}", host.user.trim(), host.host.trim());
         let mut command = Command::new("ssh.exe");
         command
@@ -498,25 +505,59 @@ impl DesktopStream for Tunnel {
 
 pub(crate) fn open(
     host: &SshRemoteHost,
+    target_address: IpAddr,
     port: u16,
     timeout: Duration,
     config_path: Option<&Path>,
 ) -> io::Result<Box<dyn DesktopStream>> {
     #[cfg(unix)]
     {
-        Tunnel::open(host, port, timeout, config_path)
+        Tunnel::open(host, target_address, port, timeout, config_path)
             .map(|stream| Box::new(stream) as Box<dyn DesktopStream>)
     }
     #[cfg(windows)]
     {
-        Tunnel::open(host, port, timeout, config_path)
+        Tunnel::open(host, target_address, port, timeout, config_path)
             .map(|stream| Box::new(stream) as Box<dyn DesktopStream>)
     }
     #[cfg(all(not(unix), not(windows)))]
     {
-        let _ = (host, port, timeout, config_path);
+        let _ = (host, target_address, port, timeout, config_path);
         Err(io::Error::other(
             "SSH desktop tunnels are not available on this platform yet.",
         ))
+    }
+}
+
+fn format_ssh_host(address: IpAddr) -> String {
+    match address {
+        IpAddr::V4(address) => address.to_string(),
+        IpAddr::V6(address) => format!("[{address}]"),
+    }
+}
+
+fn format_ssh_target(address: IpAddr, port: u16) -> String {
+    format!("{}:{port}", format_ssh_host(address))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_ssh_host, format_ssh_target};
+    use std::net::{IpAddr, Ipv4Addr};
+
+    #[test]
+    fn formats_ipv4_and_ipv6_ssh_targets() {
+        assert_eq!(
+            format_ssh_target(IpAddr::V4(Ipv4Addr::LOCALHOST), 3389),
+            "127.0.0.1:3389"
+        );
+        assert_eq!(
+            format_ssh_host("2001:db8::1".parse().unwrap()),
+            "[2001:db8::1]"
+        );
+        assert_eq!(
+            format_ssh_target("2001:db8::1".parse().unwrap(), 5901),
+            "[2001:db8::1]:5901"
+        );
     }
 }

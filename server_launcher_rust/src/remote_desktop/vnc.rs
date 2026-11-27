@@ -500,6 +500,7 @@ fn run(
     let stream: Box<dyn DesktopStream> = if profile.tunnel_via_ssh {
         tunnel::open(
             host,
+            IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
             profile.port,
             TUNNEL_HANDSHAKE_TIMEOUT,
             Some(config_path),

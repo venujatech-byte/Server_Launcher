@@ -555,7 +555,11 @@ fn detect_servers(
                 gateway: (!profile.gateway.trim().is_empty()).then(|| profile.gateway.clone()),
                 config_path: None,
             };
-            report.rdp_handshake = Some(run(&request, timeout));
+            report.rdp_handshake = Some(run_with_target(
+                &request,
+                tunnel_target(&report.rdp.listeners, port),
+                timeout,
+            ));
         }
     }
     if let Some(profile) = host.vnc.as_ref().filter(|profile| profile.enabled) {
@@ -572,7 +576,11 @@ fn detect_servers(
                 gateway: None,
                 config_path: None,
             };
-            report.vnc_handshake = Some(run(&request, timeout));
+            report.vnc_handshake = Some(run_with_target(
+                &request,
+                tunnel_target(&report.vnc.listeners, port),
+                timeout,
+            ));
         }
     }
     Ok(report)
@@ -601,6 +609,28 @@ fn detected_port(
         .or_else(|| service.listeners.iter().min_by_key(|listener| listener.port))
         .map(|listener| listener.port)
     })
+}
+
+fn tunnel_target(
+    listeners: &[super::setup::model::Listener],
+    port: u16,
+) -> Option<std::net::IpAddr> {
+    use std::net::{IpAddr, Ipv4Addr};
+
+    let mut specific = None;
+    for listener in listeners.iter().filter(|listener| listener.port == port) {
+        let address = listener.address.trim_matches(['[', ']']);
+        if address == "*" || address == "localhost" {
+            return Some(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        }
+        if let Ok(address) = address.parse::<IpAddr>() {
+            if address.is_unspecified() || address.is_loopback() {
+                return Some(IpAddr::V4(Ipv4Addr::LOCALHOST));
+            }
+            specific = Some(address);
+        }
+    }
+    specific
 }
 
 fn find_port_suggestion(
@@ -977,6 +1007,14 @@ pub(crate) struct ProbeRequest {
 }
 
 pub(crate) fn run(request: &ProbeRequest, timeout: Duration) -> Result<String, String> {
+    run_with_target(request, None, timeout)
+}
+
+fn run_with_target(
+    request: &ProbeRequest,
+    tunnel_target: Option<std::net::IpAddr>,
+    timeout: Duration,
+) -> Result<String, String> {
     if request.tunnel_via_ssh
         && request
             .gateway
@@ -993,6 +1031,7 @@ pub(crate) fn run(request: &ProbeRequest, timeout: Duration) -> Result<String, S
             .ok_or_else(|| "SSH tunnel: host settings are unavailable.".to_owned())?;
         let mut stream = super::tunnel::open(
             ssh_host,
+            tunnel_target.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
             request.port,
             timeout,
             request.config_path.as_deref(),
@@ -1508,6 +1547,35 @@ mod tests {
             probe_result_id("host-a", DesktopProtocol::Rdp),
             probe_result_id("host-a", DesktopProtocol::Vnc)
         );
+    }
+
+    #[test]
+    fn tunnel_target_uses_listener_bind_address_safely() {
+        use crate::remote_desktop::setup::model::Listener;
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+        let listener = |address: &str| Listener {
+            address: address.into(),
+            port: 5901,
+            process: None,
+            pid: None,
+            owner: None,
+        };
+        let loopback = Some(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        assert_eq!(tunnel_target(&[listener("0.0.0.0")], 5901), loopback);
+        assert_eq!(tunnel_target(&[listener("[::]")], 5901), loopback);
+        assert_eq!(tunnel_target(&[listener("127.0.0.1")], 5901), loopback);
+        assert_eq!(tunnel_target(&[listener("localhost")], 5901), loopback);
+        assert_eq!(
+            tunnel_target(&[listener("192.0.2.12")], 5901),
+            Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 12)))
+        );
+        assert_eq!(
+            tunnel_target(&[listener("2001:db8::12")], 5901),
+            Some(IpAddr::V6("2001:db8::12".parse::<Ipv6Addr>().unwrap()))
+        );
+        assert_eq!(tunnel_target(&[listener("unknown")], 5901), None);
+        assert_eq!(tunnel_target(&[listener("192.0.2.12")], 5900), None);
     }
 
     #[test]

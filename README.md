@@ -139,6 +139,16 @@ OS credential store through OpenSSH askpass and still need runtime validation.
 Protocol interoperation and performance still
 need testing against real servers on Windows, Linux X11, and Linux Wayland.
 
+The RDP and VNC tabs in **Edit Remote PC** also inspect the matching remote
+service over SSH. Scans are read-only and report installation, service state,
+listening ports, exposure, and protocol handshake separately. On Debian or
+Ubuntu hosts using systemd, the RDP tab can review and run fixed xrdp install,
+start, stop, restart, and enable-at-boot actions after explicit approval.
+TigerVNC changes, unsupported distributions, and listener/firewall changes
+remain manual-only; the app never opens firewall or cloud security-group ports.
+See [`docs/remote-desktop/SERVICE_MANAGER.md`](docs/remote-desktop/SERVICE_MANAGER.md)
+for the supported scope and verification limits.
+
 ### Local Apps & Packages
 
 Browse and filter the installed apps and packages on **This PC**. The list

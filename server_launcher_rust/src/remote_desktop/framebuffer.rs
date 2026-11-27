@@ -272,6 +272,98 @@ impl Framebuffer {
 mod tests {
     use super::*;
 
+    fn apply_updates(target: &mut Vec<Color32>, size: [usize; 2], updates: Vec<Update>) {
+        for update in updates {
+            if update.resized {
+                *target = vec![Color32::BLACK; size[0] * size[1]];
+            }
+            let [x, y] = update.origin;
+            let [width, height] = update.image.size;
+            for row in 0..height {
+                let source = row * width;
+                let destination = (y + row) * size[0] + x;
+                target[destination..destination + width]
+                    .copy_from_slice(&update.image.pixels[source..source + width]);
+            }
+        }
+    }
+
+    #[test]
+    fn partial_updates_reconstruct_snapshots_after_merges_and_resize() {
+        let mut framebuffer = Framebuffer::default();
+        let mut rendered = Vec::new();
+        let mut size = [100, 16];
+        framebuffer.resize(size).unwrap();
+        apply_updates(&mut rendered, size, framebuffer.take_updates());
+        assert_eq!(rendered, framebuffer.snapshot().unwrap().pixels);
+
+        let initial: Vec<_> = (0..size[0] * size[1])
+            .map(|index| Color32::from_gray((index % 256) as u8))
+            .collect();
+        framebuffer
+            .write_colors(
+                Region {
+                    origin: [0, 0],
+                    size,
+                },
+                &initial,
+            )
+            .unwrap();
+        apply_updates(&mut rendered, size, framebuffer.take_updates());
+
+        framebuffer
+            .copy_rect(
+                [0, 0],
+                Region {
+                    origin: [2, 1],
+                    size: [6, 4],
+                },
+            )
+            .unwrap();
+        framebuffer
+            .write_strided_rgba(
+                Region {
+                    origin: [96, 0],
+                    size: [4, 2],
+                },
+                &[
+                    255, 0, 0, 0, 255, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 255, 0, 0, 0,
+                    255, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+                ],
+                16,
+            )
+            .unwrap();
+        for x in 0..=MAX_DIRTY_REGIONS {
+            framebuffer
+                .write_rgba(
+                    Region {
+                        origin: [x * 2, 12],
+                        size: [1, 1],
+                    },
+                    &[x as u8, 7, 11, 255],
+                )
+                .unwrap();
+        }
+        apply_updates(&mut rendered, size, framebuffer.take_updates());
+        assert_eq!(rendered, framebuffer.snapshot().unwrap().pixels);
+
+        size = [12, 10];
+        framebuffer.resize(size).unwrap();
+        framebuffer
+            .write_rgba(
+                Region {
+                    origin: [11, 9],
+                    size: [1, 1],
+                },
+                &[9, 8, 7, 255],
+            )
+            .unwrap();
+        let updates = framebuffer.take_updates();
+        assert!(updates.iter().any(|update| update.resized));
+        apply_updates(&mut rendered, size, updates);
+        assert_eq!(rendered, framebuffer.snapshot().unwrap().pixels);
+    }
+
     #[test]
     fn consuming_viewer_damage_does_not_hide_changes_from_recorder() {
         let mut framebuffer = Framebuffer::default();

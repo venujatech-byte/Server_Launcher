@@ -26,7 +26,7 @@ fn toolbar_icon_button(
 ) -> egui::Response {
     ui.add_enabled(
         enabled,
-        egui::Button::new(egui::RichText::new(icon).size(13.0))
+        egui::Button::new(toolbar_icon_text(icon))
             .min_size(egui::vec2(32.0, 28.0))
             .rounding(egui::Rounding::same(8.0)),
     )
@@ -42,12 +42,18 @@ fn toolbar_toggle_button(
 ) -> egui::Response {
     ui.add_enabled(
         enabled,
-        egui::Button::new(icon)
+        egui::Button::new(toolbar_icon_text(icon))
             .selected(selected)
             .min_size(egui::vec2(32.0, 28.0))
             .rounding(egui::Rounding::same(8.0)),
     )
     .on_hover_text(tooltip)
+}
+
+fn toolbar_icon_text(icon: &str) -> egui::RichText {
+    egui::RichText::new(icon)
+        .family(egui::FontFamily::Proportional)
+        .size(13.0)
 }
 
 pub(crate) fn run(
@@ -266,6 +272,8 @@ pub(crate) fn run(
                 protocol,
                 confirm_unencrypted_vnc,
                 clipboard_notice: None,
+                connection_error_notice: None,
+                last_connection_error: None,
                 copy_screenshot: copy_screenshots_to_clipboard,
                 screenshot_clipboard: None,
                 screenshot_queued: false,
@@ -274,12 +282,14 @@ pub(crate) fn run(
                 recording_result: None,
                 screenshot_result: None,
                 show_update_rate,
-                update_sample: None,
-                updates_per_second: 0.0,
                 texture_uploads: 0,
                 texture_uploads_per_second: 0.0,
                 receive_sample: None,
                 receive_kbps: 0.0,
+                traffic_sample: None,
+                download_bytes_per_second: 0.0,
+                upload_bytes_per_second: 0.0,
+                live_fps: 0.0,
                 password_entry: Zeroizing::new(String::new()),
             }))
         }),
@@ -395,6 +405,8 @@ struct Viewer {
     protocol: DesktopProtocol,
     confirm_unencrypted_vnc: bool,
     clipboard_notice: Option<(Instant, String)>,
+    connection_error_notice: Option<(Instant, String)>,
+    last_connection_error: Option<String>,
     copy_screenshot: bool,
     screenshot_clipboard: Option<arboard::Clipboard>,
     screenshot_queued: bool,
@@ -404,12 +416,14 @@ struct Viewer {
     screenshot_result: Option<Result<PathBuf, String>>,
     test_pattern: bool,
     show_update_rate: bool,
-    update_sample: Option<(Instant, u64, u64)>,
-    updates_per_second: f64,
     texture_uploads: u64,
     texture_uploads_per_second: f64,
     receive_sample: Option<(Instant, u64)>,
     receive_kbps: f64,
+    traffic_sample: Option<(Instant, u64, u64, u64, u64)>,
+    download_bytes_per_second: f64,
+    upload_bytes_per_second: f64,
+    live_fps: f64,
     password_entry: Zeroizing<String>,
 }
 
@@ -906,6 +920,7 @@ impl eframe::App for Viewer {
             password_retry,
             connected_since,
             received_bytes,
+            sent_bytes,
             display_updates,
             remote_cursor,
             remote_clipboard_file_count,
@@ -954,6 +969,7 @@ impl eframe::App for Viewer {
                 connection.password_retry,
                 connection.connected_since,
                 connection.received_bytes.load(Ordering::Relaxed),
+                connection.sent_bytes.load(Ordering::Relaxed),
                 connection.display_updates,
                 connection.vnc_cursor.as_ref().map(|image| {
                     (
@@ -977,11 +993,21 @@ impl eframe::App for Viewer {
                 None,
                 0,
                 0,
+                0,
                 None,
                 0,
                 None,
             )
         };
+        if finished
+            && !connected
+            && status != "Session ended"
+            && status != "Disconnected"
+            && self.last_connection_error.as_deref() != Some(&status)
+        {
+            self.last_connection_error = Some(status.clone());
+            self.connection_error_notice = Some((Instant::now(), status.clone()));
+        }
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         self.sync_native_keyboard_capture(ctx, ctx.input(|input| input.focused), connected);
         if let Some(result) = clipboard_file_download {
@@ -1052,24 +1078,43 @@ impl eframe::App for Viewer {
             self.capture = Capture::new(self.left_handed_mouse, self.disable_smooth_scrolling);
         }
         if connected && self.show_update_rate {
-            let (since, batches, uploads) = self.update_sample.get_or_insert_with(|| {
-                (Instant::now(), display_updates, self.texture_uploads)
-            });
+            let (since, previous_rx, previous_tx, frames, uploads) =
+                self.traffic_sample.get_or_insert_with(|| {
+                    (
+                        Instant::now(),
+                        received_bytes,
+                        sent_bytes,
+                        display_updates,
+                        self.texture_uploads,
+                    )
+                });
             let elapsed = since.elapsed();
             let interval = Duration::from_secs(1);
             if elapsed >= interval {
-                self.updates_per_second = updates_per_second(*batches, display_updates, elapsed);
+                self.live_fps = updates_per_second(*frames, display_updates, elapsed);
+                self.download_bytes_per_second =
+                    received_bytes.saturating_sub(*previous_rx) as f64 / elapsed.as_secs_f64();
+                self.upload_bytes_per_second =
+                    sent_bytes.saturating_sub(*previous_tx) as f64 / elapsed.as_secs_f64();
                 self.texture_uploads_per_second =
                     updates_per_second(*uploads, self.texture_uploads, elapsed);
-                self.update_sample = Some((Instant::now(), display_updates, self.texture_uploads));
+                self.traffic_sample = Some((
+                    Instant::now(),
+                    received_bytes,
+                    sent_bytes,
+                    display_updates,
+                    self.texture_uploads,
+                ));
                 ctx.request_repaint_after(interval);
             } else {
                 ctx.request_repaint_after(interval - elapsed);
             }
         } else {
-            self.update_sample = None;
-            self.updates_per_second = 0.0;
+            self.traffic_sample = None;
             self.texture_uploads_per_second = 0.0;
+            self.download_bytes_per_second = 0.0;
+            self.upload_bytes_per_second = 0.0;
+            self.live_fps = 0.0;
         }
         let texture_options =
             if self.protocol == DesktopProtocol::Rdp && self.rdp_painting == RdpPainting::Fast {
@@ -1271,10 +1316,12 @@ impl eframe::App for Viewer {
                     ctx.request_repaint();
                 }
                 if self.show_update_rate && connected {
-                    ui.label(format!("{:.1} updates/s", self.updates_per_second));
+                    ui.label(format!("{} {:.1} FPS", crate::lucide::GAUGE, self.live_fps));
+                    ui.label(format!("{} {}/s", crate::lucide::DOWNLOAD, crate::sensors::format_bytes(self.download_bytes_per_second as u64)));
+                    ui.label(format!("{} {}/s", crate::lucide::UPLOAD, crate::sensors::format_bytes(self.upload_bytes_per_second as u64)));
                 }
                 ui.add_enabled_ui(connected, |ui| {
-                    let stats = ui.menu_button(crate::lucide::INFO, |ui| {
+                    let stats = ui.menu_button(toolbar_icon_text(crate::lucide::INFO), |ui| {
                         ui.label(self.protocol.label());
                         ui.label(&status);
                         if let Some(texture) = &self.texture {
@@ -1311,8 +1358,8 @@ impl eframe::App for Viewer {
                         }
                         if self.show_update_rate {
                             ui.label(format!(
-                                "Remote update batches/s  {:.1}",
-                                self.updates_per_second
+                                "Live FPS  {:.1}",
+                                self.live_fps
                             ));
                             ui.label(format!(
                                 "Texture uploads/s  {:.1}",
@@ -1325,22 +1372,56 @@ impl eframe::App for Viewer {
                 if self.protocol == DesktopProtocol::Rdp {
                     if let Some(connection) = &self.connection {
                         let mut connection = connection.lock().unwrap();
-                        let response = toolbar_toggle_button(
-                            ui,
-                            crate::lucide::SCREEN_SHARE,
-                            "Resize the remote desktop to fit this window",
-                            self.dynamic_resize,
-                            connected && connection.rdp_resize_supported,
-                        );
-                        if response.clicked() {
-                            self.dynamic_resize = !self.dynamic_resize;
-                            connection.rdp_resize_enabled = self.dynamic_resize;
+                        let mut resize_to_fit = self.dynamic_resize;
+                        let mut requested_size = None;
+                        let response = ui
+                            .add_enabled_ui(
+                                connected && !self.view_only && connection.rdp_resize_supported,
+                                |ui| {
+                                    ui.menu_button(
+                                        toolbar_icon_text(crate::lucide::MONITOR),
+                                        |ui| {
+                                            ui.checkbox(&mut resize_to_fit, "Resize to fit window");
+                                            ui.separator();
+                                            for size in [
+                                                [1024, 768],
+                                                [1280, 720],
+                                                [1366, 768],
+                                                [1600, 900],
+                                                [1920, 1080],
+                                            ] {
+                                                if ui
+                                                    .button(format!("{} × {}", size[0], size[1]))
+                                                    .clicked()
+                                                {
+                                                    requested_size = Some(size);
+                                                    ui.close_menu();
+                                                }
+                                            }
+                                        },
+                                    )
+                                    .response
+                                }
+                            )
+                            .inner
+                            .on_hover_text("Change remote display resolution");
+                        if resize_to_fit != self.dynamic_resize {
+                            self.dynamic_resize = resize_to_fit;
+                            connection.rdp_resize_enabled = resize_to_fit;
                             connection.resize_request = None;
                             self.last_window_size = None;
                         }
-                        response.on_disabled_hover_text(
-                            "Waiting for RDP Display Control support from the server.",
-                        );
+                        if let Some(size) = requested_size {
+                            self.dynamic_resize = false;
+                            connection.rdp_resize_enabled = true;
+                            connection.resize_request = Some(size);
+                            self.last_window_size = Some(size);
+                        }
+                        if !connection.rdp_resize_supported {
+                            response.on_disabled_hover_text(
+                                "Waiting for RDP Display Control support from the server.",
+                            );
+                        }
                     }
                 }
                 if self.protocol == DesktopProtocol::Vnc {
@@ -1350,10 +1431,11 @@ impl eframe::App for Viewer {
                             .add_enabled_ui(
                                 connected && !self.view_only && connection.vnc_screen.is_some(),
                                 |ui| {
-                                    ui.menu_button(crate::lucide::MONITOR, |ui| {
+                                    ui.menu_button(toolbar_icon_text(crate::lucide::MONITOR), |ui| {
                                         for size in [
                                             [1024, 768],
                                             [1280, 720],
+                                            [1366, 768],
                                             [1600, 900],
                                             [1920, 1080],
                                             [2560, 1440],
@@ -1513,7 +1595,7 @@ impl eframe::App for Viewer {
                     self.copy_screenshot = !self.copy_screenshot;
                 }
                 ui.add_enabled_ui(connected && !self.view_only, |ui| {
-                    let send_keys = ui.menu_button(crate::lucide::KEY, |ui| {
+                    let send_keys = ui.menu_button(toolbar_icon_text(crate::lucide::KEY), |ui| {
                         let shortcuts: &[(&str, &[u32])] = &[
                             ("Ctrl+Alt+Del", &[0xffe3, 0xffe9, 0xffff]),
                             ("Alt+Tab", &[0xffe9, 0xff09]),
@@ -1623,11 +1705,39 @@ impl eframe::App for Viewer {
                 .response
                 .rect;
         }
+        if let Some((shown, label)) = self.connection_error_notice.clone() {
+            let remaining = Duration::from_secs(8).saturating_sub(shown.elapsed());
+            if !remaining.is_zero() {
+                let mut dismiss = false;
+                egui::Area::new(egui::Id::new("remote_connection_error"))
+                    .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 42.0))
+                    .order(egui::Order::Foreground)
+                    .show(ctx, |ui| {
+                        egui::Frame::popup(ui.style())
+                            .fill(egui::Color32::from_rgb(75, 25, 28))
+                            .show(ui, |ui| {
+                                ui.set_max_width(380.0);
+                                ui.horizontal(|ui| {
+                                    ui.label(toolbar_icon_text(crate::lucide::ALERT_TRIANGLE));
+                                    ui.label(label);
+                                    dismiss = ui.small_button(toolbar_icon_text(crate::lucide::X)).clicked();
+                                });
+                            });
+                    });
+                if dismiss {
+                    self.connection_error_notice = None;
+                } else {
+                    ctx.request_repaint_after(remaining);
+                }
+            } else {
+                self.connection_error_notice = None;
+            }
+        }
         if let Some((shown, label)) = self.clipboard_notice.clone() {
             let remaining = Duration::from_secs(2).saturating_sub(shown.elapsed());
             if !remaining.is_zero() {
                 egui::Area::new(egui::Id::new("clipboard_activity"))
-                    .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 48.0))
+                    .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 92.0))
                     .order(egui::Order::Foreground)
                     .interactable(false)
                     .show(ctx, |ui| {
@@ -1840,7 +1950,13 @@ impl eframe::App for Viewer {
                         }
                     }
                 } else {
-                    ui.centered_and_justified(|ui| ui.label(&status));
+                    ui.centered_and_justified(|ui| {
+                        ui.label(if finished {
+                            "Connection ended"
+                        } else {
+                            &status
+                        });
+                    });
                 }
                 return;
             };

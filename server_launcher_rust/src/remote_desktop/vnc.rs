@@ -187,6 +187,7 @@ pub(crate) struct Connection {
     pub connected: bool,
     pub(crate) display_updates: u64,
     pub(crate) received_bytes: Arc<AtomicU64>,
+    pub(crate) sent_bytes: Arc<AtomicU64>,
     pub(crate) connected_since: Option<Instant>,
     pub(crate) finished: bool,
     pub(crate) password_retry: bool,
@@ -242,6 +243,7 @@ impl Connection {
             connected: false,
             display_updates: 0,
             received_bytes: Arc::new(AtomicU64::new(0)),
+            sent_bytes: Arc::new(AtomicU64::new(0)),
             connected_since: None,
             finished: false,
             password_retry: false,
@@ -329,6 +331,7 @@ impl Connection {
                 state.password_retry = false;
                 state.framebuffer = Framebuffer::default();
                 state.received_bytes.store(0, Ordering::Relaxed);
+                state.sent_bytes.store(0, Ordering::Relaxed);
                 state.receiving_frame = false;
                 state.input_overflow = Arc::new(AtomicBool::new(false));
                 ctx.request_repaint();
@@ -488,7 +491,7 @@ fn run(
             "VNC username authentication requires a password; the username must be at most 1024 bytes and the password at most 4096 bytes.",
         ));
     }
-    let mut stream: Box<dyn DesktopStream> = if profile.tunnel_via_ssh {
+    let stream: Box<dyn DesktopStream> = if profile.tunnel_via_ssh {
         tunnel::open(
             host,
             profile.port,
@@ -502,6 +505,8 @@ fn run(
             profile.tcp_user_timeout_secs,
         )?)
     };
+    let sent_bytes = state.lock().unwrap().sent_bytes.clone();
+    let mut stream = tunnel::count_writes(stream, sent_bytes);
     let mut size = handshake(
         &mut stream,
         profile.shared,

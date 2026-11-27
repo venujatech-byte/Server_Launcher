@@ -271,6 +271,8 @@ fn run(
             let local_addr = socket.local_addr()?;
             (Box::new(socket), local_addr)
         };
+    let sent_bytes = state.lock().unwrap().sent_bytes.clone();
+    let socket = tunnel::count_writes(socket, sent_bytes);
     let mut framed = Framed::new(socket);
     let mut connector =
         connector::ClientConnector::new(

@@ -1,4 +1,8 @@
 use crate::config::SshRemoteHost;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use std::{
     io::{self, Read, Write},
     path::Path,
@@ -346,6 +350,72 @@ pub(crate) trait InputSocket: Write + Send {
 pub(crate) trait DesktopStream: Read + Write + Sync {
     fn input_socket(&self) -> io::Result<Box<dyn InputSocket>>;
     fn set_read_timeout(&self, timeout: Duration) -> io::Result<()>;
+}
+
+pub(crate) fn count_writes(
+    stream: Box<dyn DesktopStream>,
+    sent_bytes: Arc<AtomicU64>,
+) -> Box<dyn DesktopStream> {
+    Box::new(CountedStream { stream, sent_bytes })
+}
+
+struct CountedStream {
+    stream: Box<dyn DesktopStream>,
+    sent_bytes: Arc<AtomicU64>,
+}
+
+impl Read for CountedStream {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.stream.read(buffer)
+    }
+}
+
+impl Write for CountedStream {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        let written = self.stream.write(buffer)?;
+        self.sent_bytes.fetch_add(written as u64, Ordering::Relaxed);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stream.flush()
+    }
+}
+
+impl DesktopStream for CountedStream {
+    fn input_socket(&self) -> io::Result<Box<dyn InputSocket>> {
+        Ok(Box::new(CountedInputSocket {
+            stream: self.stream.input_socket()?,
+            sent_bytes: self.sent_bytes.clone(),
+        }))
+    }
+
+    fn set_read_timeout(&self, timeout: Duration) -> io::Result<()> {
+        self.stream.set_read_timeout(timeout)
+    }
+}
+
+struct CountedInputSocket {
+    stream: Box<dyn InputSocket>,
+    sent_bytes: Arc<AtomicU64>,
+}
+
+impl Write for CountedInputSocket {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        let written = self.stream.write(buffer)?;
+        self.sent_bytes.fetch_add(written as u64, Ordering::Relaxed);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stream.flush()
+    }
+}
+
+impl InputSocket for CountedInputSocket {
+    fn disconnect(&self) {
+        self.stream.disconnect();
+    }
 }
 
 impl InputSocket for std::net::TcpStream {

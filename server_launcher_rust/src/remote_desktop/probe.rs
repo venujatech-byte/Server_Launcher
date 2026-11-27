@@ -58,6 +58,8 @@ pub(crate) struct ServerDetection {
     action_password: zeroize::Zeroizing<String>,
     action_pending: Option<std::sync::mpsc::Receiver<super::setup::exec::ActionEvent>>,
     action_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    scan_window_open: bool,
+    show_manual_instructions: bool,
     action_status: String,
     action_logs: String,
     action_history_warning: Option<(String, DesktopProtocol, String)>,
@@ -196,17 +198,10 @@ impl ServerDetection {
         }
 
         let can_scan = !host.host.trim().is_empty() && !host.user.trim().is_empty();
-        let should_scan = can_scan
-            && self.pending.is_none()
-            && self
-                .last
-                .as_ref()
-                .map_or(true, |(tested, _, scanned)| {
-                    tested != &key || scanned.elapsed() >= Duration::from_secs(60)
-                });
-        if should_scan {
-            self.start(host.clone(), key.clone(), timeout, ui.ctx().clone());
-        }
+        let has_current_result = self
+            .last
+            .as_ref()
+            .is_some_and(|(tested, _, _)| tested == &key);
 
         ui.horizontal(|ui| {
             ui.strong(match protocol {
@@ -220,29 +215,42 @@ impl ServerDetection {
             if ui
                 .add_enabled(
                     can_scan && self.pending.is_none(),
-                    egui::Button::new("Scan again"),
+                    egui::Button::new(if has_current_result { "Scan again" } else { "Scan" }),
                 )
                 .clicked()
             {
+                self.scan_window_open = true;
+                self.show_manual_instructions = false;
                 self.start(host.clone(), key.clone(), timeout, ui.ctx().clone());
             }
+            if has_current_result && !self.scan_window_open && ui.button("Open status").clicked() {
+                self.scan_window_open = true;
+            }
         });
+
         let mut requested_intent = None;
         let mut requested_undo = None;
         let mut request_manual_scan = false;
-        let has_current_result = self
-            .last
-            .as_ref()
-            .is_some_and(|(tested, _, _)| tested == &key);
-        if self.pending.is_some() && !has_current_result {
-            show_service_scan_placeholder(ui, protocol);
-        }
-        if let Some((_, result, _)) = self.last.as_ref().filter(|(tested, _, _)| tested == &key) {
-            match result {
-                Ok(report) => {
-                    let port = match protocol {
-                        DesktopProtocol::Rdp => host.rdp.as_ref().map_or(3389, |profile| profile.port),
-                        DesktopProtocol::Vnc => host.vnc.as_ref().map_or(5900, |profile| profile.port),
+        let mut open = self.scan_window_open;
+        if open {
+            let window_title = match protocol {
+                DesktopProtocol::Rdp => "Service Manager — xrdp",
+                DesktopProtocol::Vnc => "Service Manager — TigerVNC",
+            };
+            egui::Window::new(window_title)
+                .open(&mut open)
+                .resizable(true)
+                .default_width(520.0)
+                .show(ui.ctx(), |ui| {
+                    if self.pending.is_some() && !has_current_result {
+                        show_service_scan_placeholder(ui, protocol);
+                    }
+                    if let Some((_, result, _)) = self.last.as_ref().filter(|(tested, _, _)| tested == &key) {
+                        match result {
+                            Ok(report) => {
+                                let port = match protocol {
+                                    DesktopProtocol::Rdp => host.rdp.as_ref().map_or(3389, |profile| profile.port),
+                                    DesktopProtocol::Vnc => host.vnc.as_ref().map_or(5900, |profile| profile.port),
                     };
                     requested_intent = show_service_inventory(
                         ui,
@@ -278,6 +286,9 @@ impl ServerDetection {
                         });
                 }
             }
+        }
+                });
+            self.scan_window_open = open;
         } else if !can_scan {
             ui.label("Enter the SSH host and username to scan.");
         }

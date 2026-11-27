@@ -1444,6 +1444,9 @@ fn show_service_inventory_card(
                 requested = Some(intent);
             }
         }
+        if ui.button("Scan again").clicked() {
+            *request_manual_scan = true;
+        }
     });
     requested
 }

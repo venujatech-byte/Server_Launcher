@@ -265,7 +265,12 @@ impl ServerDetection {
                 .frame(
                     egui::Frame::window(&ui.ctx().style())
                         .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(75)))
-                        .shadow(egui::Shadow::big_dark()),
+                        .shadow(egui::epaint::Shadow {
+                        offset: egui::vec2(0.0, 6.0),
+                        blur: 18.0,
+                        spread: 2.0,
+                        color: egui::Color32::from_black_alpha(140),
+                    }),
                 )
                 .show(ui.ctx(), |ui| {
                     ui.style_mut().text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
@@ -671,7 +676,12 @@ impl ServerDetection {
             .frame(
                 egui::Frame::window(&ui.ctx().style())
                     .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(75)))
-                    .shadow(egui::Shadow::big_dark()),
+                    .shadow(egui::epaint::Shadow {
+                        offset: egui::vec2(0.0, 6.0),
+                        blur: 18.0,
+                        spread: 2.0,
+                        color: egui::Color32::from_black_alpha(140),
+                    }),
             );
         if !running {
             window = window.open(&mut window_open);

@@ -280,18 +280,38 @@ impl ServerDetection {
                     // — compact custom title bar —
                     ui.horizontal(|ui| {
                         ui.add_space(2.0);
-                        ui.label(egui::RichText::new(window_title).size(13.0).strong());
+                        // Protocol pill icon
+                        let proto_label = match protocol {
+                            DesktopProtocol::Rdp => "RDP",
+                            DesktopProtocol::Vnc => "VNC",
+                        };
+                        egui::Frame::none()
+                            .fill(egui::Color32::from_rgba_unmultiplied(80, 120, 200, 60))
+                            .rounding(egui::Rounding::same(999.0))
+                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                            .show(ui, |ui| {
+                                ui.label(egui::RichText::new(proto_label).size(10.0).strong().color(egui::Color32::from_rgb(140, 180, 255)));
+                            });
+                        ui.label(egui::RichText::new(window_title).size(12.0).strong());
                         if self.pending.is_some() {
                             ui.spinner();
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("X").on_hover_text("Close").clicked() {
+                            // Close button styled as a round pill
+                            let close_resp = ui.add(
+                                egui::Button::new(egui::RichText::new("✕").size(10.0))
+                                    .min_size(egui::vec2(18.0, 18.0))
+                                    .rounding(egui::Rounding::same(999.0)),
+                            ).on_hover_text("Close");
+                            if close_resp.clicked() {
                                 open = false;
                             }
                             if ui
                                 .add_enabled(
                                     can_scan && self.pending.is_none(),
-                                    egui::Button::new("↺").small(),
+                                    egui::Button::new(egui::RichText::new("↺").size(12.0))
+                                        .min_size(egui::vec2(18.0, 18.0))
+                                        .rounding(egui::Rounding::same(999.0)),
                                 )
                                 .on_hover_text("Scan again")
                                 .clicked()
@@ -1527,31 +1547,25 @@ fn show_service_inventory_card(
 
     egui::Grid::new(("service_checks", protocol as u8))
         .num_columns(3)
-        .spacing([8.0, 3.0])
+        .spacing([8.0, 4.0])
         .show(ui, |ui| {
             let ok_color = ui.visuals().hyperlink_color;
+            let warn_color = ui.visuals().warn_fg_color;
             let text_color = ui.visuals().text_color();
-            let mut row = |icon: &str, title: &str, detail: String, color| {
-                ui.colored_label(color, icon);
-                ui.weak(title);
+            let mut row = |icon: &str, icon_color: egui::Color32, title: &str, detail: String| {
+                ui.colored_label(icon_color, icon);
+                ui.label(egui::RichText::new(title).weak());
                 ui.label(detail);
                 ui.end_row();
             };
             row(
-                "✓",
+                "✓", ok_color,
                 "SSH",
-                format!(
-                    "reachable as {}",
-                    report.user.as_deref().unwrap_or("unknown user")
-                ),
-                ok_color,
+                format!("reachable as {}", report.user.as_deref().unwrap_or("unknown user")),
             );
             row(
-                if service.installed == Some(true) {
-                    "✓"
-                } else {
-                    "–"
-                },
+                if service.installed == Some(true) { "✓" } else { "–" },
+                if service.installed == Some(true) { ok_color } else { warn_color },
                 "Installed",
                 match (service.installed, service.version.as_deref()) {
                     (Some(true), Some(version)) => version.to_owned(),
@@ -1559,15 +1573,12 @@ fn show_service_inventory_card(
                     (Some(false), _) => "not detected".into(),
                     (None, _) => "could not be determined".into(),
                 },
-                text_color,
             );
             if service.unit_present.is_some() || service.manual_process == Some(true) {
+                let svc_active = service.unit_active == Some(true) || service.manual_process == Some(true);
                 row(
-                    if service.unit_active == Some(true) {
-                        "✓"
-                    } else {
-                        "–"
-                    },
+                    if svc_active { "✓" } else { "–" },
+                    if svc_active { ok_color } else { warn_color },
                     "Service",
                     if service.manual_process == Some(true) {
                         "running as a manual process".into()
@@ -1575,11 +1586,7 @@ fn show_service_inventory_card(
                         format!(
                             "systemd active{}",
                             service.unit_enabled.map_or(String::new(), |enabled| {
-                                if enabled {
-                                    " · enabled at boot".into()
-                                } else {
-                                    " · not enabled at boot".into()
-                                }
+                                if enabled { " · enabled at boot".into() } else { " · not enabled at boot".into() }
                             })
                         )
                     } else if service.unit_active == Some(false) {
@@ -1587,7 +1594,6 @@ fn show_service_inventory_card(
                     } else {
                         "state unavailable".into()
                     },
-                    text_color,
                 );
             }
         });
@@ -1832,12 +1838,29 @@ fn show_service_inventory_card(
     }
     let mut first_block_reason: Option<&'static str> = None;
     let mut any_shown = false;
+    ui.add_space(4.0);
+    ui.separator();
     ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
         for (title, intent) in actions {
             match super::setup::plan::build_plan(report, protocol, intent) {
                 Ok(_) => {
                     any_shown = true;
-                    if ui.button(title).clicked() {
+                    let is_uninstall = matches!(intent, super::setup::plan::Intent::Uninstall);
+                    let is_update = matches!(intent, super::setup::plan::Intent::Update);
+                    let btn = egui::Button::new(title).rounding(egui::Rounding::same(6.0));
+                    let btn = if is_uninstall {
+                        // Red-tinted danger button
+                        btn.fill(egui::Color32::from_rgba_unmultiplied(160, 40, 40, 80))
+                           .stroke(egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(180, 70, 70)))
+                    } else if is_update {
+                        // Blue-tinted accent button
+                        btn.fill(egui::Color32::from_rgba_unmultiplied(40, 80, 160, 80))
+                           .stroke(egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(70, 120, 200)))
+                    } else {
+                        btn
+                    };
+                    if ui.add(btn).clicked() {
                         requested = Some(intent);
                     }
                 }

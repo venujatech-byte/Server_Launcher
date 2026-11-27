@@ -248,12 +248,24 @@ mod tests {
     #[test]
     fn legacy_hosts_round_trip_without_protocol_keys() {
         let input = r#"{"servers":[],"ssh_hosts":[{"id":"test","name":"Test","host":"test.example","user":"root","port":2222,"remote_cwd":"/opt/app"}]}"#;
-        let original: ConfigFile = serde_json::from_str(input).unwrap();
-        let saved = serde_json::to_value(&original).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("servers.json");
+        std::fs::write(&path, input).unwrap();
+
+        let original = ConfigFile::load_from_file(&path);
+        original.save_to_file(&path).unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         let host = &saved["ssh_hosts"][0];
+        assert_eq!(host["id"], "test");
+        assert_eq!(host["name"], "Test");
+        assert_eq!(host["host"], "test.example");
+        assert_eq!(host["user"], "root");
+        assert_eq!(host["port"], 2222);
+        assert_eq!(host["remote_cwd"], "/opt/app");
         assert!(host.get("rdp").is_none());
         assert!(host.get("vnc").is_none());
-        let reloaded: ConfigFile = serde_json::from_value(saved).unwrap();
+        let reloaded = ConfigFile::load_from_file(&path);
         assert_eq!(reloaded.ssh_hosts, original.ssh_hosts);
     }
 

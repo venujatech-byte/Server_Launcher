@@ -2167,7 +2167,8 @@ impl LauncherApp {
             DesktopProtocol::Rdp => host.rdp.as_ref().is_some_and(|profile| profile.enabled),
             DesktopProtocol::Vnc => host.vnc.as_ref().is_some_and(|profile| profile.enabled),
         };
-        if !configured {
+        let has_password = crate::remote_desktop::credentials::load(host, protocol).is_some();
+        if !configured || !has_password {
             self.ssh_host_modal.open_desktop(host, protocol);
         } else if let Err(error) = self.desktop_sessions.open(&host.id, protocol, &self.config_path, self.theme.id_str(), ctx) {
             self.import_status_msg = Some((format!("Could not open {} viewer: {error}", protocol.label()), true, Instant::now()));

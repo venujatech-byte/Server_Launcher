@@ -66,6 +66,9 @@ pub(crate) struct ServerDetection {
     vnc_localhost_disabled: bool,
     vnc_start_pending: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     vnc_start_error: Option<String>,
+    vnc_passwd_input: zeroize::Zeroizing<String>,
+    vnc_passwd_pending: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+    vnc_passwd_status: Option<Result<String, String>>,
     action_status: String,
     action_logs: String,
     action_history_warning: Option<(String, DesktopProtocol, String)>,
@@ -470,6 +473,12 @@ impl ServerDetection {
         key: &str,
         timeout: Duration,
     ) {
+        if let Some(rx) = &self.vnc_passwd_pending {
+            if let Ok(result) = rx.try_recv() {
+                self.vnc_passwd_pending = None;
+                self.vnc_passwd_status = Some(result);
+            }
+        }
         if let Some(rx) = &self.vnc_start_pending {
             if let Ok(result) = rx.try_recv() {
                 self.vnc_start_pending = None;
@@ -571,6 +580,71 @@ impl ServerDetection {
                 });
                 if let Some(err) = &self.vnc_start_error {
                     ui.colored_label(ui.visuals().error_fg_color, err);
+                }
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("VNC password:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut *self.vnc_passwd_input)
+                            .password(true)
+                            .desired_width(140.0)
+                            .hint_text("6-8+ chars"),
+                    );
+                    let pw_busy = self.vnc_passwd_pending.is_some();
+                    let can_set = !pw_busy && !self.vnc_passwd_input.is_empty();
+                    if ui
+                        .add_enabled(can_set, egui::Button::new("Set password"))
+                        .clicked()
+                    {
+                        self.vnc_passwd_status = None;
+                        let pw = zeroize::Zeroizing::new(format!(
+                            "{}\n",
+                            self.vnc_passwd_input.as_str()
+                        ));
+                        self.vnc_passwd_input.clear();
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        self.vnc_passwd_pending = Some(rx);
+                        let host_owned = host.clone();
+                        let ctx = ui.ctx().clone();
+                        std::thread::spawn(move || {
+                            let command = crate::remote::build_ssh_command(
+                                &host_owned,
+                                "mkdir -p ~/.vnc && vncpasswd -f > ~/.vnc/passwd && chmod 600 ~/.vnc/passwd",
+                            );
+                            let res = crate::remote::ssh_probe_output_with_stdin(
+                                command,
+                                pw.as_bytes(),
+                                timeout,
+                                None,
+                            )
+                            .and_then(|out| {
+                                if out.status.success() {
+                                    Ok("VNC password saved on server.".to_owned())
+                                } else {
+                                    Err(std::io::Error::new(
+                                        std::io::ErrorKind::Other,
+                                        String::from_utf8_lossy(&out.stderr).trim().to_owned(),
+                                    ))
+                                }
+                            })
+                            .map_err(|e| e.to_string());
+                            let _ = tx.send(res);
+                            ctx.request_repaint();
+                        });
+                    }
+                    if pw_busy {
+                        ui.spinner();
+                    }
+                });
+                if let Some(status) = &self.vnc_passwd_status {
+                    match status {
+                        Ok(msg) => {
+                            ui.colored_label(egui::Color32::from_rgb(120, 210, 140), msg);
+                        }
+                        Err(err) => {
+                            ui.colored_label(ui.visuals().error_fg_color, err);
+                        }
+                    }
                 }
             });
     }

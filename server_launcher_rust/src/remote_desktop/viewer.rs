@@ -1325,7 +1325,10 @@ impl eframe::App for Viewer {
                     ctx.request_repaint();
                 }
                 ui.add_enabled_ui(connected, |ui| {
-                    let stats = ui.menu_button(toolbar_icon_text(crate::lucide::INFO), |ui| {
+                    let stats = ui.scope(|ui| {
+                        ui.spacing_mut().interact_size = egui::vec2(30.0, 28.0);
+                        ui.spacing_mut().button_padding = egui::vec2(6.0, 5.0);
+                        ui.menu_button(toolbar_icon_text(crate::lucide::INFO), |ui| {
                         ui.set_min_width(360.0);
                         ui.label(self.protocol.label());
                         ui.label(&status);
@@ -1372,6 +1375,7 @@ impl eframe::App for Viewer {
                             ));
                         }
                     });
+                    }).inner;
                     stats.response.on_hover_text("Connection statistics");
                 });
                 if self.protocol == DesktopProtocol::Rdp {
@@ -1436,7 +1440,10 @@ impl eframe::App for Viewer {
                             .add_enabled_ui(
                                 connected && !self.view_only && connection.vnc_screen.is_some(),
                                 |ui| {
-                                    ui.menu_button(toolbar_icon_text(crate::lucide::MONITOR), |ui| {
+                                    let mon = ui.scope(|ui| {
+                                        ui.spacing_mut().interact_size = egui::vec2(30.0, 28.0);
+                                        ui.spacing_mut().button_padding = egui::vec2(6.0, 5.0);
+                                        ui.menu_button(toolbar_icon_text(crate::lucide::MONITOR), |ui| {
                                         for size in [
                                             [1024, 768],
                                             [1280, 720],
@@ -1460,6 +1467,7 @@ impl eframe::App for Viewer {
                                         }
                                     })
                                     .response
+                                    }).inner
                                 },
                             )
                             .inner
@@ -1605,6 +1613,8 @@ impl eframe::App for Viewer {
                     self.copy_screenshot = !self.copy_screenshot;
                 }
                 ui.add_enabled_ui(connected && !self.view_only, |ui| {
+                    ui.spacing_mut().interact_size = egui::vec2(30.0, 28.0);
+                    ui.spacing_mut().button_padding = egui::vec2(6.0, 5.0);
                     let send_keys = ui.menu_button(toolbar_icon_text(crate::lucide::KEY), |ui| {
                         let shortcuts: &[(&str, &[u32])] = &[
                             ("Ctrl+Alt+Del", &[0xffe3, 0xffe9, 0xffff]),

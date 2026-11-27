@@ -1718,11 +1718,10 @@ impl eframe::App for Viewer {
         };
         if pinned {
             egui::TopBottomPanel::top("viewer_tools")
-                .exact_height(44.0)
                 .frame(
                     egui::Frame::none()
                         .fill(ctx.style().visuals.panel_fill)
-                        .inner_margin(egui::Margin::symmetric(8.0, 4.0)),
+                        .inner_margin(egui::Margin::symmetric(8.0, 6.0)),
                 )
                 .show(ctx, toolbar);
         } else if let Some(until) = overlay_until {

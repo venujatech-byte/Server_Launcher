@@ -256,6 +256,10 @@ impl ServerDetection {
                 .resizable(true)
                 .default_width(420.0)
                 .show(ui.ctx(), |ui| {
+                    ui.style_mut().text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
+                    ui.style_mut().text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(11.5));
+                    ui.style_mut().text_styles.insert(egui::TextStyle::Small, egui::FontId::proportional(10.5));
+                    ui.style_mut().text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(11.0));
                     // — compact custom title bar —
                     ui.horizontal(|ui| {
                         ui.add_space(2.0);
@@ -461,6 +465,10 @@ impl ServerDetection {
             window = window.open(&mut window_open);
         }
         window.show(ui.ctx(), |ui| {
+                ui.style_mut().text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
+                ui.style_mut().text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(11.5));
+                ui.style_mut().text_styles.insert(egui::TextStyle::Small, egui::FontId::proportional(10.5));
+                ui.style_mut().text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(11.0));
                 // — compact custom title bar —
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Service action review").size(13.0).strong());

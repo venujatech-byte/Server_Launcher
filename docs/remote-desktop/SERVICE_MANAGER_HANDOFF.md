@@ -5,7 +5,7 @@ Use this handoff with [`SERVICE_MANAGER_ROADMAP.md`](SERVICE_MANAGER_ROADMAP.md)
 ## Repository state
 
 - Branch: `vnc/rdp`
-- Latest code change: `64f11b2 feat(ui): clarify remote service status cards`.
+- Latest code change: `8d29e80 test(setup): cover supported xrdp action plans`.
 - Latest Rust changes passed `cargo check --locked --all-targets` on the SSH PC in temporary worktrees.
 - SSH build/check PC: use the connection details already provided by the user; do not copy its address, username, or credentials into repository files. Its clone is `~/coding/Server_Launcher`.
 - The user has asked that checks run on that SSH PC and that changes be pushed and pulled there.
@@ -39,6 +39,10 @@ The following changes are on `vnc/rdp` and passed `cargo check --locked --all-ta
 - `65040af`: live RDP/VNC sessions scan once before opening an SSH tunnel, target the matching listener address, and fall back to loopback when no usable bind is detected.
 - `e435b4a`: parser fixtures cover IPv6 wildcard, `*`, specific VNC bind, multiple displays, and truncated records.
 - `64f11b2`: service cards use a theme-colored outline and status pill.
+- `a525af7`: pending and unconfirmed service states use the warning color.
+- `5b40df1`: host-wide OS, sudo, desktop, firewall, and resource details are collapsed by default in the service card.
+- `d906063`: generated RDP verification commands use the selected profile port.
+- `8d29e80`: planner tests cover the fixed commands for xrdp start, stop, restart, and enable-at-boot.
 
 Tests were not executed. UI changes were not visually runtime-tested. The SSH-PC compiler check is evidence of compilation only; it does not verify remote xrdp/VNC behavior.
 
@@ -53,7 +57,7 @@ The latest readiness model distinguishes `Ready` (service state running and hand
 Do not claim the roadmap is complete until each required item is implemented and verified or explicitly documented as manual-only.
 
 1. **Finish read-only scan/probe correctness (Stages 2–4).** Parser fixtures now include wildcard/IPv6 binds, `*`, specific binds, multiple VNC displays, and truncated records. The detector script has a read-only `ss` → `netstat` → `/proc/net/tcp*` fallback, but no scripted fixture harness currently tests those command-availability branches. Keep scans read-only and on-demand; keep authentication/login distinct from handshake.
-2. **Complete service cards and editor status dots (Stage 5).** The card now has a theme-derived status outline and pill. Remaining UI work: compact check rows, stable checking placeholder, protocol-specific raw-output disclosure, manual-process details, and RDP/VNC tab dots. A VNC display selector is shown only when multiple verified displays are present. Keep content keyboard-accessible and use theme tokens.
+2. **Finish service-card details (Stage 5).** The card has a theme-derived status outline/pill, collapsed host details, protocol-specific raw-output disclosure, manual-process details, and the editor already shows cached protocol status dots. A VNC display selector appears only with multiple verified displays. Remaining: stable checking placeholder, compact status rows, and visual/keyboard checks across themes and narrow windows.
 3. **Finish manual guidance (Stage 6).** Verify each command against authoritative sources before displaying it. Improve current Debian/Ubuntu instructions and tests. Add other distro families only after package, unit, startup, and rollback facts are confirmed. Unknown or unsupported systems remain manual-only; do not generate guessed commands.
 4. **Audit plans against the safety contract (Stage 7).** Plans currently use fixed static xrdp commands. Preserve the closed intent set, but complete explicit capability checks, evidence-based display/effect descriptions, and plan tests. Do not introduce user-controlled shell interpolation. Any future command argument must be validated and passed positionally.
 5. **Complete action execution/progress (Stages 8–10).** The UI reports command-step boundaries, not live output/progress inside a package operation. Add bounded streaming only if it can reuse the SSH layer safely. Preserve operation-scoped sudo, exact approved commands, safe cancellation boundaries, bounded logs, and a post-action rescan. Test event order/failure/cancellation by type-checking fixtures; do not run remote mutations during coding checks.
@@ -65,7 +69,7 @@ Do not claim the roadmap is complete until each required item is implemented and
 
 ## Next recommended coding change
 
-Continue with item 2: finish the existing service card's scan-state layout and protocol tab status dots. Keep the change small and theme-aware, then run the required SSH-PC `cargo check --locked --all-targets` before committing.
+Continue with item 2: add a steady initial scan placeholder and compact status rows, then check the card in multiple themes and a narrow window. Keep changes small and run the required SSH-PC `cargo check --locked --all-targets` before committing.
 
 ## Do not misreport
 

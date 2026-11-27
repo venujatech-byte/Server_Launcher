@@ -158,6 +158,7 @@ impl ServerDetection {
                                 super::setup::plan::Intent::Start
                                     | super::setup::plan::Intent::Restart
                                     | super::setup::plan::Intent::InstallAndStart
+                                    | super::setup::plan::Intent::Update
                             )
                         {
                             self.action_port_update = Some((
@@ -166,6 +167,16 @@ impl ServerDetection {
                                 action.protocol,
                                 Instant::now(),
                             ));
+                        }
+                        // For destructive actions (Uninstall) or successful installs, clear the
+                        // stale cached result immediately so the UI shows the scan placeholder
+                        // instead of the old state while the post-action rescan runs.
+                        if matches!(
+                            action.intent,
+                            super::setup::plan::Intent::Uninstall
+                                | super::setup::plan::Intent::InstallAndStart
+                        ) {
+                            self.last = None;
                         }
                         self.action_result = Some((action.key.clone(), action.protocol, result));
                         self.start(action.host, action.key, timeout, ui.ctx().clone());
@@ -240,10 +251,36 @@ impl ServerDetection {
                 DesktopProtocol::Vnc => "Service Manager — TigerVNC",
             };
             egui::Window::new(window_title)
-                .open(&mut open)
+                .id(egui::Id::new(("service_manager_window", protocol as u8)))
+                .title_bar(false)
                 .resizable(true)
-                .default_width(520.0)
+                .default_width(420.0)
                 .show(ui.ctx(), |ui| {
+                    // — compact custom title bar —
+                    ui.horizontal(|ui| {
+                        ui.add_space(2.0);
+                        ui.label(egui::RichText::new(window_title).size(13.0).strong());
+                        if self.pending.is_some() {
+                            ui.spinner();
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("✕").on_hover_text("Close").clicked() {
+                                open = false;
+                            }
+                            if ui
+                                .add_enabled(
+                                    can_scan && self.pending.is_none(),
+                                    egui::Button::new("↺").small(),
+                                )
+                                .on_hover_text("Scan again")
+                                .clicked()
+                            {
+                                self.start(host.clone(), key.clone(), timeout, ui.ctx().clone());
+                            }
+                        });
+                    });
+                    ui.separator();
+                    ui.add_space(2.0);
                     if self.pending.is_some() && !has_current_result {
                         show_service_scan_placeholder(ui, protocol);
                     }
@@ -1421,6 +1458,7 @@ fn show_service_inventory_card(
         ServiceState::InstalledStopped | ServiceState::Failed => {
             actions.push(("Start", super::setup::plan::Intent::Start));
             actions.push(("Restart", super::setup::plan::Intent::Restart));
+            actions.push(("⟳ Update", super::setup::plan::Intent::Update));
             actions.push(("Uninstall", super::setup::plan::Intent::Uninstall));
         }
         ServiceState::RunningSystemd => {
@@ -1429,9 +1467,11 @@ fn show_service_inventory_card(
             if service.unit_enabled != Some(true) {
                 actions.push(("Enable at boot", super::setup::plan::Intent::EnableAtBoot));
             }
+            actions.push(("⟳ Update", super::setup::plan::Intent::Update));
             actions.push(("Uninstall", super::setup::plan::Intent::Uninstall));
         }
         ServiceState::RunningManual => {
+            actions.push(("⟳ Update", super::setup::plan::Intent::Update));
             actions.push(("Uninstall", super::setup::plan::Intent::Uninstall));
         }
         ServiceState::Unknown => {}
@@ -1443,9 +1483,6 @@ fn show_service_inventory_card(
             {
                 requested = Some(intent);
             }
-        }
-        if ui.button("Scan again").clicked() {
-            *request_manual_scan = true;
         }
     });
     requested

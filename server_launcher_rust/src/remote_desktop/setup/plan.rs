@@ -8,6 +8,7 @@ pub(crate) enum Intent {
     Stop,
     Restart,
     InstallAndStart,
+    Update,
     Uninstall,
     EnableAtBoot,
     RestrictToLocalhost,
@@ -44,6 +45,33 @@ pub(crate) fn build_plan(
     }
     if report.init_system != Some(InitSystem::Systemd) {
         return Err("Automated service actions require a detected systemd host.");
+    }
+    if protocol == DesktopProtocol::Vnc && intent == Intent::Update {
+        if report.package_manager.as_deref() != Some("apt") {
+            return Err("Automated TigerVNC update requires a detected APT package manager.");
+        }
+        return Ok(ActionPlan {
+            summary: "Update TigerVNC",
+            steps: vec![
+                ActionStep {
+                    id: "package-index",
+                    title: "Update package index",
+                    command: "sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 update",
+                    effect: "Refreshes package metadata.",
+                    needs_root: true,
+                    undo_note: "No automatic undo is needed.",
+                },
+                ActionStep {
+                    id: "upgrade",
+                    title: "Upgrade TigerVNC",
+                    command: "sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 install -y --only-upgrade tigervnc-standalone-server",
+                    effect: "Upgrades tigervnc-standalone-server to the latest available version.",
+                    needs_root: true,
+                    undo_note: "Package downgrade is not part of automatic undo.",
+                },
+            ],
+            warnings: vec![],
+        });
     }
     if protocol == DesktopProtocol::Vnc && intent == Intent::InstallAndStart {
         if report.package_manager.as_deref() != Some("apt") {
@@ -94,7 +122,7 @@ pub(crate) fn build_plan(
     if protocol != DesktopProtocol::Rdp {
         return Err("TigerVNC start/stop/restart/config actions remain manual until per-user service mapping and password setup are verified.");
     }
-    if matches!(intent, Intent::InstallAndStart | Intent::Uninstall)
+    if matches!(intent, Intent::InstallAndStart | Intent::Update | Intent::Uninstall)
         && report.package_manager.as_deref() != Some("apt")
     {
         return Err("Automated xrdp package actions require a detected APT package manager.");
@@ -139,6 +167,23 @@ pub(crate) fn build_plan(
                 "sudo systemctl enable xrdp.service",
                 "Enables xrdp for future boots; does not start it now.",
             )],
+        ),
+        Intent::Update => (
+            "Update xrdp",
+            &[
+                (
+                    "package-index",
+                    "Update package index",
+                    "sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 update",
+                    "Refreshes package metadata.",
+                ),
+                (
+                    "upgrade",
+                    "Upgrade xrdp",
+                    "sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 install -y --only-upgrade xrdp",
+                    "Upgrades xrdp to the latest available version; active sessions may disconnect.",
+                ),
+            ],
         ),
         Intent::Uninstall => (
             "Uninstall xrdp",

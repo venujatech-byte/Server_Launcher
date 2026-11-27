@@ -29,6 +29,8 @@ struct HistoryRecord {
     ssh_user: String,
     protocol: String,
     action: String,
+    prior_unit_active: Option<bool>,
+    prior_unit_enabled: Option<bool>,
     completed_steps: Vec<String>,
     completed: bool,
 }
@@ -37,6 +39,8 @@ pub(crate) fn record_action(
     host: &SshRemoteHost,
     protocol: &str,
     action: &str,
+    prior_unit_active: Option<bool>,
+    prior_unit_enabled: Option<bool>,
     completed_steps: Vec<String>,
     completed: bool,
 ) -> Result<(), String> {
@@ -53,6 +57,8 @@ pub(crate) fn record_action(
         ssh_user: limited(&host.user, 128),
         protocol: limited(protocol, 8),
         action: limited(action, 128),
+        prior_unit_active,
+        prior_unit_enabled,
         completed_steps,
         completed,
     };
@@ -181,6 +187,8 @@ mod tests {
                     ssh_user: "user".into(),
                     protocol: "RDP".into(),
                     action: "Start xrdp".into(),
+                    prior_unit_active: Some(false),
+                    prior_unit_enabled: Some(false),
                     completed_steps: vec!["start".into()],
                     completed: true,
                 },

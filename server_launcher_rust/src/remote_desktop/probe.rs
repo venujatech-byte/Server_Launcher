@@ -17,6 +17,8 @@ struct PendingAction {
     needs_password: bool,
     sudo_available: bool,
     password_attempts: u8,
+    prior_unit_active: Option<bool>,
+    prior_unit_enabled: Option<bool>,
 }
 
 #[derive(Default)]
@@ -228,6 +230,8 @@ impl ServerDetection {
                         needs_password: report.uid != Some(0) && report.passwordless_sudo != Some(true),
                         sudo_available: report.uid == Some(0) || report.sudo_available != Some(false),
                         password_attempts: 0,
+                        prior_unit_active: report.service(protocol).unit_active,
+                        prior_unit_enabled: report.service(protocol).unit_enabled,
                     });
                 }
             }
@@ -367,6 +371,8 @@ impl ServerDetection {
                 let host = action.host.clone();
                 let plan = action.plan.clone();
                 let protocol = action.protocol;
+                let prior_unit_active = action.prior_unit_active;
+                let prior_unit_enabled = action.prior_unit_enabled;
                 let password = if action.needs_password {
                     Some(std::mem::take(&mut self.action_password))
                 } else {
@@ -403,6 +409,8 @@ impl ServerDetection {
                             &host,
                             protocol.label(),
                             plan.summary,
+                            prior_unit_active,
+                            prior_unit_enabled,
                             completed_steps,
                             action_completed,
                         ) {

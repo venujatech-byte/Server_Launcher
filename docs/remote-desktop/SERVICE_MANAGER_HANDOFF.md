@@ -5,7 +5,7 @@ Use this handoff with [`SERVICE_MANAGER_ROADMAP.md`](SERVICE_MANAGER_ROADMAP.md)
 ## Repository state
 
 - Branch: `vnc/rdp`
-- Latest code change: `b8e89dc fix(setup): match VNC guide display to port`.
+- Latest code change: `a0757ea fix(setup): report completed steps on failure`.
 - Latest Rust changes passed `cargo check --locked --all-targets` on the SSH PC in temporary worktrees.
 - SSH build/check PC: use the connection details already provided by the user; do not copy its address, username, or credentials into repository files. Its clone is `~/coding/Server_Launcher`.
 - The user has asked that checks run on that SSH PC and that changes be pushed and pulled there.
@@ -58,6 +58,7 @@ The following changes are on `vnc/rdp` and passed `cargo check --locked --all-ta
 - `e9eaeef`: xrdp install review now separates starting the service from enabling it at boot.
 - `dfb2e48`: action history records the scanned distro and reads older records without that optional field.
 - `b8e89dc`: VNC manual start guidance selects the matching display for common ports 5901–5999 while keeping the selected RFB port explicit.
+- `a0757ea`: failed or cancelled service actions report how many approved steps completed and name them.
 - `8a1eba7` and `c47f26f`: README and service-manager notes describe the current limits and checked evidence.
 
 Tests were not executed. UI changes were not visually runtime-tested. The SSH-PC compiler check is evidence of compilation only; it does not verify remote xrdp/VNC behavior or execute detector fallback branches.
@@ -80,7 +81,7 @@ Do not claim the roadmap is complete until each required item is implemented and
 6. **Install/start support (Stage 11).** xrdp install/start exists only for verified Debian/Ubuntu systemd hosts, and has not been runtime-tested by this app. Add lock timeout and explicit optional desktop setup only if exact commands and rollback are verified. TigerVNC start/install must remain manual-only until per-user service mapping and password provisioning can be made safe without argv, history, or config storage.
 7. **Port assignment and bind restriction (Stage 12).** Port provenance is now explicit: auto-eligible profiles can accept a detected port, manual edits are preserved, and legacy profiles with unknown provenance keep their current port and receive an Apply suggestion. The behavior is compile-checked, not runtime-tested. Do not automate xrdp or VNC localhost binding until installed-version syntax, backups, rollback, tunnel routing, and behavior are verified. Never change firewall or cloud-security rules.
 8. **Finish setup log and reviewed Undo (Stage 13).** A bounded local history file now records completed step IDs, prior service state, host identity, and scanned distro without passwords or remote output. Older files remain readable. The UI shows recent matching actions. Approved xrdp restore is available only with known prior/current systemd state; it does not uninstall packages. Remaining: verify log behavior and UX at runtime, and decide whether any additional inverse action can be made safe. VNC mutations remain manual-only.
-9. **Complete diagnostics and UI polish (Stage 14).** Service-action hints cover package locks/unavailable packages, sudo denial, disk full, port conflict, SELinux denial, missing desktop session, package-source failure, missing units, and timeout; scan hints cover SSH auth, DNS, refusal, timeout, and route errors; connection checks summarize tunnel failures, wrong protocol/port, and unsupported handshakes with raw details collapsed. Cancellation remains distinct. Still needed: clearer partial-completion diagnosis and visual checks in Nocturnal Command, Light, Catppuccin Latte, and narrow windows. Describe timeouts as possible network/security-group blocks.
+9. **Complete diagnostics and UI polish (Stage 14).** Service-action hints cover package locks/unavailable packages, sudo denial, disk full, port conflict, SELinux denial, missing desktop session, package-source failure, missing units, and timeout; scan hints cover SSH auth, DNS, refusal, timeout, and route errors; connection checks summarize tunnel failures, wrong protocol/port, and unsupported handshakes with raw details collapsed. Failed/cancelled actions now name completed steps. Visual checks in Nocturnal Command, Light, Catppuccin Latte, and narrow windows remain undone. Describe timeouts as possible network/security-group blocks.
 10. **Complete documentation and final verification (Stage 15).** README and `SERVICE_MANAGER.md` now describe the current service-manager scope and compile-check evidence. Keep `TESTING.md` aligned with implementation limits and the manual matrix. Python persistence behavior is documented as potentially dropping Rust-only fields; keep Python files untouched. Record actual distro/version/client route and clearly distinguish compile-checked, test-executed, docs-verified, and runtime-tested evidence.
 
 ## Next recommended coding change

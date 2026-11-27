@@ -467,6 +467,25 @@ mod tests {
     use super::*;
     use egui::{Color32, ColorImage};
 
+    #[cfg(unix)]
+    #[test]
+    fn stopped_encoder_is_killed_and_reaped_after_grace_period() {
+        let child = Command::new("sleep")
+            .arg("30")
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stop = Arc::new(AtomicBool::new(true));
+        let (sender, receiver) = mpsc::channel();
+        let started = Instant::now();
+
+        supervise_child(child, stop, sender);
+
+        let status = receiver.recv().unwrap().unwrap();
+        assert!(!status.success());
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
     #[test]
     fn resized_capture_preserves_canvas_and_aspect_ratio() {
         let source = ColorImage::new([1, 2], Color32::RED);

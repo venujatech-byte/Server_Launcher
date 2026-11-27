@@ -758,24 +758,6 @@ fn show_service_inventory_card(
         }
     });
 
-    let os_name = report
-        .os_pretty_name
-        .as_deref()
-        .or(report.os_id.as_deref())
-        .unwrap_or("Operating system unknown");
-    ui.label(format!(
-        "{os_name}{} · {}",
-        report
-            .os_version
-            .as_deref()
-            .map_or(String::new(), |version| format!(" {version}")),
-        match report.init_system {
-            Some(InitSystem::Systemd) => "systemd",
-            Some(InitSystem::Other) => "non-systemd init",
-            Some(InitSystem::Unknown) | None => "init system unknown",
-        }
-    ));
-
     let ssh_user = report.user.as_deref().unwrap_or("SSH user unknown");
     ui.label(format!("✓ SSH reachable as {ssh_user}"));
     if let Some(installed) = service.installed {
@@ -891,33 +873,55 @@ fn show_service_inventory_card(
     if let Some(port) = service.configured_port {
         ui.label(format!("Configured port {port}"));
     }
-    if let Some(package_manager) = &report.package_manager {
-        ui.label(format!("Package manager: {package_manager}"));
-    }
-    if report.sudo_available == Some(false) {
-        ui.label("sudo is unavailable for this SSH user");
-    } else if report.sudo_available == Some(true) {
-        ui.label(if report.passwordless_sudo == Some(true) {
-            "Passwordless sudo is available"
-        } else {
-            "sudo is available; it may require authentication"
+    egui::CollapsingHeader::new("Host details")
+        .id_salt(("service_inventory_host_details", protocol as u8))
+        .default_open(false)
+        .show(ui, |ui| {
+            let os_name = report
+                .os_pretty_name
+                .as_deref()
+                .or(report.os_id.as_deref())
+                .unwrap_or("Operating system unknown");
+            ui.label(format!(
+                "{os_name}{} · {}",
+                report
+                    .os_version
+                    .as_deref()
+                    .map_or(String::new(), |version| format!(" {version}")),
+                match report.init_system {
+                    Some(InitSystem::Systemd) => "systemd",
+                    Some(InitSystem::Other) => "non-systemd init",
+                    Some(InitSystem::Unknown) | None => "init system unknown",
+                }
+            ));
+            if let Some(package_manager) = &report.package_manager {
+                ui.label(format!("Package manager: {package_manager}"));
+            }
+            if report.sudo_available == Some(false) {
+                ui.label("sudo is unavailable for this SSH user");
+            } else if report.sudo_available == Some(true) {
+                ui.label(if report.passwordless_sudo == Some(true) {
+                    "Passwordless sudo is available"
+                } else {
+                    "sudo is available; it may require authentication"
+                });
+            }
+            if !report.desktop_sessions.is_empty() {
+                ui.label(format!(
+                    "Desktop sessions: {}",
+                    report.desktop_sessions.join(", ")
+                ));
+            }
+            for hint in &report.firewall_hints {
+                ui.label(format!("Firewall: {hint}"));
+            }
+            if let Some(memory) = report.available_memory_mb {
+                ui.label(format!("Available memory: {memory} MiB"));
+            }
+            if let Some(disk) = report.free_disk_mb {
+                ui.label(format!("Free disk in home filesystem: {disk} MiB"));
+            }
         });
-    }
-    if !report.desktop_sessions.is_empty() {
-        ui.label(format!(
-            "Desktop sessions: {}",
-            report.desktop_sessions.join(", ")
-        ));
-    }
-    for hint in &report.firewall_hints {
-        ui.label(format!("Firewall: {hint}"));
-    }
-    if let Some(memory) = report.available_memory_mb {
-        ui.label(format!("Available memory: {memory} MiB"));
-    }
-    if let Some(disk) = report.free_disk_mb {
-        ui.label(format!("Free disk in home filesystem: {disk} MiB"));
-    }
     match handshake {
         Some(Ok(info)) => {
             ui.label(format!("✓ Protocol handshake · {info}"));

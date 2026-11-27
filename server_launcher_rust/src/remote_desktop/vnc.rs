@@ -458,7 +458,7 @@ fn run(
     host: &SshRemoteHost,
     config_path: &std::path::Path,
     session_password: Option<Zeroizing<String>>,
-    state: &Mutex<Connection>,
+    state: &Arc<Mutex<Connection>>,
     ctx: &egui::Context,
 ) -> io::Result<()> {
     let profile = host
@@ -600,7 +600,7 @@ fn run(
         let clipboard_unsupported = state.lock().unwrap().clipboard_unsupported.clone();
         let ctx = ctx.clone();
         let download_host = host.clone();
-        let download_state = state.clone();
+        let download_state = Arc::clone(state);
         std::thread::spawn(move || {
             while let Ok(event) = pending.recv() {
                 if let Input::DownloadClipboardFiles(directory) = event {

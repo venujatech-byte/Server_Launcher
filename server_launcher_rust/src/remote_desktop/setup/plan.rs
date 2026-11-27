@@ -45,6 +45,35 @@ pub(crate) fn build_plan(
     if report.init_system != Some(InitSystem::Systemd) {
         return Err("Automated service actions require a detected systemd host.");
     }
+    if protocol == DesktopProtocol::Vnc && intent == Intent::InstallAndStart {
+        if report.package_manager.as_deref() != Some("apt") {
+            return Err("Automated TigerVNC installation requires a detected APT package manager.");
+        }
+        return Ok(ActionPlan {
+            summary: "Install TigerVNC",
+            steps: vec![
+                ActionStep {
+                    id: "package-index",
+                    title: "Update package index",
+                    command: "sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 update",
+                    effect: "Refreshes package metadata; uses noninteractive mode and waits up to 60 seconds for APT locks.",
+                    needs_root: true,
+                    undo_note: "No automatic undo is needed.",
+                },
+                ActionStep {
+                    id: "install",
+                    title: "Install TigerVNC",
+                    command: "sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 install -y tigervnc-standalone-server",
+                    effect: "Installs tigervnc-standalone-server without prompts; does not set a VNC password or start a session.",
+                    needs_root: true,
+                    undo_note: "Package removal is not part of automatic undo.",
+                },
+            ],
+            warnings: vec![
+                "After installation, set a VNC password with vncpasswd over SSH before starting TigerVNC.",
+            ],
+        });
+    }
     if protocol == DesktopProtocol::Vnc && intent == Intent::Uninstall {
         if report.package_manager.as_deref() != Some("apt") {
             return Err("Automated TigerVNC uninstall requires a detected APT package manager.");

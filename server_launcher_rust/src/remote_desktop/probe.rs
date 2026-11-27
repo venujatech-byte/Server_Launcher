@@ -60,6 +60,8 @@ pub(crate) struct ServerDetection {
     action_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     scan_window_open: bool,
     show_manual_instructions: bool,
+    vnc_resolution_idx: usize,
+    vnc_localhost_disabled: bool,
     action_status: String,
     action_logs: String,
     action_history_warning: Option<(String, DesktopProtocol, String)>,
@@ -1409,7 +1411,13 @@ fn show_service_inventory_card(
     let mut requested = None;
     let mut actions = Vec::new();
     match service.state() {
-        ServiceState::NotInstalled => actions.push(("Install and start", super::setup::plan::Intent::InstallAndStart)),
+        ServiceState::NotInstalled => {
+            let label = match protocol {
+                DesktopProtocol::Rdp => "Install and start",
+                DesktopProtocol::Vnc => "Install TigerVNC",
+            };
+            actions.push((label, super::setup::plan::Intent::InstallAndStart));
+        }
         ServiceState::InstalledStopped | ServiceState::Failed => {
             actions.push(("Start", super::setup::plan::Intent::Start));
             actions.push(("Restart", super::setup::plan::Intent::Restart));

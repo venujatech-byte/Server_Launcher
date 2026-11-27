@@ -2,7 +2,7 @@ use super::vnc::Connection;
 use std::{
     io::Write,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc, Mutex,
@@ -41,7 +41,7 @@ impl Recording {
         let worker = thread::spawn(move || {
             let _ = sender.send(record(
                 &connection,
-                &cancelled,
+                cancelled,
                 &worker_paused,
                 &progress,
                 &worker_bytes,
@@ -94,7 +94,7 @@ impl Drop for Recording {
 
 fn record(
     connection: &Mutex<Connection>,
-    stop: &AtomicBool,
+    stop: Arc<AtomicBool>,
     paused: &AtomicBool,
     progress: &AtomicU64,
     output_bytes: &AtomicU64,
@@ -134,7 +134,7 @@ fn record(
     if format == crate::config::RemoteRecordingFormat::PngSequence {
         return save_png_sequence(
             connection,
-            stop,
+            &stop,
             paused,
             first_frame,
             &folder,
@@ -188,12 +188,7 @@ fn record(
         .args(codec_args)
         .args(["-pix_fmt", "yuv420p"])
         .args(container_args)
-        .args([
-            "-g",
-            &fps_arg,
-            "-flush_packets",
-            "1",
-        ])
+        .args(["-g", &fps_arg, "-flush_packets", "1"])
         .arg(&output)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -204,7 +199,7 @@ fn record(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return save_png_sequence(
                 connection,
-                stop,
+                &stop,
                 paused,
                 first_frame,
                 &folder,
@@ -216,22 +211,44 @@ fn record(
         }
         Err(error) => return Err(format!("Could not start FFmpeg: {error}")),
     };
-    let mut pipe = child.stdin.take().expect("FFmpeg stdin was piped");
-    let mut pixels = Vec::with_capacity(size[0] * size[1] * 4);
+    let pipe = child.stdin.take().expect("FFmpeg stdin was piped");
+    let (pipe_sender, pipe_receiver) = mpsc::sync_channel::<Arc<Vec<u8>>>(1);
+    let (status_sender, status_receiver) = mpsc::channel();
+    let child_stop = Arc::clone(&stop);
+    thread::spawn(move || supervise_child(child, child_stop, status_sender));
+    thread::spawn(move || {
+        let mut pipe = pipe;
+        while let Ok(pixels) = pipe_receiver.recv() {
+            if pipe.write_all(&pixels).is_err() {
+                break;
+            }
+        }
+    });
+    let mut pixels = Arc::new(Vec::with_capacity(size[0] * size[1] * 4));
     let mut frames = 0_u64;
     let write_result = sample_frames(
         connection,
-        stop,
+        &stop,
         paused,
         first_frame,
         interval,
         |frame, changed| {
             if changed {
-                pixels.clear();
-                pixels.extend(frame.pixels.iter().flat_map(|pixel| pixel.to_array()));
+                pixels = Arc::new(
+                    frame
+                        .pixels
+                        .iter()
+                        .flat_map(|pixel| pixel.to_array())
+                        .collect(),
+                );
             }
-            pipe.write_all(&pixels)
-                .map_err(|error| format!("Could not write the recording: {error}"))?;
+            match pipe_sender.try_send(Arc::clone(&pixels)) {
+                Ok(()) => {}
+                Err(mpsc::TrySendError::Full(_)) => return Ok(()),
+                Err(mpsc::TrySendError::Disconnected(_)) => {
+                    return Err("FFmpeg stopped accepting recording frames.".into())
+                }
+            }
             frames += 1;
             if frames % u64::from(fps) == 0 {
                 if let Ok(metadata) = std::fs::metadata(&output) {
@@ -242,13 +259,48 @@ fn record(
             Ok(())
         },
     );
-    drop(pipe);
-    let status = child.wait().map_err(|error| error.to_string())?;
+    stop.store(true, Ordering::Relaxed);
+    drop(pipe_sender);
+    let status = status_receiver
+        .recv_timeout(Duration::from_secs(4))
+        .map_err(|_| "FFmpeg did not stop after recording ended.".to_owned())?
+        .map_err(|error| error.to_string())?;
     write_result?;
     if !status.success() {
         return Err(format!("FFmpeg could not encode the recording ({status})."));
     }
     output.keep().map_err(|error| error.to_string())
+}
+
+fn supervise_child(
+    mut child: Child,
+    stop: Arc<AtomicBool>,
+    status: mpsc::Sender<std::io::Result<ExitStatus>>,
+) {
+    let mut stop_deadline = None;
+    loop {
+        match child.try_wait() {
+            Ok(Some(exit)) => {
+                let _ = status.send(Ok(exit));
+                return;
+            }
+            Err(error) => {
+                let _ = status.send(Err(error));
+                return;
+            }
+            Ok(None) => {}
+        }
+        if stop.load(Ordering::Relaxed) {
+            let deadline = stop_deadline
+                .get_or_insert_with(|| Instant::now() + Duration::from_secs(2));
+            if Instant::now() >= *deadline {
+                let _ = child.kill();
+                let _ = status.send(child.wait());
+                return;
+            }
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn save_png_sequence(
@@ -274,12 +326,9 @@ fn save_png_sequence(
         first_frame,
         interval,
         |frame, _| {
-            let path = super::screenshot::save_in(
-                frame,
-                sequence.path(),
-                &format!("frame-{index:08}"),
-            )
-            .map_err(|error| error.to_string())?;
+            let path =
+                super::screenshot::save_in(frame, sequence.path(), &format!("frame-{index:08}"))
+                    .map_err(|error| error.to_string())?;
             if let Ok(metadata) = std::fs::metadata(path) {
                 output_bytes.fetch_add(metadata.len(), Ordering::Relaxed);
             }
@@ -290,9 +339,8 @@ fn save_png_sequence(
     );
     if index != 0 {
         let path = sequence.keep();
-        result.map_err(|error| {
-            format!("{error} Partial PNG sequence saved to {}", path.display())
-        })?;
+        result
+            .map_err(|error| format!("{error} Partial PNG sequence saved to {}", path.display()))?;
         return Ok(path);
     }
     Err(result
@@ -309,21 +357,30 @@ fn recording_folder(folder: Option<PathBuf>) -> Result<PathBuf, String> {
 
 fn ffmpeg_video_options(
     format: crate::config::RemoteRecordingFormat,
-) -> Option<(&'static str, &'static [&'static str], &'static [&'static str])> {
+) -> Option<(
+    &'static str,
+    &'static [&'static str],
+    &'static [&'static str],
+)> {
     match format {
         crate::config::RemoteRecordingFormat::Mp4 => Some((
             ".mp4",
             &["-c:v", "libx264", "-preset", "ultrafast"],
-            &[
-                "-movflags",
-                "+empty_moov+frag_keyframe+default_base_moof",
-            ],
+            &["-movflags", "+empty_moov+frag_keyframe+default_base_moof"],
         )),
         crate::config::RemoteRecordingFormat::Webm => Some((
             ".webm",
             &[
-                "-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "8", "-crf",
-                "34", "-b:v", "0",
+                "-c:v",
+                "libvpx-vp9",
+                "-deadline",
+                "realtime",
+                "-cpu-used",
+                "8",
+                "-crf",
+                "34",
+                "-b:v",
+                "0",
             ],
             &[],
         )),

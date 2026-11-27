@@ -5,7 +5,7 @@ Use this handoff with [`SERVICE_MANAGER_ROADMAP.md`](SERVICE_MANAGER_ROADMAP.md)
 ## Repository state
 
 - Branch: `vnc/rdp`
-- Latest code change: `9b72659 test(setup): cover specific and localhost exposure`.
+- Latest code change: `5869e1f feat(ui): compact service status checks`.
 - Latest Rust changes passed `cargo check --locked --all-targets` on the SSH PC in temporary worktrees.
 - SSH build/check PC: use the connection details already provided by the user; do not copy its address, username, or credentials into repository files. Its clone is `~/coding/Server_Launcher`.
 - The user has asked that checks run on that SSH PC and that changes be pushed and pulled there.
@@ -46,6 +46,7 @@ The following changes are on `vnc/rdp` and passed `cargo check --locked --all-ta
 - `055c751`: first SSH inventory scans show a themed placeholder while keeping existing results visible during refresh.
 - `63d8d97`: manual command groups offer a Copy all button.
 - `9b72659`: exposure fixtures distinguish specific addresses from the localhost alias.
+- `5869e1f`: SSH, installation, and service-state checks render in a compact three-column checklist.
 - `8a1eba7` and `c47f26f`: README and service-manager notes describe the current limits and checked evidence.
 
 Tests were not executed. UI changes were not visually runtime-tested. The SSH-PC compiler check is evidence of compilation only; it does not verify remote xrdp/VNC behavior.
@@ -61,7 +62,7 @@ The latest readiness model distinguishes `Ready` (service state running and hand
 Do not claim the roadmap is complete until each required item is implemented and verified or explicitly documented as manual-only.
 
 1. **Finish read-only scan/probe correctness (Stages 2–4).** Parser fixtures now include wildcard/IPv6 binds, `*`, specific binds, multiple VNC displays, and truncated records. The detector script has a read-only `ss` → `netstat` → `/proc/net/tcp*` fallback, but no scripted fixture harness currently tests those command-availability branches. Keep scans read-only and on-demand; keep authentication/login distinct from handshake.
-2. **Finish service-card details (Stage 5).** The card has a theme-derived status outline/pill, collapsed host details, a first-scan placeholder, protocol-specific raw-output disclosure, manual-process details, and cached editor status dots. A VNC display selector appears only with multiple verified displays. Remaining: compact status rows and visual/keyboard checks across themes and narrow windows.
+2. **Finish service-card details (Stage 5).** The card has a theme-derived status outline/pill, compact three-column SSH/install/service rows, collapsed host details, a first-scan placeholder, protocol-specific raw-output disclosure, manual-process details, and cached editor status dots. A VNC display selector appears only with multiple verified displays. Remaining: visual/keyboard checks across themes and narrow windows.
 3. **Finish manual guidance (Stage 6).** Current Debian/Ubuntu command groups support per-command and Copy all actions, and RDP verification uses the selected port. Verify the remaining command details against authoritative sources before displaying them. Add other distro families only after package, unit, startup, and rollback facts are confirmed. Unknown or unsupported systems remain manual-only; do not generate guessed commands.
 4. **Audit plans against the safety contract (Stage 7).** Plans currently use fixed static xrdp commands. Preserve the closed intent set, but complete explicit capability checks, evidence-based display/effect descriptions, and plan tests. Do not introduce user-controlled shell interpolation. Any future command argument must be validated and passed positionally.
 5. **Complete action execution/progress (Stages 8–10).** The UI reports command-step boundaries, not live output/progress inside a package operation. Add bounded streaming only if it can reuse the SSH layer safely. Preserve operation-scoped sudo, exact approved commands, safe cancellation boundaries, bounded logs, and a post-action rescan. Test event order/failure/cancellation by type-checking fixtures; do not run remote mutations during coding checks.

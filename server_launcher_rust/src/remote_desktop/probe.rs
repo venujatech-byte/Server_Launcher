@@ -544,7 +544,7 @@ impl ServerDetection {
                         let cmd_owned = cmd.clone();
                         let ctx = ui.ctx().clone();
                         std::thread::spawn(move || {
-                            let command = crate::remote::build_ssh_probe_command(
+                            let command = crate::remote::build_ssh_command(
                                 &host_owned,
                                 &cmd_owned,
                             );
@@ -567,9 +567,6 @@ impl ServerDetection {
                     if busy {
                         ui.spinner();
                         ui.label(egui::RichText::new("Starting VNC...").small().weak());
-                    }
-                    if show_vnc_start {
-                        self.show_vnc_start_config(ui, host, &key, timeout);
                     }
                 });
                 if let Some(err) = &self.vnc_start_error {
@@ -670,9 +667,6 @@ impl ServerDetection {
                             ui.add_space(5.0);
                         }
                     }
-                    if show_vnc_start {
-                        self.show_vnc_start_config(ui, host, &key, timeout);
-                    }
                 });
 
                 if !action.plan.warnings.is_empty() {
@@ -751,9 +745,6 @@ impl ServerDetection {
                         if ui.button("Cancel").clicked() {
                             cancel = true;
                         }
-                    }
-                    if show_vnc_start {
-                        self.show_vnc_start_config(ui, host, &key, timeout);
                     }
                 });
 
@@ -1303,9 +1294,6 @@ fn show_service_history(
                             requested_undo = Some((**record).clone());
                         }
                     }
-                    if show_vnc_start {
-                        self.show_vnc_start_config(ui, host, &key, timeout);
-                    }
                 });
             }
             ui.weak(format!("History for {} · {}@{}:{}", host.name, host.user, host.host, host.port));
@@ -1733,9 +1721,6 @@ fn show_manual_commands(ui: &mut egui::Ui, title: &str, commands: &[String]) {
                     ui.monospace(command);
                     if ui.small_button("Copy").clicked() {
                         ui.ctx().copy_text(command.clone());
-                    }
-                    if show_vnc_start {
-                        self.show_vnc_start_config(ui, host, &key, timeout);
                     }
                 });
             });

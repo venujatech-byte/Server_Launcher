@@ -1986,6 +1986,7 @@ pub fn render_ssh_host_modal(
                                 let profile = state.rdp.get_or_insert_with(Default::default);
                                 profile.port = port;
                                 profile.port_auto = true;
+                                profile.port_manual = Some(false);
                                 ui.label(format!("Port {port} applied from the post-action scan."));
                             }
                             let configured_port = state.rdp.as_ref().map_or(3389, |profile| profile.port);
@@ -2000,6 +2001,7 @@ pub fn render_ssh_host_modal(
                                         let profile = state.rdp.get_or_insert_with(Default::default);
                                         profile.port = port;
                                         profile.port_auto = true;
+                                        profile.port_manual = Some(false);
                                     }
                                 });
                             }
@@ -2057,6 +2059,7 @@ pub fn render_ssh_host_modal(
                                 let profile = state.vnc.get_or_insert_with(Default::default);
                                 profile.port = port;
                                 profile.port_auto = true;
+                                profile.port_manual = Some(false);
                                 ui.label(format!("Port {port} applied from the post-action scan."));
                             }
                             let configured_port = state.vnc.as_ref().map_or(5900, |profile| profile.port);
@@ -2081,6 +2084,7 @@ pub fn render_ssh_host_modal(
                                             let profile = state.vnc.get_or_insert_with(Default::default);
                                             profile.port = display.port;
                                             profile.port_auto = true;
+                                            profile.port_manual = Some(false);
                                         }
                                     }
                                 });
@@ -2096,6 +2100,7 @@ pub fn render_ssh_host_modal(
                                         let profile = state.vnc.get_or_insert_with(Default::default);
                                         profile.port = port;
                                         profile.port_auto = true;
+                                        profile.port_manual = Some(false);
                                     }
                                 });
                             }

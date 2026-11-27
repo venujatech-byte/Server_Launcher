@@ -37,7 +37,7 @@ pub(crate) struct ServerDetection {
     action_logs: String,
     action_history_warning: Option<(String, DesktopProtocol, String)>,
     action_result: Option<(String, DesktopProtocol, ActionResult)>,
-    action_port_update: Option<(String, DesktopProtocol, Instant)>,
+    action_port_update: Option<(String, String, DesktopProtocol, Instant)>,
 }
 
 impl ServerDetection {
@@ -128,6 +128,7 @@ impl ServerDetection {
                             )
                         {
                             self.action_port_update = Some((
+                                action.host.id.clone(),
                                 action.key.clone(),
                                 action.protocol,
                                 Instant::now(),
@@ -541,10 +542,26 @@ impl ServerDetection {
         host: &crate::config::SshRemoteHost,
         protocol: DesktopProtocol,
     ) -> Option<u16> {
-        let (key, action_protocol, started) = self.action_port_update.as_ref()?;
-        if key != &detection_key(host) || *action_protocol != protocol || self.pending.is_some() {
+        let (action_host_id, key, action_protocol, started) =
+            self.action_port_update.as_ref()?;
+        if action_host_id != &host.id || *action_protocol != protocol {
             return None;
         }
+        if key != &detection_key(host) {
+            self.action_port_update = None;
+            return None;
+        }
+        if self.pending.is_some() {
+            return None;
+        }
+        let auto_assign_allowed = match protocol {
+            DesktopProtocol::Rdp => host.rdp.as_ref().map_or(true, |profile| {
+                profile.port_auto || profile.port_manual == Some(false)
+            }),
+            DesktopProtocol::Vnc => host.vnc.as_ref().map_or(true, |profile| {
+                profile.port_auto || profile.port_manual == Some(false)
+            }),
+        };
         let report = self
             .last
             .as_ref()
@@ -558,7 +575,11 @@ impl ServerDetection {
             find_port_suggestion(report.service(protocol), protocol, configured)
         });
         self.action_port_update = None;
-        port
+        if auto_assign_allowed {
+            port
+        } else {
+            None
+        }
     }
 
     pub(crate) fn vnc_displays(
@@ -1770,7 +1791,12 @@ mod tests {
         let started = Instant::now();
         let mut detection = ServerDetection {
             last: Some((key.clone(), Ok(report.clone()), started)),
-            action_port_update: Some((key.clone(), DesktopProtocol::Rdp, started + Duration::from_secs(1))),
+            action_port_update: Some((
+                host.id.clone(),
+                key.clone(),
+                DesktopProtocol::Rdp,
+                started + Duration::from_secs(1),
+            )),
             ..Default::default()
         };
 
@@ -1778,6 +1804,46 @@ mod tests {
         detection.last = Some((key, Ok(report), started + Duration::from_secs(2)));
         assert_eq!(detection.take_action_port_update(&host, DesktopProtocol::Rdp), Some(3390));
         assert_eq!(detection.take_action_port_update(&host, DesktopProtocol::Rdp), None);
+    }
+
+    #[test]
+    fn action_port_update_does_not_replace_legacy_or_manually_edited_ports() {
+        use super::super::setup::model::{Listener, ServiceInventory, ServiceInventoryReport};
+
+        for manual in [None, Some(true)] {
+            let mut host = detection_host();
+            host.rdp.as_mut().unwrap().port_manual = manual;
+            let key = detection_key(&host);
+            let started = Instant::now();
+            let report = ServiceInventoryReport {
+                rdp: ServiceInventory {
+                    listeners: vec![Listener {
+                        address: "127.0.0.1".into(),
+                        port: 3390,
+                        process: Some("xrdp".into()),
+                        pid: None,
+                        owner: None,
+                    }],
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut detection = ServerDetection {
+                last: Some((key.clone(), Ok(report), started + Duration::from_secs(2))),
+                action_port_update: Some((
+                    host.id.clone(),
+                    key,
+                    DesktopProtocol::Rdp,
+                    started,
+                )),
+                ..Default::default()
+            };
+            assert_eq!(
+                detection.take_action_port_update(&host, DesktopProtocol::Rdp),
+                None
+            );
+            assert!(detection.action_port_update.is_none());
+        }
     }
 
     #[test]

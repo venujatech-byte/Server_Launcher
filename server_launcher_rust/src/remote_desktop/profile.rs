@@ -79,6 +79,8 @@ pub(crate) struct RdpProfile {
     pub port: u16,
     #[serde(default)]
     pub port_auto: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port_manual: Option<bool>,
     pub username: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credential_ref: Option<String>,
@@ -119,6 +121,7 @@ impl Default for RdpProfile {
             enabled: false,
             port: 3389,
             port_auto: false,
+            port_manual: Some(false),
             username: String::new(),
             credential_ref: None,
             domain: String::new(),
@@ -161,6 +164,8 @@ pub(crate) struct VncProfile {
     pub port: u16,
     #[serde(default)]
     pub port_auto: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port_manual: Option<bool>,
     pub username: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credential_ref: Option<String>,
@@ -185,6 +190,7 @@ impl Default for VncProfile {
             enabled: false,
             port: 5900,
             port_auto: false,
+            port_manual: Some(false),
             username: String::new(),
             credential_ref: None,
             quality: Quality::Auto,
@@ -246,6 +252,15 @@ mod tests {
     }
 
     #[test]
+    fn manual_port_provenance_round_trips() {
+        let mut profile = super::RdpProfile::default();
+        profile.port_manual = Some(true);
+        let saved = serde_json::to_string(&profile).unwrap();
+        let loaded: super::RdpProfile = serde_json::from_str(&saved).unwrap();
+        assert_eq!(loaded.port_manual, Some(true));
+    }
+
+    #[test]
     fn legacy_hosts_round_trip_without_protocol_keys() {
         let input = r#"{"servers":[],"ssh_hosts":[{"id":"test","name":"Test","host":"test.example","user":"root","port":2222,"remote_cwd":"/opt/app"}]}"#;
         let directory = tempfile::tempdir().unwrap();
@@ -275,9 +290,11 @@ mod tests {
         let host: crate::config::SshRemoteHost = serde_json::from_str(input).unwrap();
         assert_eq!(host.rdp.as_ref().unwrap().port, 3389);
         assert!(!host.rdp.as_ref().unwrap().port_auto);
+        assert_eq!(host.rdp.as_ref().unwrap().port_manual, None);
         let vnc = host.vnc.as_ref().unwrap();
         assert_eq!(vnc.port, 5900);
         assert!(!vnc.port_auto);
+        assert_eq!(vnc.port_manual, None);
         assert!(vnc.show_remote_cursor);
         assert!(vnc.tunnel_via_ssh);
         assert!(!vnc.close_on_failure);

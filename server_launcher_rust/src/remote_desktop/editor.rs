@@ -154,6 +154,7 @@ pub(crate) fn rdp(
                 .changed()
             {
                 profile.port_auto = false;
+                profile.port_manual = Some(true);
             }
             if profile.port_auto {
                 ui.label(egui::RichText::new("auto").small().color(ui.visuals().weak_text_color()));
@@ -399,6 +400,7 @@ pub(crate) fn vnc(
         }).inner;
         if port_changed {
             profile.port_auto = false;
+            profile.port_manual = Some(true);
         }
         if profile.port_auto {
             help_text(ui, "Port assigned from the detected VNC display.");

@@ -87,9 +87,9 @@ The checked app revision was `8ec3a0d`.
    fresh Fit Window session and verify the initial negotiated size matches the
    viewer canvas; confirm the server does not log a fallback-size session
    followed by an immediate resize, and that the full desktop is painted.
-5. Compare Incremental and Full-frame repaint. They should show the same remote
-   frame; Full-frame repaint may use more client CPU and does not change server
-   capture FPS, codec negotiation, or network latency.
+5. Compare changed-region and Full-frame texture upload. They should show the
+   same remote frame; Full-frame upload may use more client CPU and memory and
+   does not change server capture FPS, codec negotiation, or network latency.
 6. Connect with the 256 colors (8 bpp) profile and confirm a palette update
    renders correctly. To check AVC, configure a supported Cisco OpenH264
    library in Settings → Remote Desktop, then try GFX AVC420 and GFX AVC444

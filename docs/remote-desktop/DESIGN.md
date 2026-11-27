@@ -314,8 +314,8 @@ uses IronRDP's built-in ClearCodec/RFX decoders and can load its OpenH264
 decoder from an official supported Cisco library selected in Remote Desktop
 settings. Without that library the client does not advertise AVC and the
 server can fall back to supported codec sets. Smooth/Fast filtering and
-incremental/full-frame painting remain local rendering choices and cannot
-create additional server frames.
+changed-region/full-frame texture uploads remain local rendering choices and
+cannot create additional server frames or change the negotiated stream.
 Direct RDP and the Windows tunnel socket already enable TCP_NODELAY.
 
 The screenshot reference is a live desktop framebuffer: received remote
@@ -393,10 +393,10 @@ limits and the server's advertised monitor area. Server reactivation updates
 the share ID and graphics decoder and allocates a validated framebuffer for
 the new size. IronRDP's active-stage builder restores fast-path decompression
 state during reactivation. The RDP profile exposes Smooth/Fast texture
-filtering, Incremental/Full-frame
-repainting, and Auto/Best/Good/Fast bitmap quality. Full-frame repaint is a
-client-side compatibility mode: it redraws the complete image after each
-received update, but does not alter server rendering or network behavior. Auto retains manual color-depth
+filtering, changed-region/full-frame texture uploads, and Auto/Best/Good/Fast
+bitmap quality. Full-frame upload is a client-side compatibility mode: it
+uploads the complete image after each received update, but does not alter
+server rendering, negotiated codec, or network behavior. Auto retains manual color-depth
 selection; Best requests 32-bit without lossy bitmap flags, while Good and Fast
 request 24-bit and 16-bit and allow dynamic color fidelity/subsampling. These
 capabilities allow the server to adapt; they do not guarantee a specific frame

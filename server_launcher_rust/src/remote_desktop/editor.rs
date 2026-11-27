@@ -138,15 +138,15 @@ pub(crate) fn rdp(
         );
         choice(
             ui,
-            "Frame update mode",
+            "Texture upload",
             &mut profile.frame_painting,
             &[
-                (RdpFramePainting::Incremental, "Incremental repaint (recommended)"),
-                (RdpFramePainting::FullFrame, "Full-frame repaint"),
+                (RdpFramePainting::Incremental, "Changed regions (recommended)"),
+                (RdpFramePainting::FullFrame, "Full-frame compatibility mode"),
             ],
         );
         ui.label(
-            "Full-frame repaint redraws the complete received image after each update. It changes client-side painting only and may use more CPU; it does not change network or server rendering behavior.",
+            "Full-frame mode uploads the complete local image after each update. It can use more CPU and memory; it does not change remote rendering, codec, or network behavior.",
         );
         rdp_color_profile(ui, &mut profile.color_profile);
         ui.label("RemoteFX is advertised to the server; the server still chooses the negotiated codec.");

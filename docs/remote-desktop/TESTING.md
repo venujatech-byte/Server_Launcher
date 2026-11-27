@@ -63,7 +63,8 @@ The checked app revision was `8ec3a0d`.
 3. Verify full desktop rendering and local pointer shape, then type text and
    test left/right/middle plus side mouse buttons and both wheel axes.
    Confirm that a continuously changing desktop stays live over EGFX, and
-   check that the viewer's FPS counter changes with received display updates.
+   check that the viewer's remote update-batch and texture-upload rates change
+   with received display updates.
    Before the first framebuffer arrives and while the screen updates
    continuously, type and move the pointer to check
    that framebuffer updates do not stall local viewer input.
@@ -216,8 +217,9 @@ No comparable real-server measurements are recorded yet. Measure the same host,
 resolution, scene, network path, and duration for this app and a reference
 client. Record idle viewer CPU/RAM, active CPU/RAM, display updates per second,
 receive bandwidth, and input-to-visible-response latency. Test a static desktop,
-scrolling text, and moving video separately. Report the app's FPS counter as
-received display-update batches per second, not the server's capture FPS.
+scrolling text, and moving video separately. Report received display-update
+batches and local texture uploads per second separately; neither is the
+server's capture FPS.
 
 Run each active test for at least 30 minutes and check memory growth. Repeat
 with the window focused, unfocused, and minimized. Keep raw measurements with

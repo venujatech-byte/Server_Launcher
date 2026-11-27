@@ -324,10 +324,11 @@ repainting redraws that image but does not change the server capture rate. The
 coordinated IronRDP stack update and EGFX registration follow the upstream
 implementation ([IronRDP issue #1464](https://github.com/Devolutions/IronRDP/issues/1464)).
 
-The optional live FPS value counts received display-update batches per second
-from the RDP/VNC workers. It is not the remote compositor's native capture rate.
-The viewer Stats menu also shows the most recent one-second protocol receive
-rate separately from the session-wide average.
+The optional live update-rate display counts received display-update batches
+and local texture upload operations per second. Neither value is the remote
+compositor's capture rate or the operating system's rendered FPS. The viewer
+Stats menu also shows the latest one-second protocol receive rate separately
+from the session-wide average.
 
 RDP keyboard and pointer events use IronRDP fast-path input on the worker that
 owns the TLS connection. The worker drains a bounded queue between reads.
@@ -400,7 +401,7 @@ server rendering, negotiated codec, or network behavior. Auto retains manual col
 selection; Best requests 32-bit without lossy bitmap flags, while Good and Fast
 request 24-bit and 16-bit and allow dynamic color fidelity/subsampling. These
 capabilities allow the server to adapt; they do not guarantee a specific frame
-rate or speedup. The viewer's live FPS counts received display-update batches,
-not the server's capture FPS or local rendered FPS.
+rate or speedup. The viewer reports received display-update batches and local
+texture upload operations per second, not server capture FPS or compositor FPS.
 Dimension normalization has unit coverage. A live resize against Windows
 RDP or xrdp still needs verification.

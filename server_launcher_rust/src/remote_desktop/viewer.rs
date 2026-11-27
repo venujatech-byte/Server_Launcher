@@ -55,7 +55,7 @@ pub(crate) fn run(
     test_pattern: bool,
 ) -> eframe::Result<()> {
     let config = ConfigFile::load_from_file(path);
-    let show_fps = config.remote_desktop.show_live_fps;
+    let show_update_rate = config.remote_desktop.show_live_fps;
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     let host_key_enabled = config.remote_desktop.host_key_enabled;
     let screenshot_folder = config.remote_desktop.screenshot_folder.clone();
@@ -269,9 +269,11 @@ pub(crate) fn run(
                 recording: None,
                 recording_result: None,
                 screenshot_result: None,
-                show_fps,
-                fps_sample: None,
-                fps: 0.0,
+                show_update_rate,
+                update_sample: None,
+                updates_per_second: 0.0,
+                texture_uploads: 0,
+                texture_uploads_per_second: 0.0,
                 receive_sample: None,
                 receive_kbps: 0.0,
                 password_entry: Zeroizing::new(String::new()),
@@ -397,9 +399,11 @@ struct Viewer {
     screenshot: Option<mpsc::Receiver<super::screenshot::SaveResult>>,
     screenshot_result: Option<Result<PathBuf, String>>,
     test_pattern: bool,
-    show_fps: bool,
-    fps_sample: Option<(Instant, u64)>,
-    fps: f64,
+    show_update_rate: bool,
+    update_sample: Option<(Instant, u64, u64)>,
+    updates_per_second: f64,
+    texture_uploads: u64,
+    texture_uploads_per_second: f64,
     receive_sample: Option<(Instant, u64)>,
     receive_kbps: f64,
     password_entry: Zeroizing<String>,
@@ -1043,22 +1047,25 @@ impl eframe::App for Viewer {
         if !connected {
             self.capture = Capture::new(self.left_handed_mouse, self.disable_smooth_scrolling);
         }
-        if connected && self.show_fps {
-            let (since, frames) = self
-                .fps_sample
-                .get_or_insert_with(|| (Instant::now(), display_updates));
+        if connected && self.show_update_rate {
+            let (since, batches, uploads) = self.update_sample.get_or_insert_with(|| {
+                (Instant::now(), display_updates, self.texture_uploads)
+            });
             let elapsed = since.elapsed();
             let interval = Duration::from_secs(1);
             if elapsed >= interval {
-                self.fps = updates_per_second(*frames, display_updates, elapsed);
-                self.fps_sample = Some((Instant::now(), display_updates));
+                self.updates_per_second = updates_per_second(*batches, display_updates, elapsed);
+                self.texture_uploads_per_second =
+                    updates_per_second(*uploads, self.texture_uploads, elapsed);
+                self.update_sample = Some((Instant::now(), display_updates, self.texture_uploads));
                 ctx.request_repaint_after(interval);
             } else {
                 ctx.request_repaint_after(interval - elapsed);
             }
         } else {
-            self.fps_sample = None;
-            self.fps = 0.0;
+            self.update_sample = None;
+            self.updates_per_second = 0.0;
+            self.texture_uploads_per_second = 0.0;
         }
         let texture_options =
             if self.protocol == DesktopProtocol::Rdp && self.rdp_painting == RdpPainting::Fast {
@@ -1066,6 +1073,7 @@ impl eframe::App for Viewer {
             } else {
                 egui::TextureOptions::LINEAR
             };
+        self.texture_uploads = self.texture_uploads.wrapping_add(updates.len() as u64);
         for update in updates {
             match self.texture.as_mut() {
                 Some(texture) if !update.resized => {
@@ -1231,17 +1239,17 @@ impl eframe::App for Viewer {
                 if toolbar_toggle_button(
                     ui,
                     crate::lucide::ACTIVITY,
-                    "Show live remote display FPS",
-                    self.show_fps,
+                    "Show remote update rates",
+                    self.show_update_rate,
                     true,
                 )
                 .clicked()
                 {
-                    self.show_fps = !self.show_fps;
+                    self.show_update_rate = !self.show_update_rate;
                     ctx.request_repaint();
                 }
-                if self.show_fps && connected {
-                    ui.label(format!("{:.1} FPS", self.fps));
+                if self.show_update_rate && connected {
+                    ui.label(format!("{:.1} updates/s", self.updates_per_second));
                 }
                 ui.add_enabled_ui(connected, |ui| {
                     let stats = ui.menu_button(crate::lucide::INFO, |ui| {
@@ -1279,8 +1287,15 @@ impl eframe::App for Viewer {
                             ui.label(format!("Live receive rate  {:.1} kbps", self.receive_kbps));
                             ctx.request_repaint_after(Duration::from_secs(1));
                         }
-                        if self.show_fps {
-                            ui.label(format!("Remote display updates  {:.1} FPS", self.fps));
+                        if self.show_update_rate {
+                            ui.label(format!(
+                                "Remote update batches/s  {:.1}",
+                                self.updates_per_second
+                            ));
+                            ui.label(format!(
+                                "Texture uploads/s  {:.1}",
+                                self.texture_uploads_per_second
+                            ));
                         }
                     });
                     stats.response.on_hover_text("Connection statistics");
@@ -2008,7 +2023,7 @@ fn full_frame_painting_combines_damage_into_one_complete_image() {
 
 #[cfg(test)]
 #[test]
-fn live_fps_uses_received_display_updates() {
+fn update_rate_uses_received_display_updates() {
     assert_eq!(updates_per_second(10, 16, Duration::from_secs(2)), 3.0);
     assert_eq!(updates_per_second(16, 2, Duration::from_secs(1)), 0.0);
     assert_eq!(updates_per_second(1, 2, Duration::ZERO), 0.0);

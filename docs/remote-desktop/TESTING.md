@@ -228,3 +228,12 @@ single screenshot or FPS sample.
 For RDP, include a high-resolution session to verify that the reusable damage
 conversion buffer stays bounded and that active frame updates do not delay
 local input.
+
+
+## Service Manager manual test matrix
+
+| Distro / Version | Client Route | Service / Unit | Expected Status | Observed Result | Evidence Level |
+|---|---|---|---|---|---|
+| Debian / Ubuntu (systemd) | SSH tunnel | `xrdp.service` + `xrdp-sesman.service` | `Ready` after handshake | Pending runtime test | `compile-checked` / `docs-verified` |
+| Debian / Ubuntu (systemd) | SSH tunnel | `tigervncserver` (`:1`/5901) | `Running` (manual process) or `Ready` | Pending runtime test | `compile-checked` / `docs-verified` |
+| Fedora / RHEL / Arch / Unknown | SSH tunnel / Direct | Manual-only | `Limited detection` / `Unknown` + manual steps | Pending runtime test | `compile-checked` / `docs-verified` |

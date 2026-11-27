@@ -5,7 +5,8 @@ Use this handoff with [`SERVICE_MANAGER_ROADMAP.md`](SERVICE_MANAGER_ROADMAP.md)
 ## Repository state
 
 - Branch: `vnc/rdp`
-- Latest code change: `252f38f fix(setup): redact operation secrets from output` (next change pending commit: make approved APT steps noninteractive and wait for package locks).
+- Latest code change: `4603942 fix(setup): make apt install steps resilient` (plus fake-runner unit tests in `setup/exec.rs` and Stage 15 doc/matrix updates).
+- Uncommitted working-tree note: `server_launcher_rust/src/remote.rs` has an in-progress `ssh_probe_output_with_stdin_stream` helper that is not yet wired into `setup/exec.rs`; keep it intact.
 - Latest Rust changes passed `cargo check --locked --all-targets` on the SSH PC in temporary worktrees.
 - SSH build/check PC: use the connection details already provided by the user; do not copy its address, username, or credentials into repository files. Its clone is `~/coding/Server_Launcher`.
 - The user has asked that checks run on that SSH PC and that changes be pushed and pulled there.

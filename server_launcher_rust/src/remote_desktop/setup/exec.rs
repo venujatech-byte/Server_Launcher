@@ -21,7 +21,7 @@ pub(crate) fn run_approved_plan(
     plan: &ActionPlan,
     password: Option<Zeroizing<String>>,
     cancel: &AtomicBool,
-    mut report: impl FnMut(ActionEvent),
+    report: impl FnMut(ActionEvent),
 ) -> Result<usize, String> {
     let password = if host.user != "root" {
         match password {
@@ -34,6 +34,27 @@ pub(crate) fn run_approved_plan(
     } else {
         None
     };
+    run_approved_plan_with(
+        host.user == "root",
+        plan,
+        password,
+        cancel,
+        report,
+        |remote_command, timeout, input| {
+            let command = crate::remote::build_ssh_command(host, remote_command);
+            crate::remote::ssh_probe_output_with_stdin(command, timeout, input)
+        },
+    )
+}
+
+fn run_approved_plan_with(
+    is_root: bool,
+    plan: &ActionPlan,
+    password: Option<Zeroizing<String>>,
+    cancel: &AtomicBool,
+    mut report: impl FnMut(ActionEvent),
+    mut run_step: impl FnMut(&str, Duration, &[u8]) -> std::io::Result<std::process::Output>,
+) -> Result<usize, String> {
     let total = plan.steps.len();
     let mut completed = 0;
     for (index, step) in plan.steps.iter().enumerate() {
@@ -41,22 +62,17 @@ pub(crate) fn run_approved_plan(
             return Err(format!("Cancelled after {completed} completed step(s)."));
         }
         report(ActionEvent::StepStarted { index: index + 1, total, title: step.title });
-        let remote_command = command_for_step(step, host.user == "root", password.is_some())?;
+        let remote_command = command_for_step(step, is_root, password.is_some())?;
         let timeout = if matches!(step.id, "package-index" | "install") { 300 } else { 45 };
         let mut input = Zeroizing::new(Vec::new());
-        if step.needs_root && host.user != "root" {
+        if step.needs_root && !is_root {
             if let Some(password) = password.as_ref() {
                 input.extend_from_slice(password.as_bytes());
                 input.push(b'\n');
             }
         }
-        let command = crate::remote::build_ssh_command(host, &remote_command);
-        let result = crate::remote::ssh_probe_output_with_stdin(
-            command,
-            Duration::from_secs(timeout),
-            &input,
-        )
-        .map_err(|error| format!("{} failed: {error}", step.title))?;
+        let result = run_step(&remote_command, Duration::from_secs(timeout), &input)
+            .map_err(|error| format!("{} failed: {error}", step.title))?;
         input.zeroize();
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
@@ -251,5 +267,117 @@ mod tests {
     fn recognizes_sudo_authentication_failures_for_retry() {
         assert!(crate::systemd::needs_sudo_password("sudo: 1 incorrect password attempt"));
         assert!(!crate::systemd::needs_sudo_password("user is not in the sudoers file"));
+    }
+
+    #[cfg(unix)]
+    fn fake_output(code: i32, stdout: &[u8], stderr: &[u8]) -> std::process::Output {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::Output {
+            status: std::process::ExitStatus::from_raw(code << 8),
+            stdout: stdout.to_vec(),
+            stderr: stderr.to_vec(),
+        }
+    }
+
+    #[cfg(unix)]
+    fn sample_two_step_plan() -> ActionPlan {
+        ActionPlan {
+            summary: "Start xrdp",
+            steps: vec![
+                super::super::plan::ActionStep {
+                    id: "start-sesman",
+                    title: "Start xrdp-sesman",
+                    command: "sudo systemctl start xrdp-sesman.service",
+                    effect: "Starts sesman",
+                    needs_root: true,
+                    undo_note: "Stop sesman",
+                },
+                super::super::plan::ActionStep {
+                    id: "start-xrdp",
+                    title: "Start xrdp",
+                    command: "sudo systemctl start xrdp.service",
+                    effect: "Starts xrdp",
+                    needs_root: true,
+                    undo_note: "Stop xrdp",
+                },
+            ],
+            warnings: vec![],
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fake_runner_emits_ordered_events_and_redacts_password() {
+        let plan = sample_two_step_plan();
+        let cancel = AtomicBool::new(false);
+        let mut events = Vec::new();
+        let mut seen_commands = Vec::new();
+        let completed = run_approved_plan_with(
+            false,
+            &plan,
+            Some(Zeroizing::new("hunter2".into())),
+            &cancel,
+            |event| match event {
+                ActionEvent::StepStarted { index, total, title } => {
+                    events.push(format!("start:{index}/{total}:{title}"));
+                }
+                ActionEvent::StepFinished { index, total, title, output } => {
+                    assert!(!output.contains("hunter2"));
+                    events.push(format!("finish:{index}/{total}:{title}:{output}"));
+                }
+                _ => {}
+            },
+            |cmd, _timeout, input| {
+                assert!(!cmd.contains("hunter2"));
+                assert_eq!(input, b"hunter2\n");
+                seen_commands.push(cmd.to_owned());
+                Ok(fake_output(0, b"ok hunter2", b""))
+            },
+        )
+        .unwrap();
+        assert_eq!(completed, 2);
+        assert_eq!(seen_commands.len(), 2);
+        assert_eq!(
+            events,
+            vec![
+                "start:1/2:Start xrdp-sesman",
+                "finish:1/2:Start xrdp-sesman:ok [redacted]",
+                "start:2/2:Start xrdp",
+                "finish:2/2:Start xrdp:ok [redacted]",
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fake_runner_reports_failure_and_cancellation_between_steps() {
+        let plan = sample_two_step_plan();
+        let cancel = AtomicBool::new(false);
+        let err = run_approved_plan_with(
+            false,
+            &plan,
+            Some(Zeroizing::new("hunter2".into())),
+            &cancel,
+            |_| {},
+            |_cmd, _timeout, _input| Ok(fake_output(1, b"", b"denied hunter2")),
+        )
+        .unwrap_err();
+        assert!(err.contains("Start xrdp-sesman failed"));
+        assert!(!err.contains("hunter2"));
+
+        let cancel_mid = AtomicBool::new(false);
+        let err = run_approved_plan_with(
+            false,
+            &plan,
+            None,
+            &cancel_mid,
+            |_| {},
+            |_cmd, _timeout, _input| {
+                cancel_mid.store(true, Ordering::Relaxed);
+                Ok(fake_output(0, b"done", b""))
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, "Cancelled after 1 completed step(s).");
     }
 }

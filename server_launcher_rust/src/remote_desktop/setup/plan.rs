@@ -111,8 +111,8 @@ pub(crate) fn build_plan(
             steps: vec![ActionStep {
                 id: "uninstall",
                 title: "Uninstall TigerVNC",
-                command: "sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 remove -y tigervnc-standalone-server",
-                effect: "Removes the tigervnc-standalone-server package.",
+                command: "sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 purge -y tigervnc-standalone-server tigervnc-common && sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 autoremove -y",
+                effect: "Purges tigervnc-standalone-server and tigervnc-common packages.",
                 needs_root: true,
                 undo_note: "Reinstall with apt-get install tigervnc-standalone-server.",
             }],

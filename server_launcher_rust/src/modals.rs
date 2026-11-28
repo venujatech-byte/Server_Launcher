@@ -1724,15 +1724,23 @@ pub fn render_ssh_host_modal(
             }
             Ok(Err(error)) => {
                 state.pending_save = None;
-                return ModalAction::NotifyError(error);
+                return ModalAction::NotifyError(format!("Save failed: {error}"));
             }
             Err(TryRecvError::Disconnected) => {
                 state.pending_save = None;
-                return ModalAction::NotifyError("The credential store request ended unexpectedly.".into());
+                return ModalAction::NotifyError("The save operation ended unexpectedly.".into());
             }
             Err(TryRecvError::Empty) => {}
         }
     }
+
+    // Darken the background behind the open remote-pc modal so it reads as a modal dialog.
+    if state.open {
+        let screen_rect = ctx.screen_rect();
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        painter.rect_filled(screen_rect, Rounding::ZERO, Color32::from_black_alpha(140));
+    }
+
     let saving = state.pending_save.is_some();
 
     let testing = state.pending_test.is_some();

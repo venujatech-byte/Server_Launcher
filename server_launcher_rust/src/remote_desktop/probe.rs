@@ -193,15 +193,17 @@ pub(crate) struct ServerDetection {
     action_history_warning: Option<(String, DesktopProtocol, String)>,
     action_result: Option<(String, DesktopProtocol, ActionResult)>,
     action_port_update: Option<(String, String, DesktopProtocol, Instant)>,
-    accordion_open: Option<Accordion>,
+    active_tab: ServiceTab,
 }
 
-/// Which body accordion is expanded (one at a time).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Accordion {
+/// Which body tab is open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+enum ServiceTab {
+    #[default]
+    Status,
     HostDetails,
-    RawOutput,
     ManualSteps,
+    RecentChanges,
 }
 
 impl ServerDetection {
@@ -448,6 +450,47 @@ impl ServerDetection {
                         });
                     });
                     ui.add_space(4.0);
+                    // Top tab bar: Status | Host details | Manual steps | Recent service changes.
+                    egui::Frame::none()
+                        .fill(tier_fill(palette, 1))
+                        .rounding(Rounding::same(10.0))
+                        .stroke(Stroke::NONE)
+                        .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 0.0;
+                                let tabs: &[(&str, ServiceTab)] = &[
+                                    ("Status", ServiceTab::Status),
+                                    ("Host details", ServiceTab::HostDetails),
+                                    ("Manual steps", ServiceTab::ManualSteps),
+                                    ("Recent service changes", ServiceTab::RecentChanges),
+                                ];
+                                for &(label, tab) in tabs {
+                                    let active = self.active_tab == tab;
+                                    let btn = egui::Button::new(
+                                        egui::RichText::new(label)
+                                            .size(11.0)
+                                            .strong()
+                                            .color(if active {
+                                                palette.accent_text
+                                            } else {
+                                                palette.text_muted
+                                            }),
+                                    )
+                                    .fill(if active {
+                                        tonal_fill(palette.bg_card, palette.accent, 16.0)
+                                    } else {
+                                        Color32::TRANSPARENT
+                                    })
+                                    .stroke(Stroke::NONE)
+                                    .rounding(Rounding::same(8.0))
+                                    .min_size(egui::vec2(90.0, 32.0));
+                                    if ui.add(btn).clicked() {
+                                        self.active_tab = tab;
+                                    }
+                                }
+                            });
+                        });
                     egui::ScrollArea::vertical()
                         .id_salt(("service_manager_scroll", protocol as u8))
                         .max_height(ui.ctx().screen_rect().height() * 0.70)
@@ -460,70 +503,87 @@ impl ServerDetection {
                         match result {
                             Ok(report) => {
                                 let report = (*report).clone();
-                                let exposure_action = show_service_inventory(
-                                    ui,
-                                    &report,
-                                    protocol,
-                                    host.vnc.as_ref().map_or(0, |profile| profile.port),
-                                    &mut request_manual_scan,
-                                    palette,
-                                );
-                                if exposure_action == ExposureAction::LimitToLocalhost {
-                                    requested_intent = Some(super::setup::plan::Intent::RestrictToLocalhost);
-                                }
-                                let mut show_vnc_controls = None;
-                                if protocol == DesktopProtocol::Vnc {
-                                    match report.vnc.state() {
-                                        super::setup::model::ServiceState::InstalledStopped
-                                        | super::setup::model::ServiceState::Failed => {
-                                            show_vnc_controls = Some(false);
-                                        }
-                                        super::setup::model::ServiceState::RunningManual
-                                        | super::setup::model::ServiceState::RunningSystemd => {
-                                            show_vnc_controls = Some(true);
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                                if let Some(is_running) = show_vnc_controls {
-                                    if let Some(intent) = self.show_start_session_config(
-                                        ui,
-                                        host,
-                                        &report,
-                                        &key,
-                                        timeout,
-                                        is_running,
-                                        palette,
-                                    ) {
-                                        requested_intent = Some(intent);
-                                    }
-                                }
-                                self.show_vnc_password_card(ui, host, palette);
-                                // Expanded accordion panels appear in the body below the password card.
-                                if let Some(accordion) = self.accordion_open {
-                                    Self::show_accordion_panel(
-                                        ui,
-                                        &report,
-                                        protocol,
-                                        host.vnc.as_ref().map_or(0, |profile| profile.port),
-                                        &mut request_manual_scan,
-                                        palette,
-                                        accordion,
-                                    );
-                                }
                                 let history = self
                                     .history_cache
                                     .as_ref()
                                     .filter(|(history_key, _)| history_key == &key)
                                     .map(|(_, result)| result);
-                                requested_undo = show_service_history(
-                                    ui,
-                                    host,
-                                    protocol,
-                                    &report,
-                                    history,
-                                    self.action_review.is_none() && self.action_pending.is_none(),
-                                );
+                                match self.active_tab {
+                                    ServiceTab::Status => {
+                                        let exposure_action = show_service_inventory(
+                                            ui,
+                                            &report,
+                                            protocol,
+                                            host.vnc.as_ref().map_or(0, |profile| profile.port),
+                                            &mut request_manual_scan,
+                                            palette,
+                                        );
+                                        if exposure_action == ExposureAction::LimitToLocalhost {
+                                            requested_intent =
+                                                Some(super::setup::plan::Intent::RestrictToLocalhost);
+                                        }
+                                        let mut show_vnc_controls = None;
+                                        if protocol == DesktopProtocol::Vnc {
+                                            match report.vnc.state() {
+                                                super::setup::model::ServiceState::InstalledStopped
+                                                | super::setup::model::ServiceState::Failed => {
+                                                    show_vnc_controls = Some(false);
+                                                }
+                                                super::setup::model::ServiceState::RunningManual
+                                                | super::setup::model::ServiceState::RunningSystemd => {
+                                                    show_vnc_controls = Some(true);
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                        if let Some(is_running) = show_vnc_controls {
+                                            if let Some(intent) = self.show_start_session_config(
+                                                ui,
+                                                host,
+                                                &report,
+                                                &key,
+                                                timeout,
+                                                is_running,
+                                                palette,
+                                            ) {
+                                                requested_intent = Some(intent);
+                                            }
+                                        }
+                                        self.show_vnc_password_card(ui, host, palette);
+                                    }
+                                    ServiceTab::HostDetails => {
+                                        Self::show_accordion_panel(
+                                            ui,
+                                            &report,
+                                            protocol,
+                                            host.vnc.as_ref().map_or(0, |profile| profile.port),
+                                            &mut request_manual_scan,
+                                            palette,
+                                            ServiceTab::HostDetails,
+                                        );
+                                    }
+                                    ServiceTab::ManualSteps => {
+                                        Self::show_accordion_panel(
+                                            ui,
+                                            &report,
+                                            protocol,
+                                            host.vnc.as_ref().map_or(0, |profile| profile.port),
+                                            &mut request_manual_scan,
+                                            palette,
+                                            ServiceTab::ManualSteps,
+                                        );
+                                    }
+                                    ServiceTab::RecentChanges => {
+                                        requested_undo = show_service_history(
+                                            ui,
+                                            host,
+                                            protocol,
+                                            &report,
+                                            history,
+                                            self.action_review.is_none() && self.action_pending.is_none(),
+                                        );
+                                    }
+                                }
                             }
                             Err(error) => {
                                 ui.colored_label(
@@ -543,8 +603,32 @@ impl ServerDetection {
                     ui.add_space(8.0);
                     ui.separator();
                     ui.add_space(4.0);
-                    // Pinned footer: collapsible toggles left, Update / Uninstall right.
-                    self.show_pinned_footer(ui, protocol, palette, &mut requested_intent);
+                    // Pinned footer: Update / Uninstall on the right.
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add(tonal_button(
+                                "Uninstall",
+                                tonal_fill(palette.bg_card, palette.danger, 14.0),
+                                palette.danger,
+                                palette,
+                            ))
+                            .clicked()
+                        {
+                            requested_intent = Some(super::setup::plan::Intent::Uninstall);
+                        }
+                        ui.add_space(8.0);
+                        if ui
+                            .add(tonal_button(
+                                "Update",
+                                tonal_fill(palette.bg_card, palette.accent, 16.0),
+                                palette.accent,
+                                palette,
+                            ))
+                            .clicked()
+                        {
+                            requested_intent = Some(super::setup::plan::Intent::Update);
+                        }
+                    });
                 });
             self.scan_window_open = open;
         } else if !can_scan {
@@ -1181,11 +1265,11 @@ fn show_accordion_panel(
     configured_port: u16,
     request_manual_scan: &mut bool,
     palette: &crate::theme::ThemePalette,
-    accordion: Accordion,
+    tab: ServiceTab,
 ) {
     use super::setup::model::InitSystem;
-    match accordion {
-        Accordion::HostDetails => {
+    match tab {
+        ServiceTab::HostDetails => {
             egui::Frame::none()
                 .fill(tier_fill(palette, 2))
                 .rounding(Rounding::same(12.0))
@@ -1242,45 +1326,7 @@ fn show_accordion_panel(
                     }
                 });
         }
-        Accordion::RawOutput => {
-            let raw_protocol = protocol.label();
-            let raw_output = report
-                .raw_output
-                .lines()
-                .filter(|line| {
-                    line.starts_with(&format!("# {raw_protocol} "))
-                        || line.starts_with("# Listener snapshot")
-                        || line.starts_with("SLD/1\tfield\thost\t")
-                        || (line.starts_with("SLD/1\tfield\trdp\t") && protocol == DesktopProtocol::Rdp)
-                        || (line.starts_with("SLD/1\tfield\tvnc\t") && protocol == DesktopProtocol::Vnc)
-                        || (line.starts_with("SLD/1\tlistener\trdp\t") && protocol == DesktopProtocol::Rdp)
-                        || (line.starts_with("SLD/1\tlistener\tvnc\t") && protocol == DesktopProtocol::Vnc)
-                        || (line.starts_with("SLD/1\tdisplay\tvnc\t") && protocol == DesktopProtocol::Vnc)
-                        || *line == "SLD/1\tbegin"
-                        || *line == "SLD/1\tend"
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            egui::Frame::none()
-                .fill(tier_fill(palette, 2))
-                .rounding(Rounding::same(12.0))
-                .stroke(Stroke::NONE)
-                .inner_margin(egui::Margin::same(16.0))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.label(egui::RichText::new("Raw output").size(14.0).strong().color(palette.text_primary));
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        if ui.small_button("Copy").clicked() {
-                            ui.ctx().copy_text(raw_output.clone());
-                        }
-                    });
-                    egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-                        ui.add(egui::Label::new(egui::RichText::new(raw_output.as_str()).monospace()).wrap());
-                    });
-                });
-        }
-        Accordion::ManualSteps => {
+        ServiceTab::ManualSteps => {
             egui::Frame::none()
                 .fill(tier_fill(palette, 2))
                 .rounding(Rounding::same(12.0))
@@ -1307,61 +1353,8 @@ fn show_accordion_panel(
                     }
                 });
         }
+        ServiceTab::Status | ServiceTab::RecentChanges => {}
     }
-}
-
-/// Pinned footer: three collapsible toggles left, Update / Uninstall right.
-fn show_pinned_footer(
-    &mut self,
-    ui: &mut egui::Ui,
-    protocol: DesktopProtocol,
-    palette: &crate::theme::ThemePalette,
-    requested_intent: &mut Option<super::setup::plan::Intent>,
-) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 14.0;
-        let set_accordion = |ui: &mut egui::Ui, acc: Accordion, label: &str, self_: &mut Self| {
-            let open = self_.accordion_open == Some(acc);
-            let btn = egui::Button::new(
-                egui::RichText::new(format!("{} {}", if open { crate::lucide::CHEVRON_DOWN } else { crate::lucide::CHEVRON_RIGHT }, label))
-                    .small(),
-            )
-            .fill(Color32::TRANSPARENT)
-            .stroke(Stroke::NONE)
-            .rounding(Rounding::same(8.0));
-            if ui.add(btn).clicked() {
-                self_.accordion_open = if open { None } else { Some(acc) };
-            }
-        };
-        set_accordion(ui, Accordion::HostDetails, "Host details", self);
-        set_accordion(ui, Accordion::RawOutput, "Raw output", self);
-        set_accordion(ui, Accordion::ManualSteps, "Manual steps", self);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .add(tonal_button(
-                    "Uninstall",
-                    tonal_fill(palette.bg_card, palette.danger, 14.0),
-                    palette.danger,
-                    palette,
-                ))
-                .clicked()
-            {
-                *requested_intent = Some(super::setup::plan::Intent::Uninstall);
-            }
-            ui.add_space(8.0);
-            if ui
-                .add(tonal_button(
-                    "Update",
-                    tonal_fill(palette.bg_card, palette.accent, 16.0),
-                    palette.accent,
-                    palette,
-                ))
-                .clicked()
-            {
-                *requested_intent = Some(super::setup::plan::Intent::Update);
-            }
-        });
-    });
 }
 
     fn show_action_review(&mut self, ui: &mut egui::Ui, key: &str) {

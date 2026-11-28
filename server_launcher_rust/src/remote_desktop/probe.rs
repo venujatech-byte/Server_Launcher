@@ -1,4 +1,4 @@
-use super::{credentials::DesktopProtocol, profile::RdpSecurity};
+use super::{credentials::DesktopProtocol, profile::RdpSecurity, setup::plan::Intent};
 use std::{
     io::{self, Read, Write},
     net::{TcpStream, ToSocketAddrs},
@@ -92,8 +92,231 @@ fn compact_tonal_button<'a>(text: &'a str, fill: Color32, text_color: Color32) -
         .min_size(egui::vec2(84.0, 28.0))
 }
 
+fn protocol_label(protocol: DesktopProtocol) -> &'static str {
+    match protocol {
+        DesktopProtocol::Rdp => "RDP",
+        DesktopProtocol::Vnc => "VNC",
+    }
+}
+
+fn with_auth_notice_once(info: &str) -> String {
+    let trimmed = info.trim_end().trim_end_matches('.').trim_end();
+    if trimmed.to_ascii_lowercase().ends_with("authentication was not tested") {
+        format!("{trimmed}.")
+    } else {
+        format!("{trimmed}. Authentication was not tested.")
+    }
+}
+
+fn format_history_timestamp(raw: &str) -> String {
+    match chrono::DateTime::parse_from_rfc3339(raw) {
+        Ok(value) => value
+            .with_timezone(&chrono::Local)
+            .format("%-d %b %Y, %H:%M")
+            .to_string(),
+        Err(_) => raw.to_owned(),
+    }
+}
+
+fn friendly_firewall_hint(hint: &str) -> (&str, Option<&str>) {
+    let lower = hint.to_ascii_lowercase();
+    let needs_sudo = lower.starts_with("ufw:")
+        && (lower.contains("root")
+            || lower.contains("permission")
+            || lower.contains("sudo")
+            || lower.contains("not found"));
+    if needs_sudo {
+        ("Firewall: unknown (needs sudo to check)", Some(hint))
+    } else {
+        (hint, None)
+    }
+}
+
+fn host_detail_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &str,
+    palette: &crate::theme::ThemePalette,
+    tooltip: Option<&str>,
+) {
+    ui.horizontal_top(|ui| {
+        ui.set_width(ui.available_width());
+        ui.allocate_ui_with_layout(
+            egui::vec2(96.0, 0.0),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.set_width(96.0);
+                ui.label(egui::RichText::new(label).small().color(palette.text_muted));
+            },
+        );
+        ui.add_space(8.0);
+        let response = ui
+            .allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(value).color(palette.text_primary),
+                        )
+                        .wrap(),
+                    );
+                },
+            )
+            .response;
+        if let Some(text) = tooltip {
+            response.on_hover_text(text);
+        }
+    });
+}
+
+fn footer_actions(
+    report: Option<&super::setup::model::ServiceInventoryReport>,
+    protocol: DesktopProtocol,
+    checking: bool,
+) -> Vec<(&'static str, Intent, bool)> {
+    use super::setup::model::ServiceState::*;
+    let Some(report) = report else {
+        return vec![("Restart", Intent::Restart, false), ("Start", Intent::Start, false)];
+    };
+    let service = report.service(protocol);
+    let state = service.state();
+    let mut actions = match state {
+        RunningSystemd | RunningManual => {
+            vec![("Restart", Intent::Restart, true), ("Stop", Intent::Stop, true)]
+        }
+        InstalledStopped => vec![("Start", Intent::Start, true)],
+        Failed => vec![("Start", Intent::Start, true), ("Restart", Intent::Restart, true)],
+        NotInstalled => vec![("Install", Intent::InstallAndStart, true)],
+        Unknown => vec![("Restart", Intent::Restart, false), ("Start", Intent::Start, false)],
+    };
+    if checking && state != NotInstalled {
+        actions = vec![("Restart", Intent::Restart, false), ("Start", Intent::Start, false)];
+    }
+    actions
+}
+
+fn footer_button(
+    ui: &mut egui::Ui,
+    label: &'static str,
+    intent: Intent,
+    fill: Color32,
+    text_color: Color32,
+    enabled: bool,
+    disabled_reason: &str,
+    pending: bool,
+    requested_intent: &mut Option<Intent>,
+) {
+    let response = ui.add_enabled(enabled, compact_tonal_button(label, fill, text_color));
+    let response = if !enabled {
+        response.on_disabled_hover_text(disabled_reason)
+    } else {
+        response
+    };
+    if response.clicked() {
+        *requested_intent = Some(intent);
+    }
+    if pending {
+        ui.add(egui::Spinner::new().size(12.0));
+    }
+}
+
 /// Switch control: pill track with knob on the left, label + helper text right.
 /// Returns `true` if the toggle changed state this frame.
+fn show_service_footer(
+    ui: &mut egui::Ui,
+    report: Option<&super::setup::model::ServiceInventoryReport>,
+    protocol: DesktopProtocol,
+    palette: &crate::theme::ThemePalette,
+    busy: bool,
+    checking: bool,
+    pending_intent: Option<Intent>,
+    requested_intent: &mut Option<Intent>,
+) {
+    ui.separator();
+    ui.add_space(4.0);
+    let installed = report.is_some_and(|report| report.service(protocol).installed == Some(true));
+    let actions = footer_actions(report, protocol, checking);
+    let maintenance: Vec<(&'static str, Intent, Color32, f32)> = if installed {
+        vec![
+            ("Update", Intent::Update, palette.accent, 16.0),
+            ("Uninstall", Intent::Uninstall, palette.danger, 14.0),
+        ]
+    } else {
+        Vec::new()
+    };
+
+    ui.horizontal_wrapped(|ui| {
+        ui.set_width(ui.available_width());
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+        for (label, intent, allowed) in actions {
+            let plan_error = report.and_then(|report| {
+                super::setup::plan::build_plan(report, protocol, intent).err()
+            });
+            if protocol == DesktopProtocol::Vnc
+                && plan_error.is_some()
+                && allowed
+                && !checking
+            {
+                continue;
+            }
+            let enabled = allowed && !busy && plan_error.is_none();
+            let reason = if busy {
+                "Wait for the current action to finish."
+            } else if !allowed {
+                "Unavailable while checking the service."
+            } else {
+                plan_error.unwrap_or("Unavailable for this service state.")
+            };
+            let color = match intent {
+                Intent::Stop => palette.warning,
+                Intent::Start | Intent::Restart => palette.success,
+                _ => palette.accent,
+            };
+            footer_button(
+                ui,
+                label,
+                intent,
+                tonal_fill(palette.bg_card, color, 16.0),
+                color,
+                enabled,
+                reason,
+                pending_intent == Some(intent),
+                requested_intent,
+            );
+        }
+        ui.add_space(8.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            for (label, intent, color, percent) in maintenance.into_iter().rev() {
+                let plan_error = report.and_then(|report| {
+                    super::setup::plan::build_plan(report, protocol, intent).err()
+                });
+                if protocol == DesktopProtocol::Vnc && plan_error.is_some() {
+                    continue;
+                }
+                let enabled = !busy && plan_error.is_none();
+                let reason = if busy {
+                    "Wait for the current action to finish."
+                } else {
+                    plan_error.unwrap_or("Unavailable for this service state.")
+                };
+                footer_button(
+                    ui,
+                    label,
+                    intent,
+                    tonal_fill(palette.bg_card, color, percent),
+                    color,
+                    enabled,
+                    reason,
+                    pending_intent == Some(intent),
+                    requested_intent,
+                );
+            }
+        });
+    });
+}
+
 fn switch(ui: &mut egui::Ui, on: &mut bool, label: &str, helper: &str, p: &crate::theme::ThemePalette) -> bool {
     let track_w = 44.0;
     let track_h = 22.0;
@@ -361,6 +584,17 @@ impl ServerDetection {
             .last
             .as_ref()
             .is_some_and(|(tested, _, _)| tested == &key);
+        let current_report = self
+            .last
+            .as_ref()
+            .filter(|(tested, result, _)| tested == &key && result.is_ok())
+            .and_then(|(_, result, _)| result.as_ref().ok())
+            .cloned();
+        let busy = self.action_review.is_some()
+            || self.action_pending.is_some()
+            || self.vnc_start_pending.is_some();
+        let pending_intent = self.action_review.as_ref().map(|action| action.intent);
+        let checking = self.pending.is_some();
 
         ui.horizontal(|ui| {
             ui.strong(match protocol {
@@ -400,9 +634,12 @@ impl ServerDetection {
                 .id(egui::Id::new(("service_manager_window", protocol as u8)))
                 .title_bar(false)
                 .resizable(true)
-                .default_width(380.0)
-                .min_width(340.0)
-                .max_width(420.0)
+                .default_width(480.0)
+                .min_width(320.0)
+                .max_width(800.0)
+                .default_height(600.0)
+                .min_height(360.0)
+                .max_height(820.0)
                 .frame(
                     egui::Frame::window(&ui.ctx().style())
                         .stroke(Stroke::NONE)
@@ -467,45 +704,68 @@ impl ServerDetection {
                         .stroke(Stroke::NONE)
                         .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                         .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 0.0;
-                                let tabs: &[(&str, ServiceTab)] = &[
-                                    ("Status", ServiceTab::Status),
-                                    ("Host details", ServiceTab::HostDetails),
-                                    ("Manual steps", ServiceTab::ManualSteps),
-                                    ("Recent service changes", ServiceTab::RecentChanges),
-                                ];
-                                for &(label, tab) in tabs {
-                                    let active = self.active_tab == tab;
-                                    let btn = egui::Button::new(
-                                        egui::RichText::new(label)
-                                            .size(11.0)
-                                            .strong()
-                                            .color(if active {
-                                                palette.accent_text
+                            egui::ScrollArea::horizontal()
+                                .id_salt(("service_manager_tabs", protocol as u8))
+                                .scroll_bar_visibility(
+                                    egui::containers::scroll_area::ScrollBarVisibility::AlwaysHidden,
+                                )
+                                .auto_shrink([false, true])
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 6.0;
+                                        let tabs: &[(&str, ServiceTab)] = &[
+                                            ("Status", ServiceTab::Status),
+                                            ("Host details", ServiceTab::HostDetails),
+                                            ("Manual steps", ServiceTab::ManualSteps),
+                                            ("Recent service changes", ServiceTab::RecentChanges),
+                                        ];
+                                        for &(label, tab) in tabs {
+                                            let active = self.active_tab == tab;
+                                            let btn = egui::Button::new(
+                                                egui::RichText::new(label)
+                                                    .size(11.0)
+                                                    .strong()
+                                                    .color(if active {
+                                                        palette.accent_text
+                                                    } else {
+                                                        palette.text_muted
+                                                    }),
+                                            )
+                                            .fill(if active {
+                                                tonal_fill(palette.bg_card, palette.accent, 16.0)
                                             } else {
-                                                palette.text_muted
-                                            }),
-                                    )
-                                    .fill(if active {
-                                        tonal_fill(palette.bg_card, palette.accent, 16.0)
-                                    } else {
-                                        Color32::TRANSPARENT
-                                    })
-                                    .stroke(Stroke::NONE)
-                                    .rounding(Rounding::same(8.0))
-                                    .min_size(egui::vec2(90.0, 32.0));
-                                    if ui.add(btn).clicked() {
-                                        self.active_tab = tab;
-                                    }
-                                }
-                            });
+                                                Color32::TRANSPARENT
+                                            })
+                                            .stroke(Stroke::NONE)
+                                            .rounding(Rounding::same(8.0))
+                                            .min_size(egui::vec2(72.0, 30.0));
+                                            if ui.add(btn).clicked() {
+                                                self.active_tab = tab;
+                                            }
+                                        }
+                                    });
+                                });
                         });
+                    let footer_height = if ui.available_width() < 460.0 { 92.0 } else { 58.0 };
+                    let content_height = (ui.available_height() - footer_height).max(80.0);
+                    ui.style_mut().spacing.scroll.floating = false;
+                    ui.style_mut().spacing.scroll.bar_width = 6.0;
+                    ui.style_mut().spacing.scroll.bar_inner_margin = 2.0;
+                    ui.style_mut().spacing.scroll.bar_outer_margin = 2.0;
+                    ui.style_mut().spacing.scroll.handle_min_length = 24.0;
                     egui::ScrollArea::vertical()
-                        .id_salt(("service_manager_scroll", protocol as u8))
-                        .max_height(ui.ctx().screen_rect().height() * 0.70)
-                        .auto_shrink([false, true])
+                        .id_salt((
+                            "service_manager_scroll",
+                            protocol as u8,
+                            self.active_tab as u8,
+                        ))
+                        .max_height(content_height)
+                        .min_scrolled_height(content_height)
+                        .auto_shrink([false, false])
                         .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.set_min_width(0.0);
                     if self.pending.is_some() && !has_current_result {
                         show_service_scan_placeholder(ui, protocol);
                     }
@@ -613,32 +873,16 @@ impl ServerDetection {
                         }
                     }
                         }); // end ScrollArea
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(4.0);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add(compact_tonal_button(
-                                "Uninstall",
-                                tonal_fill(palette.bg_card, palette.danger, 14.0),
-                                palette.danger,
-                            ))
-                            .clicked()
-                        {
-                            requested_intent = Some(super::setup::plan::Intent::Uninstall);
-                        }
-                        ui.add_space(6.0);
-                        if ui
-                            .add(compact_tonal_button(
-                                "Update",
-                                tonal_fill(palette.bg_card, palette.accent, 16.0),
-                                palette.accent,
-                            ))
-                            .clicked()
-                        {
-                            requested_intent = Some(super::setup::plan::Intent::Update);
-                        }
-                    });
+                    show_service_footer(
+                        ui,
+                        current_report.as_ref(),
+                        protocol,
+                        palette,
+                        busy,
+                        checking,
+                        pending_intent,
+                        &mut requested_intent,
+                    );
                 });
             self.scan_window_open = open;
         } else if !can_scan {
@@ -1294,45 +1538,75 @@ fn show_accordion_panel(
                         .as_deref()
                         .or(report.os_id.as_deref())
                         .unwrap_or("Operating system unknown");
-                    ui.label(format!(
-                        "{os_name}{} · {}",
-                        report
-                            .os_version
-                            .as_deref()
-                            .map_or(String::new(), |version| format!(" {version}")),
+                    let os_value = match report.os_version.as_deref() {
+                        Some(version) if !version.trim().is_empty() => {
+                            format!("{os_name} {version}")
+                        }
+                        _ => os_name.to_owned(),
+                    };
+                    host_detail_row(ui, "OS", &os_value, palette, None);
+                    host_detail_row(
+                        ui,
+                        "Init system",
                         match report.init_system {
                             Some(InitSystem::Systemd) => "systemd",
                             Some(InitSystem::Other) => "non-systemd init",
                             Some(InitSystem::Unknown) | None => "init system unknown",
-                        }
-                    ));
+                        },
+                        palette,
+                        None,
+                    );
                     if let Some(package_manager) = &report.package_manager {
-                        ui.label(format!("Package manager: {package_manager}"));
+                        host_detail_row(ui, "Packages", package_manager, palette, None);
                     }
-                    if report.sudo_available == Some(false) {
-                        ui.label("sudo is unavailable for this SSH user");
-                    } else if report.sudo_available == Some(true) {
-                        ui.label(if report.passwordless_sudo == Some(true) {
-                            "Passwordless sudo is available"
-                        } else {
-                            "sudo is available; it may require authentication"
-                        });
+                    match report.sudo_available {
+                        Some(false) => {
+                            host_detail_row(ui, "sudo", "unavailable", palette, None);
+                        }
+                        Some(true) => {
+                            let value = if report.passwordless_sudo == Some(true) {
+                                "available without a password"
+                            } else {
+                                "available; may require a password"
+                            };
+                            host_detail_row(ui, "sudo", value, palette, None);
+                        }
+                        None => host_detail_row(ui, "sudo", "unknown", palette, None),
                     }
                     if !report.desktop_sessions.is_empty() {
-                        ui.label(format!("Desktop sessions: {}", report.desktop_sessions.join(", ")));
+                        host_detail_row(
+                            ui,
+                            "Desktop",
+                            &report.desktop_sessions.join(", "),
+                            palette,
+                            None,
+                        );
                     }
                     for hint in &report.firewall_hints {
-                        ui.label(format!("Firewall: {hint}"));
+                        let (label, tooltip) = friendly_firewall_hint(hint);
+                        host_detail_row(ui, "Firewall", label, palette, tooltip);
                     }
                     if let Some(memory) = report.available_memory_mb {
-                        ui.label(format!("Available memory: {memory} MiB"));
+                        host_detail_row(ui, "Memory", &format!("{memory} MiB available"), palette, None);
                     }
                     if let Some(disk) = report.free_disk_mb {
-                        ui.label(format!("Free disk in home filesystem: {disk} MiB"));
+                        host_detail_row(
+                            ui,
+                            "Disk",
+                            &format!("{disk} MiB free in home"),
+                            palette,
+                            None,
+                        );
                     }
                     if let Some(Ok(info)) = report.handshake(protocol) {
                         ui.add_space(8.0);
-                        ui.label(format!("Last check: {info}. Authentication was not tested."));
+                        host_detail_row(
+                            ui,
+                            "Last check",
+                            &with_auth_notice_once(info),
+                            palette,
+                            None,
+                        );
                     }
                 });
         }
@@ -1355,9 +1629,9 @@ fn show_accordion_panel(
                         return;
                     };
                     ui.label(instructions.note);
-                    show_manual_commands(ui, "Install manually", &instructions.install);
-                    show_manual_commands(ui, "Start manually", &instructions.start);
-                    show_manual_commands(ui, "Verify", &instructions.verify);
+                    show_manual_commands(ui, "Install manually", &instructions.install, palette);
+                    show_manual_commands(ui, "Start manually", &instructions.start, palette);
+                    show_manual_commands(ui, "Verify", &instructions.verify, palette);
                     if ui.button("I did it manually, check again").clicked() {
                         *request_manual_scan = true;
                     }
@@ -2076,21 +2350,14 @@ fn show_status_hero(
     let host = report.user.as_deref().unwrap_or("the host");
 
     let subtitle = match readiness {
-        Readiness::Ready => format!("VNC handshake succeeded on {host}"),
+        Readiness::Ready => format!(
+            "{} handshake succeeded on {host}",
+            protocol_label(protocol)
+        ),
         _ => headline.to_owned(),
     };
 
-    let (dot_rect, _dot_resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
-    let center = dot_rect.center();
-    ui.painter().circle_filled(center, 7.0, tier_fill(p, 2));
-    ui.painter().circle_filled(center, 3.0, dot_color);
-
-    ui.vertical(|ui| {
-        ui.label(egui::RichText::new(headline).size(20.0).strong().color(p.text_primary));
-        ui.label(egui::RichText::new(subtitle).small().color(p.text_muted));
-    });
-
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
         let pill_text = match protocol {
             DesktopProtocol::Vnc => service_display_pill(report),
             DesktopProtocol::Rdp => service_listener_pill(report),
@@ -2104,7 +2371,36 @@ fn show_status_hero(
                 .show(ui, |ui| {
                     ui.label(egui::RichText::new(pill).small().color(p.text_secondary));
                 });
+            ui.add_space(8.0);
         }
+
+        ui.horizontal_top(|ui| {
+            ui.set_min_width(0.0);
+            let (dot_rect, _dot_resp) =
+                ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+            let center = dot_rect.center();
+            ui.painter().circle_filled(center, 7.0, tier_fill(p, 2));
+            ui.painter().circle_filled(center, 3.0, dot_color);
+            ui.add_space(8.0);
+            ui.vertical(|ui| {
+                ui.set_min_width(0.0);
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(headline)
+                            .size(18.0)
+                            .strong()
+                            .color(p.text_primary),
+                    )
+                    .wrap(),
+                );
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(subtitle).small().color(p.text_muted),
+                    )
+                    .wrap(),
+                );
+            });
+        });
     });
 }
 
@@ -2113,7 +2409,7 @@ fn service_display_pill(report: &super::setup::model::ServiceInventoryReport) ->
 }
 
 fn service_listener_pill(report: &super::setup::model::ServiceInventoryReport) -> Option<String> {
-    report.rdp.listeners.first().map(|l| format!("Port :{}", l.port))
+    report.rdp.listeners.first().map(|l| format!("Port {}", l.port))
 }
 
 fn show_check_strip(
@@ -2123,7 +2419,6 @@ fn show_check_strip(
     handshake: Option<&Result<String, String>>,
     p: &crate::theme::ThemePalette,
 ) {
-    use super::setup::model::ServiceState;
     let service = report.service(protocol);
     let installed_val = match (service.installed, service.version.as_deref()) {
         (Some(true), Some(v)) => v.to_owned(),
@@ -2151,32 +2446,22 @@ fn show_check_strip(
     };
     let ssh_user = report.user.as_deref().unwrap_or("unknown");
 
-    let narrow = ui.available_width() < 520.0;
     let items: &[(&str, bool, &str)] = &[
         ("SSH", true, ssh_user),
         ("Installed", service.installed == Some(true), &installed_val),
-        ("Service", svc_active, &svc_val),
+        ("Service", svc_active, svc_val),
         ("Handshake", hs_ok, hs_val),
     ];
 
-    if narrow {
-        for chunk in items.chunks(2) {
-            ui.horizontal(|ui| {
-                for &(title, ok, val) in chunk {
-                    check_item(ui, title, ok, val, p);
-                    ui.add_space(10.0);
-                }
-            });
-            ui.add_space(8.0);
-        }
-    } else {
-        ui.columns(4, |cols| {
-            for (idx, &(title, ok, val)) in items.iter().enumerate() {
-                cols[idx].vertical(|ui| {
-                    check_item(ui, title, ok, val, p);
-                });
+    for chunk in items.chunks(2) {
+        ui.horizontal_top(|ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.x = 10.0;
+            for &(title, ok, val) in chunk {
+                check_item(ui, title, ok, val, p);
             }
         });
+        ui.add_space(8.0);
     }
 
     if service.unit_failed == Some(true) {
@@ -2200,8 +2485,14 @@ fn check_item(ui: &mut egui::Ui, title: &str, ok: bool, val: &str, p: &crate::th
     );
     ui.add_space(8.0);
     ui.vertical(|ui| {
-        ui.label(egui::RichText::new(title).small().color(p.text_muted));
-        let val_resp = ui.label(egui::RichText::new(val).small().strong().color(p.text_primary));
+        ui.set_min_width(0.0);
+        ui.add(egui::Label::new(egui::RichText::new(title).small().color(p.text_muted)).wrap());
+        let val_resp = ui.add(
+            egui::Label::new(
+                egui::RichText::new(val).small().strong().color(p.text_primary),
+            )
+            .wrap(),
+        );
         if val.len() > 22 {
             val_resp.on_hover_text(val);
         }
@@ -2238,30 +2529,86 @@ fn show_exposure_warning(
         .stroke(Stroke::NONE)
         .inner_margin(egui::Margin::symmetric(14.0, 10.0));
     frame.show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("⚠").size(16.0).color(p.warning));
-            ui.add_space(8.0);
-            ui.vertical(|ui| {
-                ui.label(egui::RichText::new("Open to your whole network").strong().color(p.warning));
-                ui.label(egui::RichText::new(format!(
-                    "Port {port} accepts connections from any machine on the network. Limit it to this machine and connect through the SSH tunnel."
-                ))
-                .small().color(p.text_secondary));
+        ui.set_width(ui.available_width());
+        let body = format!(
+            "Port {port} accepts connections from any machine on the network. Limit it to this machine and connect through the SSH tunnel."
+        );
+        let button = |width: f32| {
+            egui::Button::new(
+                egui::RichText::new("Limit to this machine")
+                    .size(11.0)
+                    .strong()
+                    .color(p.warning),
+            )
+            .fill(tonal_fill(p.bg_card, p.warning, 22.0))
+            .stroke(Stroke::NONE)
+            .rounding(Rounding::same(8.0))
+            .min_size(egui::vec2(width, 28.0))
+        };
+
+        if ui.available_width() >= 460.0 {
+            let button_width = 174.0;
+            let text_width = (ui.available_width() - button_width - 46.0).max(160.0);
+            ui.horizontal_top(|ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.label(egui::RichText::new("⚠").size(16.0).color(p.warning));
+                ui.allocate_ui_with_layout(
+                    egui::vec2(text_width, 0.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_width(text_width);
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new("Open to your whole network")
+                                    .size(12.0)
+                                    .strong()
+                                    .color(p.warning),
+                            )
+                            .wrap(),
+                        );
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(body).small().color(p.text_secondary),
+                            )
+                            .wrap(),
+                        );
+                    },
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.add(button(button_width)).clicked() {
+                        action = ExposureAction::LimitToLocalhost;
+                    }
+                });
             });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .add(tonal_button(
-                        "Limit to this machine",
-                        tonal_fill(p.bg_card, p.warning, 22.0),
-                        p.warning,
-                        p,
-                    ))
-                    .clicked()
-                {
+        } else {
+            ui.vertical(|ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal_top(|ui| {
+                    ui.label(egui::RichText::new("⚠").size(16.0).color(p.warning));
+                    ui.add_space(8.0);
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new("Open to your whole network")
+                                .size(12.0)
+                                .strong()
+                                .color(p.warning),
+                        )
+                        .wrap(),
+                    );
+                });
+                ui.add_space(4.0);
+                ui.add(
+                    egui::Label::new(egui::RichText::new(body).small().color(p.text_secondary))
+                        .wrap(),
+                );
+                ui.add_space(8.0);
+                let full_width = ui.available_width();
+                if ui.add(button(full_width)).clicked() {
                     action = ExposureAction::LimitToLocalhost;
                 }
             });
-        });
+        }
     });
     action
 }
@@ -2337,14 +2684,29 @@ fn show_service_history(
                     .color(palette.text_primary),
             );
             ui.add_space(8.0);
-            egui::ScrollArea::vertical()
-                .id_salt(("service_history_scroll", protocol as u8))
-                .max_height(220.0)
-                .show(ui, |ui| {
-                    for (index, record) in records.iter().enumerate() {
+            for (index, record) in records.iter().enumerate() {
+                egui::Frame::none()
+                    .fill(tier_fill(palette, 3))
+                    .rounding(Rounding::same(10.0))
+                    .stroke(Stroke::NONE)
+                    .inner_margin(egui::Margin::same(10.0))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
                         ui.horizontal_wrapped(|ui| {
-                            ui.label(&record.action);
-                            ui.weak(&record.at);
+                            ui.set_width(ui.available_width());
+                            ui.strong(&record.action);
+                            let timestamp = format_history_timestamp(&record.at);
+                            let response = ui.label(
+                                egui::RichText::new(timestamp)
+                                    .small()
+                                    .color(palette.text_muted),
+                            );
+                            response.on_hover_text(&record.at);
+                        });
+                        ui.add_space(4.0);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.set_width(ui.available_width());
+                            ui.spacing_mut().item_spacing = egui::vec2(8.0, 4.0);
                             if let Some(distro) = &record.distro {
                                 ui.weak(distro);
                             }
@@ -2352,33 +2714,44 @@ fn show_service_history(
                             ui.weak(format!("{} step(s)", record.completed_steps.len()));
                             if index == 0 && protocol == DesktopProtocol::Rdp {
                                 let service = report.service(protocol);
-                                let undo_available =
-                                    service.unit_present == Some(true)
-                                        && super::setup::plan::build_restore_plan(
-                                            record.prior_unit_active,
-                                            record.prior_unit_enabled,
-                                            service.unit_active,
-                                            service.unit_enabled,
-                                        )
-                                        .is_ok();
-                                if allow_undo
-                                    && ui
-                                        .add_enabled(undo_available, egui::Button::new("Undo"))
-                                        .on_disabled_hover_text(
-                                            "Undo needs a known prior state and a current systemd status.",
-                                        )
-                                        .clicked()
-                                {
+                                let reason = if !allow_undo {
+                                    Some("Wait for the current action to finish.")
+                                } else if service.unit_present != Some(true) {
+                                    Some("Undo needs a known prior state and current systemd status.")
+                                } else {
+                                    super::setup::plan::build_restore_plan(
+                                        record.prior_unit_active,
+                                        record.prior_unit_enabled,
+                                        service.unit_active,
+                                        service.unit_enabled,
+                                    )
+                                    .err()
+                                };
+                                let response = ui.add_enabled(
+                                    reason.is_none(),
+                                    egui::Button::new("Undo").min_size(egui::vec2(54.0, 24.0)),
+                                );
+                                if let Some(reason) = reason {
+                                    response.on_disabled_hover_text(reason);
+                                } else if response.clicked() {
                                     requested_undo = Some((**record).clone());
                                 }
                             }
                         });
-                    }
-                    ui.weak(format!(
+                    });
+                ui.add_space(8.0);
+            }
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(format!(
                         "History for {} · {}@{}:{}",
                         host.name, host.user, host.host, host.port
-                    ));
-                });
+                    ))
+                    .small()
+                    .color(palette.text_muted),
+                )
+                .wrap(),
+            );
         });
     requested_undo
 }
@@ -2414,22 +2787,64 @@ fn show_service_scan_placeholder(ui: &mut egui::Ui, protocol: DesktopProtocol) {
 }
 
 
-fn show_manual_commands(ui: &mut egui::Ui, title: &str, commands: &[String]) {
-    egui::CollapsingHeader::new(title).show(ui, |ui| {
-        if ui.small_button("Copy all").clicked() {
-            ui.ctx().copy_text(commands.join("\n"));
-        }
-        for (index, command) in commands.iter().enumerate() {
-            ui.push_id((title, index), |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.monospace(command);
-                    if ui.small_button("Copy").clicked() {
-                        ui.ctx().copy_text(command.clone());
-                    }
+fn show_manual_commands(
+    ui: &mut egui::Ui,
+    title: &str,
+    commands: &[String],
+    palette: &crate::theme::ThemePalette,
+) {
+    egui::CollapsingHeader::new(title)
+        .id_salt(title)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            if ui
+                .add(compact_tonal_button(
+                    "Copy all",
+                    tonal_fill(palette.bg_card, palette.accent, 14.0),
+                    palette.accent_text,
+                ))
+                .clicked()
+            {
+                ui.ctx().copy_text(commands.join("\n"));
+            }
+            ui.add_space(8.0);
+            for (index, command) in commands.iter().enumerate() {
+                ui.push_id((title, index), |ui| {
+                    egui::Frame::none()
+                        .fill(tier_fill(palette, 3))
+                        .rounding(Rounding::same(8.0))
+                        .stroke(Stroke::NONE)
+                        .inner_margin(egui::Margin::same(8.0))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal_top(|ui| {
+                                ui.set_width(ui.available_width());
+                                let code_width = (ui.available_width() - 40.0).max(80.0);
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(code_width, 0.0),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| {
+                                        ui.set_width(code_width);
+                                        egui::ScrollArea::horizontal()
+                                            .id_salt((title, index, "command"))
+                                            .auto_shrink([false, true])
+                                            .show(ui, |ui| {
+                                                ui.monospace(command);
+                                            });
+                                    },
+                                );
+                                ui.add_space(6.0);
+                                if icon_button(ui, crate::lucide::COPY, "Copy command", palette)
+                                    .clicked()
+                                {
+                                    ui.ctx().copy_text(command.clone());
+                                }
+                            });
+                        });
+                    ui.add_space(6.0);
                 });
-            });
-        }
-    });
+            }
+        });
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3327,5 +3742,117 @@ mod tests {
             user: None,
         });
         assert_eq!(service_display_pill(&report).unwrap(), "Display :1 → :5901");
+    }
+
+    #[test]
+    fn rdp_listener_pill_has_a_single_port_prefix() {
+        use super::super::setup::model::{Listener, ServiceInventory, ServiceInventoryReport};
+        let report = ServiceInventoryReport {
+            rdp: ServiceInventory {
+                listeners: vec![Listener {
+                    address: "0.0.0.0".into(),
+                    port: 3389,
+                    process: None,
+                    pid: None,
+                    owner: None,
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(service_listener_pill(&report).as_deref(), Some("Port 3389"));
+    }
+
+    #[test]
+    fn footer_actions_follow_service_state_and_report_unknown() {
+        use super::super::setup::model::{
+            ServiceInventory, ServiceInventoryReport, ServiceState,
+        };
+
+        fn report_for(state: ServiceState) -> ServiceInventoryReport {
+            let service = match state {
+                ServiceState::NotInstalled => ServiceInventory {
+                    installed: Some(false),
+                    ..Default::default()
+                },
+                ServiceState::InstalledStopped => ServiceInventory {
+                    installed: Some(true),
+                    unit_present: Some(true),
+                    ..Default::default()
+                },
+                ServiceState::RunningSystemd => ServiceInventory {
+                    installed: Some(true),
+                    unit_present: Some(true),
+                    unit_active: Some(true),
+                    ..Default::default()
+                },
+                ServiceState::RunningManual => ServiceInventory {
+                    installed: Some(true),
+                    manual_process: Some(true),
+                    ..Default::default()
+                },
+                ServiceState::Failed => ServiceInventory {
+                    installed: Some(true),
+                    unit_present: Some(true),
+                    unit_failed: Some(true),
+                    ..Default::default()
+                },
+                ServiceState::Unknown => ServiceInventory::default(),
+            };
+            ServiceInventoryReport {
+                rdp: service,
+                ..Default::default()
+            }
+        }
+
+        let labels = |state| {
+            footer_actions(Some(&report_for(state)), DesktopProtocol::Rdp, false)
+                .into_iter()
+                .map(|(label, _, enabled)| (label, enabled))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            labels(ServiceState::RunningSystemd),
+            vec![("Restart", true), ("Stop", true)]
+        );
+        assert_eq!(labels(ServiceState::InstalledStopped), vec![("Start", true)]);
+        assert_eq!(
+            labels(ServiceState::Failed),
+            vec![("Start", true), ("Restart", true)]
+        );
+        assert_eq!(labels(ServiceState::NotInstalled), vec![("Install", true)]);
+        assert_eq!(
+            labels(ServiceState::Unknown),
+            vec![("Restart", false), ("Start", false)]
+        );
+        assert_eq!(
+            footer_actions(Some(&report_for(ServiceState::RunningSystemd)), DesktopProtocol::Rdp, true)
+                .into_iter()
+                .map(|(label, _, enabled)| (label, enabled))
+                .collect::<Vec<_>>(),
+            vec![("Restart", false), ("Start", false)]
+        );
+    }
+
+    #[test]
+    fn display_helpers_use_friendly_copy_without_duplication() {
+        assert_eq!(
+            with_auth_notice_once("Handshake OK. Authentication was not tested."),
+            "Handshake OK. Authentication was not tested."
+        );
+        assert_eq!(
+            with_auth_notice_once("Handshake OK"),
+            "Handshake OK. Authentication was not tested."
+        );
+        let (label, tooltip) = friendly_firewall_hint("ufw: sudo: a password is required");
+        assert_eq!(label, "Firewall: unknown (needs sudo to check)");
+        assert_eq!(tooltip, Some("ufw: sudo: a password is required"));
+        let (label, tooltip) = friendly_firewall_hint("ufw: Status: active");
+        assert_eq!(label, "ufw: Status: active");
+        assert_eq!(tooltip, None);
+        assert_eq!(format_history_timestamp("not a timestamp"), "not a timestamp");
+        let formatted = format_history_timestamp("2026-11-27T16:25:00+00:00");
+        assert!(!formatted.contains('T'));
+        assert!(formatted.contains("2026"));
     }
 }

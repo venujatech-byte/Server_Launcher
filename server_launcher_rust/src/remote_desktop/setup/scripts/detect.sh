@@ -44,9 +44,15 @@ fi
 field host user "$(id -un 2>/dev/null || printf '%s' unknown)"
 uid=$(id -u 2>/dev/null || true)
 case "$uid" in ''|*[!0-9]*) ;; *) field host uid "$uid" ;; esac
+passwordless_sudo=0
 if command -v sudo >/dev/null 2>&1; then
     field host sudo_available 1
-    if sudo -n true >/dev/null 2>&1; then field host passwordless_sudo 1; else field host passwordless_sudo 0; fi
+    if sudo -n true >/dev/null 2>&1; then
+        passwordless_sudo=1
+        field host passwordless_sudo 1
+    else
+        field host passwordless_sudo 0
+    fi
 else
     field host sudo_available 0
     field host passwordless_sudo 0
@@ -170,7 +176,12 @@ for session_dir in /usr/share/xsessions /usr/share/wayland-sessions; do
 done
 
 if command -v ufw >/dev/null 2>&1; then
-    field host firewall_hint "ufw: $(ufw status 2>&1 | sed -n '1p')"
+    if [ "$passwordless_sudo" -eq 1 ]; then
+        ufw_hint=$(sudo -n ufw status 2>&1 | sed -n '1p')
+    else
+        ufw_hint=$(ufw status 2>&1 | sed -n '1p')
+    fi
+    field host firewall_hint "ufw: $ufw_hint"
 fi
 if command -v firewall-cmd >/dev/null 2>&1; then
     field host firewall_hint "firewalld: $(firewall-cmd --state 2>&1 | sed -n '1p')"

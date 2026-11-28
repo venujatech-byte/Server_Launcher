@@ -2015,13 +2015,14 @@ pub fn render_ssh_host_modal(
                     egui::pos2(ui.cursor().left() - 20.0, ui.cursor().top()),
                     egui::vec2(column_width + 40.0, content_height),
                 );
-                ui.set_clip_rect(ui.clip_rect().expand2(egui::vec2(20.0, 0.0)));
+                let content_clip = ui.clip_rect();
+                ui.set_clip_rect(content_clip.expand2(egui::vec2(20.0, 0.0)));
                 let mut scroll_ui = ui.new_child(
                     egui::UiBuilder::new()
                         .max_rect(viewport_rect)
                         .layout(egui::Layout::top_down(egui::Align::Min)),
                 );
-                scroll_ui.set_clip_rect(ui.clip_rect());
+                scroll_ui.set_clip_rect(ui.clip_rect().intersect(viewport_rect));
                 let content_width = column_width;
                 let reset_scroll = state.scroll_to_top;
                 state.scroll_to_top = false;
@@ -2900,6 +2901,7 @@ pub fn render_ssh_host_modal(
                         });
                 ui.allocate_space(egui::vec2(column_width, content_height));
                 kit::paint_overlay_scrollbar(ui, &output);
+                ui.set_clip_rect(content_clip);
 
                 ui.add_space(2.0);
 

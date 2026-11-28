@@ -4,7 +4,7 @@ use std::{
     net::{TcpStream, ToSocketAddrs},
     time::{Duration, Instant},
 };
-use egui::{Color32, Rounding, Stroke};
+use egui::{Align2, Color32, Order, Rounding, Stroke};
 
 type DetectionResult = Result<super::setup::model::ServiceInventoryReport, String>;
 type ActionResult = Result<usize, String>;
@@ -70,18 +70,212 @@ fn icon_button(ui: &mut egui::Ui, icon: &str, hover_tip: &str, p: &crate::theme:
     resp
 }
 
-/// Tonal text button builder. `fill`/`text` come from the tonal token.
-fn tonal_button<'a>(
-    text: &'a str,
-    fill: Color32,
-    text_color: Color32,
-    p: &crate::theme::ThemePalette,
-) -> egui::Button<'a> {
-    egui::Button::new(egui::RichText::new(text).strong().color(text_color))
-        .fill(fill)
+const VNC_RESOLUTIONS: &[(&str, &str)] = &[
+    ("1280 × 720", "1280x720"),
+    ("1366 × 768", "1366x768"),
+    ("1600 × 900", "1600x900"),
+    ("1920 × 1080", "1920x1080"),
+    ("2560 × 1440", "2560x1440"),
+    ("3840 × 2160", "3840x2160"),
+    ("Custom…", "custom"),
+];
+
+const VNC_DEPTHS: &[(&str, &str)] = &[("24-bit", "24"), ("16-bit", "16"), ("32-bit", "32")];
+
+fn dialog_window<'a>(
+    title: impl Into<egui::WidgetText> + 'a,
+    id: egui::Id,
+    palette: &crate::theme::ThemePalette,
+    screen: egui::Rect,
+) -> egui::Window<'a> {
+    egui::Window::new(title)
+        .id(id)
+        .title_bar(false)
+        .collapsible(false)
+        .resizable(false)
+        .movable(false)
+        .order(Order::Tooltip)
+        .pivot(Align2::CENTER_CENTER)
+        .default_pos(screen.center())
+        .min_width((screen.width() - 32.0).clamp(280.0, 560.0))
+        .max_width((screen.width() - 32.0).clamp(280.0, 800.0))
+        .max_height((screen.height() - 40.0).max(260.0))
+        .frame(
+            egui::Frame::none()
+                .fill(palette.bg_card)
+                .rounding(Rounding::same(14.0))
+                .stroke(Stroke::NONE)
+                .shadow(egui::epaint::Shadow {
+                    offset: egui::vec2(0.0, 6.0),
+                    blur: 18.0,
+                    spread: 2.0,
+                    color: Color32::from_black_alpha(150),
+                })
+                .inner_margin(egui::Margin::same(24.0)),
+        )
+}
+
+fn subdialog_backdrop(
+    ctx: &egui::Context,
+    id: egui::Id,
+    palette: &crate::theme::ThemePalette,
+    cancel: &mut bool,
+    allow_cancel: bool,
+) {
+    let _ = palette;
+    egui::Area::new(id.with("backdrop"))
+        .order(Order::Foreground)
+        .anchor(Align2::LEFT_TOP, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            let size = ctx.screen_rect().size();
+            let response = ui.allocate_response(size, egui::Sense::click());
+            ui.painter()
+                .rect_filled(response.rect, Rounding::ZERO, Color32::from_black_alpha(130));
+            if allow_cancel && response.clicked() {
+                *cancel = true;
+            }
+        });
+}
+
+fn apply_dialog_style(ui: &mut egui::Ui, palette: &crate::theme::ThemePalette) {
+    *ui.visuals_mut() = palette.egui_visuals();
+    ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+    ui.spacing_mut().interact_size.y = 34.0;
+    ui.style_mut()
+        .text_styles
+        .insert(egui::TextStyle::Body, egui::FontId::proportional(12.5));
+    ui.style_mut()
+        .text_styles
+        .insert(egui::TextStyle::Button, egui::FontId::proportional(12.0));
+    ui.style_mut()
+        .text_styles
+        .insert(egui::TextStyle::Small, egui::FontId::proportional(10.5));
+    ui.style_mut()
+        .text_styles
+        .insert(egui::TextStyle::Monospace, egui::FontId::monospace(11.0));
+    ui.style_mut().visuals.extreme_bg_color = tier_fill(palette, 3);
+}
+
+fn focus_lock(ctx: &egui::Context, response: &egui::Response, id: egui::Id, prefer_focus: bool) {
+    let widget_id = response.id;
+    if prefer_focus && !ctx.data(|data| data.get_temp::<bool>(id)).unwrap_or(false) {
+        response.request_focus();
+        ctx.data_mut(|data| data.insert_temp(id, true));
+    }
+    ctx.memory_mut(|memory| {
+        memory.set_focus_lock_filter(
+            widget_id,
+            egui::EventFilter {
+                tab: true,
+                horizontal_arrows: true,
+                vertical_arrows: true,
+                escape: false,
+            },
+        );
+    });
+}
+
+fn dialog_button<'a>(
+    ui: &mut egui::Ui,
+    label: impl Into<egui::WidgetText> + 'a,
+    tip: &'a str,
+    _p: &crate::theme::ThemePalette,
+) -> egui::Response {
+    ui.add(
+        egui::Button::new(label)
+            .fill(Color32::TRANSPARENT)
+            .stroke(Stroke::NONE)
+            .rounding(Rounding::same(10.0))
+            .min_size(egui::vec2(32.0, 32.0)),
+    )
+    .on_hover_text(tip)
+    .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+fn modal_code_block(
+    ui: &mut egui::Ui,
+    code: &str,
+    id: egui::Id,
+    palette: &crate::theme::ThemePalette,
+    copied: &mut Option<Instant>,
+) {
+    let width = ui.available_width();
+    egui::Frame::none()
+        .fill(tier_fill(palette, 3))
+        .rounding(Rounding::same(10.0))
         .stroke(Stroke::NONE)
-        .rounding(Rounding::same(12.0))
-        .min_size(egui::vec2(120.0, 42.0))
+        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+        .show(ui, |ui| {
+            ui.set_width(width);
+            ui.horizontal_top(|ui| {
+                let copy = dialog_button(ui, crate::lucide::COPY, "Copy", palette);
+                if copy.clicked() {
+                    ui.ctx().copy_text(code.to_owned());
+                    *copied = Some(Instant::now());
+                }
+                ui.add_space(6.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width().max(40.0), 0.0),
+                    egui::Layout::left_to_right(egui::Align::Min),
+                    |ui| {
+                        ui.set_width(ui.available_width());
+                        egui::ScrollArea::horizontal()
+                            .id_salt(id.with("scroll"))
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(code)
+                                            .monospace()
+                                            .small()
+                                            .color(palette.text_secondary),
+                                    )
+                                    .selectable(false),
+                                );
+                            });
+                    },
+                );
+            });
+            if copied.is_some_and(|at| at.elapsed() < Duration::from_secs(2)) {
+                ui.label(
+                    egui::RichText::new("Copied")
+                        .small()
+                        .color(palette.success),
+                );
+            } else {
+                *copied = None;
+            }
+        });
+}
+
+fn vnc_session_command(dialog: &VncSessionDialog) -> String {
+    let resolution = VNC_RESOLUTIONS
+        .get(dialog.resolution_idx)
+        .map_or("1920x1080", |(_, value)| *value);
+    let geometry = if resolution == "custom" {
+        dialog
+            .custom_res
+            .clone()
+            .unwrap_or_else(|| "1920x1080".to_owned())
+    } else {
+        resolution.to_owned()
+    };
+    let depth = VNC_DEPTHS
+        .get(dialog.depth_idx)
+        .map_or("24", |(_, value)| *value);
+    let localhost = if dialog.localhost_disabled { "no" } else { "yes" };
+    format!(
+        "vncserver :{} -localhost {} -geometry {} -depth {}",
+        dialog.display, localhost, geometry, depth
+    )
+}
+
+fn report_owner_from_host(host: &crate::config::SshRemoteHost) -> String {
+    if host.user.trim().is_empty() {
+        "unknown".to_owned()
+    } else {
+        host.user.clone()
+    }
 }
 
 fn compact_tonal_button<'a>(text: &'a str, fill: Color32, text_color: Color32) -> egui::Button<'a> {
@@ -317,6 +511,117 @@ fn show_service_footer(
     });
 }
 
+fn show_vnc_footer(
+    ui: &mut egui::Ui,
+    report: Option<&super::setup::model::ServiceInventoryReport>,
+    palette: &crate::theme::ThemePalette,
+    busy: bool,
+    checking: bool,
+    requested_vnc_action: &mut Option<VncFooterAction>,
+    requested_intent: &mut Option<Intent>,
+) {
+    use super::setup::model::ServiceState;
+    ui.separator();
+    ui.add_space(4.0);
+    let running = report.is_some_and(|report| {
+        matches!(
+            report.vnc.state(),
+            ServiceState::RunningManual | ServiceState::RunningSystemd
+        )
+    });
+    let enabled = report.is_some() && !busy && !checking;
+    let disabled_reason = if busy {
+        "Wait for the current action to finish."
+    } else if checking {
+        "Unavailable while checking the service."
+    } else {
+        "Scan the service first."
+    };
+    let installed = report.is_some_and(|report| report.vnc.installed == Some(true));
+
+    ui.horizontal_wrapped(|ui| {
+        ui.set_width(ui.available_width());
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+        if running {
+            let restart = ui.add_enabled(
+                enabled,
+                compact_tonal_button(
+                    "Restart VNC",
+                    tonal_fill(palette.bg_card, palette.accent, 16.0),
+                    palette.accent,
+                ),
+            );
+            if restart.clicked() {
+                *requested_vnc_action = Some(VncFooterAction::RestartSession);
+            }
+            let stop = ui.add_enabled(
+                enabled,
+                compact_tonal_button(
+                    "Stop VNC",
+                    tonal_fill(palette.bg_card, palette.danger, 14.0),
+                    palette.danger,
+                ),
+            );
+            if stop.clicked() {
+                *requested_vnc_action = Some(VncFooterAction::StopSession);
+            }
+        } else {
+            let start = ui.add_enabled(
+                enabled,
+                compact_tonal_button(
+                    "Start VNC",
+                    tonal_fill(palette.bg_card, palette.success, 16.0),
+                    palette.success,
+                ),
+            );
+            if start.clicked() {
+                *requested_vnc_action = Some(VncFooterAction::StartSession);
+            }
+        }
+        let test = ui.add_enabled(
+            enabled,
+            compact_tonal_button(
+                "Test login",
+                tier_fill(palette, 4),
+                palette.text_primary,
+            ),
+        );
+        if test.clicked() {
+            *requested_vnc_action = Some(VncFooterAction::TestLogin);
+        }
+        if !enabled {
+            ui.label(
+                egui::RichText::new(disabled_reason)
+                    .small()
+                    .color(palette.text_muted),
+            );
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let maintenance: Vec<(&'static str, Intent, Color32, f32)> = if installed {
+                vec![
+                    ("Update", Intent::Update, palette.accent, 16.0),
+                    ("Uninstall", Intent::Uninstall, palette.danger, 14.0),
+                ]
+            } else {
+                Vec::new()
+            };
+            for (label, intent, color, percent) in maintenance.into_iter().rev() {
+                footer_button(
+                    ui,
+                    label,
+                    intent,
+                    tonal_fill(palette.bg_card, color, percent),
+                    color,
+                    enabled,
+                    disabled_reason,
+                    false,
+                    requested_intent,
+                );
+            }
+        });
+    });
+}
+
 fn switch(ui: &mut egui::Ui, on: &mut bool, label: &str, helper: &str, p: &crate::theme::ThemePalette) -> bool {
     let track_w = 44.0;
     let track_h = 22.0;
@@ -376,6 +681,59 @@ fn with_partial_progress(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VncFooterAction {
+    StartSession,
+    RestartSession,
+    StopSession,
+    TestLogin,
+}
+
+enum VncSessionEvent {
+    StepStarted { title: String },
+    StepFinished { title: String },
+    Finished { result: Result<String, String> },
+}
+
+struct VncSessionDialog {
+    host: crate::config::SshRemoteHost,
+    key: String,
+    timeout: Duration,
+    restart: bool,
+    display: u8,
+    resolution_idx: usize,
+    depth_idx: usize,
+    custom_res: Option<String>,
+    localhost_disabled: bool,
+    prefill_note: bool,
+    owner: String,
+    status: String,
+    error: Option<String>,
+    copied: Option<Instant>,
+    pending: Option<std::sync::mpsc::Receiver<VncSessionEvent>>,
+}
+
+struct VncLoginDialog {
+    host: crate::config::SshRemoteHost,
+    key: String,
+    config_path: std::path::PathBuf,
+    display: u8,
+    password: zeroize::Zeroizing<String>,
+    visible: bool,
+    status: Option<Result<String, String>>,
+    pending: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+}
+
+struct VncStopConfirm {
+    host: crate::config::SshRemoteHost,
+    key: String,
+    timeout: Duration,
+    display: u8,
+    pid: Option<u32>,
+    owner: String,
+    copied: Option<Instant>,
+}
+
 struct PendingAction {
     host: crate::config::SshRemoteHost,
     key: String,
@@ -385,6 +743,8 @@ struct PendingAction {
     needs_password: bool,
     sudo_available: bool,
     password_attempts: u8,
+    focus_requested: bool,
+    review_copied: Option<Instant>,
     distro: Option<String>,
     prior_unit_active: Option<bool>,
     prior_unit_enabled: Option<bool>,
@@ -408,17 +768,14 @@ pub(crate) struct ServerDetection {
     vnc_resolution_idx: usize,
     vnc_depth_idx: usize,
     vnc_localhost_disabled: bool,
-    vnc_passwd_visible: bool,
     vnc_custom_res: Option<String>,
-    vnc_start_pending: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
-    vnc_start_error: Option<String>,
-    vnc_start_copied: Option<Instant>,
-    vnc_passwd_input: zeroize::Zeroizing<String>,
-    vnc_passwd_pending: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
-    vnc_passwd_status: Option<Result<String, String>>,
-    vnc_test_pending: bool,
-    vnc_test_attempts: u8,
-    vnc_test_last: Option<Instant>,
+    vnc_session_dialog: Option<VncSessionDialog>,
+    vnc_login_dialog: Option<VncLoginDialog>,
+    vnc_stop_confirm: Option<VncStopConfirm>,
+    vnc_stop_pending: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+    vnc_stop_error: Option<String>,
+    vnc_auth_result: Option<(String, Result<String, String>)>,
+    manual_copied: Option<Instant>,
     action_status: String,
     action_logs: String,
     action_history_warning: Option<(String, DesktopProtocol, String)>,
@@ -442,12 +799,21 @@ impl ServerDetection {
         self.action_pending.is_some()
     }
 
+    pub(crate) fn dialog_open(&self) -> bool {
+        self.action_review.is_some()
+            || self.vnc_session_dialog.is_some()
+            || self.vnc_login_dialog.is_some()
+            || self.vnc_stop_confirm.is_some()
+            || self.vnc_stop_pending.is_some()
+    }
+
     pub(crate) fn show(
         &mut self,
         ui: &mut egui::Ui,
         host: &crate::config::SshRemoteHost,
         protocol: DesktopProtocol,
         timeout: Duration,
+        config_path: &std::path::Path,
         palette: &crate::theme::ThemePalette,
     ) {
         let key = detection_key(host);
@@ -592,9 +958,19 @@ impl ServerDetection {
             .cloned();
         let busy = self.action_review.is_some()
             || self.action_pending.is_some()
-            || self.vnc_start_pending.is_some();
+            || self.vnc_session_dialog.as_ref().is_some_and(|dialog| dialog.pending.is_some())
+            || self.vnc_login_dialog.as_ref().is_some_and(|dialog| dialog.pending.is_some())
+            || self.vnc_stop_pending.is_some();
         let pending_intent = self.action_review.as_ref().map(|action| action.intent);
         let checking = self.pending.is_some();
+        let auth_result = if protocol == DesktopProtocol::Vnc {
+            self.vnc_auth_result
+                .as_ref()
+                .filter(|(tested, _)| tested == &key)
+                .map(|(_, result)| result.clone())
+        } else {
+            None
+        };
 
         ui.horizontal(|ui| {
             ui.strong(match protocol {
@@ -623,6 +999,7 @@ impl ServerDetection {
 
         let mut requested_intent = None;
         let mut requested_undo = None;
+        let mut requested_vnc_action = None;
         let mut request_manual_scan = false;
         let mut open = self.scan_window_open;
         if open {
@@ -634,14 +1011,15 @@ impl ServerDetection {
                 .id(egui::Id::new(("service_manager_window", protocol as u8)))
                 .title_bar(false)
                 .resizable(true)
-                .default_width(480.0)
+                .default_width(560.0)
                 .min_width(320.0)
                 .max_width(800.0)
-                .default_height(600.0)
+                .default_height(720.0)
                 .min_height(360.0)
                 .max_height(820.0)
                 .frame(
                     egui::Frame::window(&ui.ctx().style())
+                        .inner_margin(egui::Margin::symmetric(20.0, 16.0))
                         .stroke(Stroke::NONE)
                         .shadow(egui::epaint::Shadow {
                             offset: egui::vec2(0.0, 6.0),
@@ -786,41 +1164,12 @@ impl ServerDetection {
                                             protocol,
                                             host.vnc.as_ref().map_or(0, |profile| profile.port),
                                             &mut request_manual_scan,
+                                            auth_result.as_ref(),
                                             palette,
                                         );
                                         if exposure_action == ExposureAction::LimitToLocalhost {
                                             requested_intent =
                                                 Some(super::setup::plan::Intent::RestrictToLocalhost);
-                                        }
-                                        let mut show_vnc_controls = None;
-                                        if protocol == DesktopProtocol::Vnc {
-                                            match report.vnc.state() {
-                                                super::setup::model::ServiceState::InstalledStopped
-                                                | super::setup::model::ServiceState::Failed => {
-                                                    show_vnc_controls = Some(false);
-                                                }
-                                                super::setup::model::ServiceState::RunningManual
-                                                | super::setup::model::ServiceState::RunningSystemd => {
-                                                    show_vnc_controls = Some(true);
-                                                }
-                                                _ => {}
-                                            }
-                                        }
-                                        if let Some(is_running) = show_vnc_controls {
-                                            if let Some(intent) = self.show_start_session_config(
-                                                ui,
-                                                host,
-                                                &report,
-                                                &key,
-                                                timeout,
-                                                is_running,
-                                                palette,
-                                            ) {
-                                                requested_intent = Some(intent);
-                                            }
-                                        }
-                                        if protocol == DesktopProtocol::Vnc {
-                                            self.show_vnc_password_card(ui, host, palette);
                                         }
                                     }
                                     ServiceTab::HostDetails => {
@@ -829,9 +1178,11 @@ impl ServerDetection {
                                             &report,
                                             protocol,
                                             host.vnc.as_ref().map_or(0, |profile| profile.port),
-                                            &mut request_manual_scan,
+                                                                                        &mut request_manual_scan,
+                                            &mut self.manual_copied,
                                             palette,
-                                            ServiceTab::HostDetails,
+                                            ServiceTab::
+HostDetails,
                                         );
                                     }
                                     ServiceTab::ManualSteps => {
@@ -840,9 +1191,11 @@ impl ServerDetection {
                                             &report,
                                             protocol,
                                             host.vnc.as_ref().map_or(0, |profile| profile.port),
-                                            &mut request_manual_scan,
+                                                                                        &mut request_manual_scan,
+                                            &mut self.manual_copied,
                                             palette,
-                                            ServiceTab::ManualSteps,
+                                            ServiceTab::
+ManualSteps,
                                         );
                                     }
                                     ServiceTab::RecentChanges => {
@@ -873,16 +1226,28 @@ impl ServerDetection {
                         }
                     }
                         }); // end ScrollArea
-                    show_service_footer(
-                        ui,
-                        current_report.as_ref(),
-                        protocol,
-                        palette,
-                        busy,
-                        checking,
-                        pending_intent,
-                        &mut requested_intent,
-                    );
+                    if protocol == DesktopProtocol::Vnc {
+                        show_vnc_footer(
+                            ui,
+                            current_report.as_ref(),
+                            palette,
+                            busy,
+                            checking,
+                            &mut requested_vnc_action,
+                            &mut requested_intent,
+                        );
+                    } else {
+                        show_service_footer(
+                            ui,
+                            current_report.as_ref(),
+                            protocol,
+                            palette,
+                            busy,
+                            checking,
+                            pending_intent,
+                            &mut requested_intent,
+                        );
+                    }
                 });
             self.scan_window_open = open;
         } else if !can_scan {
@@ -890,6 +1255,66 @@ impl ServerDetection {
         }
         if request_manual_scan && self.pending.is_none() {
             self.start(host.clone(), key.clone(), timeout, ui.ctx().clone());
+        }
+
+        if let Some(action) = requested_vnc_action {
+            let detected_display = current_report.as_ref().and_then(Self::report_vnc_display);
+            match action {
+                VncFooterAction::StartSession | VncFooterAction::RestartSession => {
+                    let restart = action == VncFooterAction::RestartSession;
+                    let display = if restart {
+                        detected_display.unwrap_or_else(|| self.vnc_display.max(1))
+                    } else {
+                        self.vnc_display.max(1)
+                    };
+                    self.vnc_display = display;
+                    self.vnc_session_dialog = Some(VncSessionDialog {
+                        host: host.clone(),
+                        key: key.clone(),
+                        timeout,
+                        restart,
+                        display,
+                        resolution_idx: self.vnc_resolution_idx,
+                        depth_idx: self.vnc_depth_idx,
+                        custom_res: self.vnc_custom_res.clone(),
+                        localhost_disabled: self.vnc_localhost_disabled,
+                        prefill_note: restart,
+                        owner: current_report
+                            .as_ref()
+                            .map(Self::report_owner)
+                            .unwrap_or_else(|| report_owner_from_host(host)),
+                        status: String::new(),
+                        error: None,
+                        copied: None,
+                        pending: None,
+                    });
+                }
+                VncFooterAction::StopSession => {
+                    if let Some(report) = current_report.as_ref() {
+                        self.vnc_stop_confirm = Some(VncStopConfirm {
+                            host: host.clone(),
+                            key: key.clone(),
+                            timeout,
+                            display: detected_display.unwrap_or_else(|| self.vnc_display.max(1)),
+                            pid: Self::report_pid(report),
+                            owner: Self::report_owner(report),
+                            copied: None,
+                        });
+                    }
+                }
+                VncFooterAction::TestLogin => {
+                    self.vnc_login_dialog = Some(VncLoginDialog {
+                        host: host.clone(),
+                        key: key.clone(),
+                        config_path: config_path.to_path_buf(),
+                        display: detected_display.unwrap_or_else(|| self.vnc_display.max(1)),
+                        password: zeroize::Zeroizing::new(String::new()),
+                        visible: false,
+                        status: None,
+                        pending: None,
+                    });
+                }
+            }
         }
 
         if let Some(intent) = requested_intent {
@@ -905,6 +1330,8 @@ impl ServerDetection {
                         needs_password: report.uid != Some(0) && report.passwordless_sudo != Some(true),
                         sudo_available: report.uid == Some(0) || report.sudo_available != Some(false),
                         password_attempts: 0,
+                        focus_requested: false,
+                        review_copied: None,
                         distro: report
                             .os_pretty_name
                             .clone()
@@ -941,6 +1368,8 @@ impl ServerDetection {
                                 sudo_available: report.uid == Some(0)
                                     || report.sudo_available != Some(false),
                                 password_attempts: 0,
+                                focus_requested: false,
+                                review_copied: None,
                                 distro: report
                                     .os_pretty_name
                                     .clone()
@@ -996,495 +1425,619 @@ impl ServerDetection {
                 );
             }
         }
-        self.show_action_review(ui, &key);
+        self.show_action_review(ui, &key, palette);
+        self.show_vnc_session_dialog(ui, palette);
+        self.show_vnc_stop_review(ui, palette);
+        self.show_vnc_login_dialog(ui, palette);
     }
 
-    /// "Start a session" card: form, command well, and Start / Restart / Stop buttons.
-    /// Returns an intent for actions that should route through the plan dialog.
-    /// VNC start/stop/restart execute directly (existing behaviour) and return `None`.
-    fn show_start_session_config(
-        &mut self,
-        ui: &mut egui::Ui,
-        host: &crate::config::SshRemoteHost,
-        report: &super::setup::model::ServiceInventoryReport,
-        key: &str,
-        timeout: Duration,
-        is_running: bool,
-        palette: &crate::theme::ThemePalette,
-    ) -> Option<super::setup::plan::Intent> {
-        if let Some(rx) = &self.vnc_start_pending {
-            if let Ok(result) = rx.try_recv() {
-                self.vnc_start_pending = None;
-                match result {
-                    Ok(_) => {
-                        self.vnc_start_error = None;
-                        self.last = None;
-                        self.start(host.clone(), key.to_owned(), timeout, ui.ctx().clone());
+    fn show_vnc_session_dialog(&mut self, ui: &mut egui::Ui, palette: &crate::theme::ThemePalette) {
+        if self.vnc_session_dialog.is_none() {
+            return;
+        }
+        let id = egui::Id::new("vnc_session_dialog");
+        let ctx = ui.ctx().clone();
+        let allow_cancel = self
+            .vnc_session_dialog
+            .as_ref()
+            .is_some_and(|dialog| dialog.pending.is_none());
+        let mut cancel = false;
+        let mut run = false;
+        subdialog_backdrop(&ctx, id, palette, &mut cancel, allow_cancel);
+        let events = self
+            .vnc_session_dialog
+            .as_ref()
+            .and_then(|dialog| dialog.pending.as_ref())
+            .map(|receiver| receiver.try_iter().collect::<Vec<_>>())
+            .unwrap_or_default();
+        if !events.is_empty() {
+            let mut finished: Option<Result<String, String>> = None;
+            {
+                let dialog = self.vnc_session_dialog.as_mut().unwrap();
+                for event in events {
+                    match event {
+                        VncSessionEvent::StepStarted { title } => dialog.status = format!("{title}…"),
+                        VncSessionEvent::StepFinished { title } => {
+                            dialog.status = format!("{title} complete");
+                        }
+                        VncSessionEvent::Finished { result } => {
+                            dialog.pending = None;
+                            finished = Some(result);
+                        }
                     }
-                    Err(err) => {
-                        self.vnc_start_error = Some(err);
-                    }
+                }
+            }
+            if let Some(Ok(_)) = &finished {
+                let host = self.vnc_session_dialog.as_ref().unwrap().host.clone();
+                let key = self.vnc_session_dialog.as_ref().unwrap().key.clone();
+                let timeout = self.vnc_session_dialog.as_ref().unwrap().timeout;
+                self.vnc_session_dialog = None;
+                self.last = None;
+                self.history_cache = None;
+                self.start(host, key, timeout, ctx.clone());
+                return;
+            }
+            if let Some(Err(error)) = finished {
+                if let Some(dialog) = self.vnc_session_dialog.as_mut() {
+                    dialog.error = Some(error);
                 }
             }
         }
 
-        const RESOLUTIONS: &[(&str, &str)] = &[
-            ("1280 × 720", "1280x720"),
-            ("1366 × 768", "1366x768"),
-            ("1600 × 900", "1600x900"),
-            ("1920 × 1080", "1920x1080"),
-            ("2560 × 1440", "2560x1440"),
-            ("3840 × 2160", "3840x2160"),
-            ("Custom…", "custom"),
-        ];
-        const DEPTHS: &[(&str, &str)] = &[("24-bit", "24"), ("16-bit", "16"), ("32-bit", "32")];
-        if self.vnc_display == 0 {
-            self.vnc_display = 1;
-        }
-        let res_label = RESOLUTIONS
-            .get(self.vnc_resolution_idx)
-            .map(|(l, _)| *l)
-            .unwrap_or("1920 × 1080");
-        let res_value = RESOLUTIONS
-            .get(self.vnc_resolution_idx)
-            .map(|(_, v)| *v)
-            .unwrap_or("1920x1080");
-        let depth_label = DEPTHS
-            .get(self.vnc_depth_idx)
-            .map(|(l, _)| *l)
-            .unwrap_or("24-bit");
-        let depth_value = DEPTHS
-            .get(self.vnc_depth_idx)
-            .map(|(_, v)| *v)
-            .unwrap_or("24");
-        let localhost_arg = if self.vnc_localhost_disabled { "no" } else { "yes" };
-        let geometry = if res_value == "custom" {
-            self.vnc_custom_res.clone().unwrap_or_else(|| "1920x1080".to_owned())
-        } else {
-            res_value.to_owned()
-        };
-        let cmd = format!(
-            "vncserver :{} -localhost {} -geometry {} -depth {}",
-            self.vnc_display, localhost_arg, geometry, depth_value
-        );
-        let target_port = 5900u16.saturating_add(self.vnc_display as u16);
-
-        ui.add_space(6.0);
-        card_frame(palette, 1, 16.0).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(egui::RichText::new("Start a session").size(15.0).strong().color(palette.text_primary));
-            ui.add_space(10.0);
-
-            // Labels above fields, proportional widths.
-            egui::Grid::new("vnc_start_form").spacing(egui::vec2(16.0, 8.0)).show(ui, |ui| {
-                let total = ui.available_width();
-                let display_w = (total * 0.22).clamp(90.0, 220.0);
-                let res_w = (total * 0.45).clamp(150.0, 420.0);
-                // Color depth
-                ui.vertical(|ui| {
-                    ui.label(egui::RichText::new("Display").small().color(palette.text_muted));
-                    ui.add_space(4.0);
-                    let mut disp_text = format!(":{}", self.vnc_display);
-                    let disp_resp = ui.add(
-                        egui::TextEdit::singleline(&mut disp_text)
-                            .desired_width(display_w)
-                            .hint_text(egui::RichText::new(":1").color(palette.text_muted)),
-                    );
-                    if disp_resp.lost_focus() || disp_resp.changed() {
-                        if let Some(rest) = disp_text.strip_prefix(':') {
-                            if let Ok(n) = rest.parse::<u8>() {
-                                self.vnc_display = n;
-                            }
-                        }
-                    }
-                    if !disp_text.is_empty() && !disp_text.trim_matches(':').is_empty() {
-                        let rest = disp_text.strip_prefix(':').unwrap_or(&disp_text);
-                        if !rest.is_empty() && rest.parse::<u32>().is_err() {
-                            ui.label(egui::RichText::new("Use :N, e.g. :1").small().color(palette.danger));
-                        }
+        let screen = ctx.screen_rect();
+        dialog_window(
+            if self.vnc_session_dialog.as_ref().is_some_and(|dialog| dialog.restart) {
+                "Restart session"
+            } else {
+                "Start a session"
+            },
+            id.with("window"),
+            palette,
+            screen,
+        )
+        .show(&ctx, |ui| {
+            apply_dialog_style(ui, palette);
+            let Some(dialog) = self.vnc_session_dialog.as_mut() else {
+                return;
+            };
+            ui.horizontal(|ui| {
+                ui.strong(if dialog.restart { "Restart session" } else { "Start a session" });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let close = dialog_button(ui, crate::lucide::X, "Close", palette);
+                    focus_lock(&ctx, &close, id.with("close_focus"), false);
+                    if allow_cancel && close.clicked() {
+                        cancel = true;
                     }
                 });
-                ui.vertical(|ui| {
-                    ui.label(egui::RichText::new("Resolution").small().color(palette.text_muted));
-                    ui.add_space(4.0);
-                    egui::ComboBox::from_id_salt("vnc_start_res")
-                        .selected_text(egui::RichText::new(res_label))
-                        .show_ui(ui, |ui| {
-                            for (label, value) in RESOLUTIONS.iter() {
-                                let selected = self.vnc_resolution_idx
-                                    == RESOLUTIONS.iter().position(|(_, v)| *v == *value).unwrap_or(0);
-                                if ui.selectable_value(&mut self.vnc_resolution_idx, RESOLUTIONS.iter().position(|(l, _)| *l == *label).unwrap_or(0), *label).changed() {
-                                    if *value == "custom" {
-                                        self.vnc_custom_res = Some("1920x1080".to_owned());
-                                    }
+            });
+            ui.add_space(10.0);
+            if dialog.prefill_note {
+                ui.label(
+                    egui::RichText::new("Resolution, color depth and network setting could not be read from the running process; defaults are prefilled.")
+                        .small()
+                        .color(palette.text_muted),
+                );
+                ui.add_space(6.0);
+            }
+            let total = ui.available_width();
+            let display_w = (total * 0.28).clamp(96.0, 180.0);
+            let field_h = 38.0;
+            egui::Grid::new("vnc_session_form")
+                .num_columns(3)
+                .spacing(egui::vec2(12.0, 8.0))
+                .show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("Display").small().color(palette.text_muted));
+                        ui.add_space(4.0);
+                        let mut disp_text = format!(":{}", dialog.display);
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut disp_text)
+                                .desired_width(display_w)
+                                .min_size(egui::vec2(display_w, field_h)),
+                        );
+                        if resp.changed() {
+                            if let Some(rest) = disp_text.strip_prefix(':') {
+                                if let Ok(value) = rest.parse::<u8>() {
+                                    dialog.display = value;
                                 }
                             }
-                        });
-                    if res_value == "custom" {
-                        let mut custom = self.vnc_custom_res.clone().unwrap_or_default();
-                        let custom_resp = ui.add(
-                            egui::TextEdit::singleline(&mut custom)
-                                .desired_width(res_w)
-                                .hint_text(egui::RichText::new("1920x1080").color(palette.text_muted)),
-                        );
-                        if custom_resp.changed() {
-                            self.vnc_custom_res = Some(custom.clone());
                         }
-                        if !custom.is_empty() && !custom.split('x').next().unwrap_or("").parse::<u32>().is_ok() {
-                            ui.label(egui::RichText::new("Use WxH, 640-7680 × 480-4320").small().color(palette.danger));
-                        }
-                    }
+                    });
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("Resolution").small().color(palette.text_muted));
+                        ui.add_space(4.0);
+                        egui::ComboBox::from_id_salt("vnc_session_resolution")
+                            .selected_text(VNC_RESOLUTIONS.get(dialog.resolution_idx).map_or("1920 × 1080", |(label, _)| *label))
+                            .width((total * 0.34).clamp(140.0, 220.0))
+                            .show_ui(ui, |ui| {
+                                for (index, (label, _)) in VNC_RESOLUTIONS.iter().enumerate() {
+                                    if ui.selectable_value(&mut dialog.resolution_idx, index, *label).changed()
+                                        && *label == "Custom…"
+                                        && dialog.custom_res.is_none()
+                                    {
+                                        dialog.custom_res = Some("1920x1080".to_owned());
+                                    }
+                                }
+                            });
+                    });
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("Color depth").small().color(palette.text_muted));
+                        ui.add_space(4.0);
+                        egui::ComboBox::from_id_salt("vnc_session_depth")
+                            .selected_text(VNC_DEPTHS.get(dialog.depth_idx).map_or("24-bit", |(label, _)| *label))
+                            .width((total * 0.22).clamp(104.0, 160.0))
+                            .show_ui(ui, |ui| {
+                                for (index, (label, _)) in VNC_DEPTHS.iter().enumerate() {
+                                    ui.selectable_value(&mut dialog.depth_idx, index, *label);
+                                }
+                            });
+                    });
+                    ui.end_row();
                 });
-                ui.vertical(|ui| {
-                    ui.label(egui::RichText::new("Color depth").small().color(palette.text_muted));
-                    ui.add_space(4.0);
-                    egui::ComboBox::from_id_salt("vnc_start_depth")
-                        .selected_text(egui::RichText::new(depth_label))
-                        .show_ui(ui, |ui| {
-                            for (i, (label, _)) in DEPTHS.iter().enumerate() {
-                                ui.selectable_value(&mut self.vnc_depth_idx, i, *label);
-                            }
-                        });
-                });
-                ui.end_row();
-            });
-
+            if VNC_RESOLUTIONS.get(dialog.resolution_idx).map_or(false, |(_, value)| *value == "custom") {
+                let mut custom = dialog.custom_res.clone().unwrap_or_default();
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut custom)
+                        .desired_width(total)
+                        .min_size(egui::vec2(total, field_h))
+                        .hint_text("1920x1080"),
+                );
+                if resp.changed() {
+                    dialog.custom_res = Some(custom);
+                }
+            }
             ui.add_space(10.0);
-            // Switch: Allow connections from other machines.
-            let _toggled = switch(
+            switch(
                 ui,
-                &mut self.vnc_localhost_disabled,
+                &mut dialog.localhost_disabled,
                 "Allow connections from other machines",
-                "Off keeps VNC reachable only through the SSH tunnel (recommended).",
+                "Off keeps VNC reachable only through the SSH tunnel (recommended)",
                 palette,
             );
-            if self.vnc_localhost_disabled {
-                ui.add_space(4.0);
+            if dialog.localhost_disabled {
                 ui.label(
                     egui::RichText::new("Anyone on the network can reach this port. Use a strong password.")
                         .small()
                         .color(palette.warning),
                 );
             }
-
             ui.add_space(10.0);
-            // Command well with ghost copy button.
-            egui::Frame::none()
-                .fill(tier_fill(palette, 3))
-                .rounding(Rounding::same(12.0))
-                .stroke(Stroke::NONE)
-                .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        let cmd_label = egui::RichText::new(format!("$ {cmd}")).monospace().small().color(palette.text_secondary);
-                        let mut layout = egui::Layout::left_to_right(egui::Align::Center);
-                        layout.main_wrap = true;
-                        ui.with_layout(layout, |ui| {
-                            let wrap_resp = ui.add(egui::Label::new(cmd_label).wrap().selectable(false));
-                            // horizontal scroll handled by wrap; long commands wrap instead.
-                            let _ = wrap_resp;
-                        });
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let copy_resp = icon_button(ui, crate::lucide::COPY, "Copy command", palette);
-                            if copy_resp.clicked() {
-                                ui.ctx().copy_text(cmd.clone());
-                                self.vnc_start_copied = Some(std::time::Instant::now());
-                            }
-                            if let Some(copied) = self.vnc_start_copied {
-                                if copied.elapsed() < std::time::Duration::from_secs(2) {
-                                    ui.label(egui::RichText::new("Copied").small().color(palette.success));
-                                } else {
-                                    self.vnc_start_copied = None;
-                                }
-                            }
-                        });
-                    });
-                    ui.add_space(6.0);
-                    let owner = Self::report_owner(report);
-                    let mut runs_as = format!("Runs as {owner}");
-                    if owner == "root" {
-                        runs_as.push_str(" — running a desktop as root isn't recommended");
+            let command = vnc_session_command(dialog);
+            let owner = dialog.owner.clone();
+            modal_code_block(ui, &format!("$ {command}"), id.with("preview"), palette, &mut dialog.copied);
+            ui.label(egui::RichText::new(format!("Runs as {owner}")).small().color(palette.text_muted));
+            if !dialog.status.is_empty() {
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if dialog.pending.is_some() {
+                        ui.spinner();
                     }
-                    ui.label(egui::RichText::new(runs_as).small().color(palette.text_muted));
+                    ui.label(egui::RichText::new(&dialog.status).small().color(palette.text_secondary));
                 });
-
-            ui.add_space(12.0);
-            // Buttons: state-driven labels.
-            let busy = self.vnc_start_pending.is_some();
-            let running_same_display = is_running
-                && Self::report_vnc_display(report).map_or(false, |d| d == self.vnc_display as u8);
-            let running_other_display = is_running && !running_same_display;
-            ui.horizontal(|ui| {
-                let mut run_cmd: Option<String> = None;
-                let mut intent: Option<super::setup::plan::Intent> = None;
-                if is_running {
-                    // Restart first (primary), then Stop (danger).
-                    if !busy && Self::restart_confirm(ui, palette, self.vnc_display, Self::report_pid(report), Self::report_owner(report)) {
-                        run_cmd = Some(format!("vncserver -kill :{} || true; {}", self.vnc_display, cmd));
-                    }
-                    ui.add_space(8.0);
-                    if !busy && Self::stop_confirm(ui, palette, self.vnc_display) {
-                        run_cmd = Some(format!("vncserver -kill :{}", self.vnc_display));
-                    }
-                    if running_other_display {
-                        ui.label(
-                            egui::RichText::new(format!("Display :{} keeps running.", self.vnc_display))
-                                .small()
-                                .color(palette.text_muted),
-                        );
-                    }
-                } else if !busy {
-                    if ui
-                        .add(tonal_button("Start VNC", palette.accent, palette.accent_text, palette))
-                        .clicked()
-                    {
-                        run_cmd = Some(cmd.clone());
-                    }
+            }
+            if let Some(error) = &dialog.error {
+                ui.add_space(4.0);
+                ui.colored_label(palette.danger, error);
+            }
+            ui.separator();
+            ui.add_space(8.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let cancel_btn = dialog_button(ui, "Cancel", "Cancel", palette);
+                focus_lock(&ctx, &cancel_btn, id.with("cancel_focus"), false);
+                if allow_cancel && cancel_btn.clicked() {
+                    cancel = true;
                 }
-                if let Some(cmd_owned) = run_cmd {
-                    self.vnc_start_error = None;
-                    let (tx, rx) = std::sync::mpsc::channel();
-                    self.vnc_start_pending = Some(rx);
-                    let host_owned = host.clone();
-                    let ctx = ui.ctx().clone();
-                    std::thread::spawn(move || {
-                        let command = crate::remote::build_ssh_command(&host_owned, &cmd_owned);
-                        let res = crate::remote::ssh_probe_output(command, timeout)
-                            .and_then(|out| {
-                                if out.status.success() {
-                                    Ok(String::new())
-                                } else {
-                                    Err(std::io::Error::new(
-                                        std::io::ErrorKind::Other,
-                                        String::from_utf8_lossy(&out.stderr).trim().to_owned(),
-                                    ))
-                                }
-                            })
-                            .map_err(|e| e.to_string());
-                        let _ = tx.send(res);
-                        ctx.request_repaint();
-                    });
-                }
-                let _ = intent;
-                if busy {
-                    ui.spinner();
-                    ui.label(
-                        egui::RichText::new(if is_running { "Updating VNC..." } else { "Starting VNC..." })
-                            .small()
-                            .weak(),
-                    );
+                ui.add_space(8.0);
+                let run_label = if dialog.restart { "Restart VNC" } else { "Start VNC" };
+                let run_btn = ui.add_enabled(
+                    allow_cancel,
+                    egui::Button::new(egui::RichText::new(run_label).strong().color(palette.accent_text))
+                        .fill(palette.accent)
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(8.0))
+                        .min_size(egui::vec2(112.0, 34.0)),
+                );
+                focus_lock(&ctx, &run_btn, id.with("run_focus"), !dialog.restart);
+                if run_btn.clicked() {
+                    run = true;
                 }
             });
-            if let Some(err) = &self.vnc_start_error {
-                ui.add_space(4.0);
-                ui.colored_label(palette.danger, err);
-            }
         });
-        None
-    }
-
-/// VNC password card.
-fn show_vnc_password_card(
-    &mut self,
-    ui: &mut egui::Ui,
-    host: &crate::config::SshRemoteHost,
-    palette: &crate::theme::ThemePalette,
-) {
-    if let Some(rx) = &self.vnc_passwd_pending {
-        if let Ok(result) = rx.try_recv() {
-            self.vnc_passwd_pending = None;
-            self.vnc_passwd_status = Some(result);
-        }
-    }
-
-    card_frame(palette, 1, 16.0).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        ui.label(egui::RichText::new("VNC password").size(15.0).strong().color(palette.text_primary));
-        ui.add_space(10.0);
-
-        let pw_busy = self.vnc_passwd_pending.is_some();
-        let valid = Self::valid_vnc_password(&self.vnc_passwd_input);
-        let can_set = !pw_busy && valid;
-
-        ui.horizontal(|ui| {
-            let mut input = (*self.vnc_passwd_input).clone();
-            let text_edit = if self.vnc_passwd_visible {
-                egui::TextEdit::singleline(&mut input)
-            } else {
-                egui::TextEdit::singleline(&mut input).password(true)
-            };
-            let text_edit = text_edit
-                .desired_width(220.0)
-                .hint_text(egui::RichText::new("New password, 6–8 characters").color(palette.text_muted));
-            let resp = ui.add(text_edit);
-            if resp.changed() {
-                self.vnc_passwd_input = zeroize::Zeroizing::new(input);
-            }
-            // Eye show/hide inside the field (right-aligned via a separate interact).
-            let eye_icon = if self.vnc_passwd_visible { crate::lucide::EYE_OFF } else { crate::lucide::EYE };
-            let eye_resp = icon_button(ui, eye_icon, if self.vnc_passwd_visible { "Hide password" } else { "Show password" }, palette);
-            if eye_resp.clicked() {
-                self.vnc_passwd_visible = !self.vnc_passwd_visible;
-            }
-            let _ = resp;
-        });
-
-        if !valid && !self.vnc_passwd_input.is_empty() {
-            ui.label(
-                egui::RichText::new("Classic VNC passwords use 6–8 characters.")
-                    .small()
-                    .color(palette.danger),
-            );
-        }
-
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(
-                    can_set,
-                    tonal_button(
-                        "Set password",
-                        tonal_fill(palette.bg_card, palette.accent, 16.0),
-                        if can_set { palette.accent } else { mix_tint(palette.accent, Color32::WHITE, 0.6) },
-                        palette,
-                    ),
-                )
-                .clicked()
-            {
-                self.set_vnc_password(host, ui.ctx().clone());
-            }
-            ui.add_space(8.0);
-            if ui
-                .add(tonal_button(
-                    "Test login",
-                    tier_fill(palette, 4),
-                    palette.text_primary,
-                    palette,
-                ))
-                .clicked()
-            {
-                self.test_vnc_login(host, ui.ctx().clone());
-            }
-            if pw_busy {
-                ui.spinner();
-                ui.label(egui::RichText::new("Testing login…").small().color(palette.text_muted));
-            }
-        });
-
-        // Status line with dot.
-        ui.add_space(8.0);
-        match &self.vnc_passwd_status {
-            Some(Ok(msg)) => {
-                ui.horizontal(|ui| {
-                    ui.painter().circle_filled(ui.cursor().min + egui::vec2(6.0, 7.0), 5.0, palette.success);
-                    ui.add_space(10.0);
-                    ui.label(egui::RichText::new(msg).small().color(palette.success));
-                });
-            }
-            Some(Err(err)) => {
-                ui.horizontal(|ui| {
-                    ui.painter().circle_filled(ui.cursor().min + egui::vec2(6.0, 7.0), 5.0, palette.danger);
-                    ui.add_space(10.0);
-                    ui.label(egui::RichText::new(err.as_str()).small().color(palette.danger));
-                });
-            }
-            None => {
-                ui.horizontal(|ui| {
-                    ui.painter().circle_filled(ui.cursor().min + egui::vec2(6.0, 7.0), 5.0, p_warn());
-                    ui.add_space(10.0);
-                    ui.label(
-                        egui::RichText::new("Login has not been tested yet. Test login checks it through the SSH tunnel.")
-                            .small()
-                            .color(palette.text_muted),
-                    );
-                });
-            }
-        }
-    });
-}
-
-fn set_vnc_password(&mut self, host: &crate::config::SshRemoteHost, ctx: egui::Context) {
-    self.vnc_passwd_status = None;
-    let pw = zeroize::Zeroizing::new(format!("{}\n", self.vnc_passwd_input.as_str()));
-    self.vnc_passwd_input.clear();
-    let (tx, rx) = std::sync::mpsc::channel();
-    self.vnc_passwd_pending = Some(rx);
-    let host_owned = host.clone();
-    std::thread::spawn(move || {
-        let command = crate::remote::build_ssh_command(
-            &host_owned,
-            "mkdir -p ~/.vnc && vncpasswd -f > ~/.vnc/passwd && chmod 600 ~/.vnc/passwd",
-        );
-        let res = crate::remote::ssh_probe_output_with_stdin(command, Duration::from_secs(120), pw.as_bytes())
-            .and_then(|out| {
-                if out.status.success() {
-                    Ok("VNC password saved on server.".to_owned())
-                } else {
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        String::from_utf8_lossy(&out.stderr).trim().to_owned(),
-                    ))
-                }
-            })
-            .map_err(|e| e.to_string());
-        let _ = tx.send(res);
-        ctx.request_repaint();
-    });
-}
-
-fn test_vnc_login(&mut self, host: &crate::config::SshRemoteHost, ctx: egui::Context) {
-    // Rate limit: at most 3 tries per minute, cooldown a few seconds between tries.
-    let now = std::time::Instant::now();
-    if self.vnc_test_attempts >= 3 {
-        if let Some(last) = self.vnc_test_last {
-            if now.duration_since(last) < std::time::Duration::from_secs(60) {
-                self.vnc_passwd_status = Some(Err("Too many login attempts. Wait a moment before testing again.".to_owned()));
-                return;
-            }
-        }
-        self.vnc_test_attempts = 0;
-    }
-    if let Some(last) = self.vnc_test_last {
-        if now.duration_since(last) < std::time::Duration::from_secs(5) {
-            self.vnc_passwd_status = Some(Err("Please wait a moment before testing again.".to_owned()));
+        if cancel && allow_cancel {
+            self.vnc_session_dialog = None;
             return;
         }
+        if run && allow_cancel {
+            self.spawn_vnc_session(&ctx);
+        }
     }
-    self.vnc_test_attempts += 1;
-    self.vnc_test_last = Some(now);
-    self.vnc_test_pending = true;
-    self.vnc_passwd_status = None;
-    let pw = zeroize::Zeroizing::new(format!("{}\n", self.vnc_passwd_input.as_str()));
-    let (tx, rx) = std::sync::mpsc::channel();
-    self.vnc_passwd_pending = Some(rx);
-    let host_owned = host.clone();
-    std::thread::spawn(move || {
-        let command = crate::remote::build_ssh_command(
-            &host_owned,
-            "vncpasswd -f < /dev/null 2>&1 || true",
-        );
-        let res = crate::remote::ssh_probe_output(command, Duration::from_secs(120))
-            .map(|_| "Login works through the SSH tunnel.".to_owned())
-            .map_err(|e| e.to_string());
-        let _ = tx.send(res);
-    });
-}
 
+    fn spawn_vnc_session(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = self.vnc_session_dialog.as_ref() else {
+            return;
+        };
+        let command = vnc_session_command(dialog);
+        let display = dialog.display;
+        let steps: Vec<(&'static str, String)> = if dialog.restart {
+            vec![
+                ("Stopping old session", format!("vncserver -kill :{display} || true")),
+                ("Starting new session", command),
+            ]
+        } else {
+            vec![("Starting session", command)]
+        };
+        let host = dialog.host.clone();
+        let timeout = dialog.timeout;
+        let (tx, rx) = std::sync::mpsc::channel();
+        {
+            let dialog = self.vnc_session_dialog.as_mut().unwrap();
+            dialog.pending = Some(rx);
+            dialog.error = None;
+            dialog.status = steps.first().map_or(String::new(), |(title, _)| format!("{title}…"));
+        }
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            for (title, command) in steps {
+                let _ = tx.send(VncSessionEvent::StepStarted { title: title.to_owned() });
+                let command = crate::remote::build_ssh_command(&host, &command);
+                let result = crate::remote::ssh_probe_output(command, timeout)
+                    .and_then(|out| {
+                        if out.status.success() {
+                            Ok(String::new())
+                        } else {
+                            let detail = String::from_utf8_lossy(&out.stderr).trim().to_owned();
+                            Err(std::io::Error::other(if detail.is_empty() { "Command failed".into() } else { detail }))
+                        }
+                    })
+                    .map_err(|error| error.to_string());
+                if let Err(error) = result {
+                    let _ = tx.send(VncSessionEvent::Finished { result: Err(error) });
+                    ctx.request_repaint();
+                    return;
+                }
+                let _ = tx.send(VncSessionEvent::StepFinished { title: title.to_owned() });
+            }
+            let _ = tx.send(VncSessionEvent::Finished { result: Ok(String::new()) });
+            ctx.request_repaint();
+        });
+    }
 
-fn valid_vnc_password(input: &zeroize::Zeroizing<String>) -> bool {
-    let len = input.len();
-    len >= 6 && len <= 8
-}
+    fn show_vnc_login_dialog(&mut self, ui: &mut egui::Ui, palette: &crate::theme::ThemePalette) {
+        if self.vnc_login_dialog.is_none() {
+            return;
+        }
+        let id = egui::Id::new("vnc_login_dialog");
+        let ctx = ui.ctx().clone();
+        let allow_cancel = self
+            .vnc_login_dialog
+            .as_ref()
+            .is_some_and(|dialog| dialog.pending.is_none());
+        let mut cancel = false;
+        let mut test = false;
+        if allow_cancel && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            cancel = true;
+        }
+        subdialog_backdrop(&ctx, id, palette, &mut cancel, allow_cancel);
 
-fn restart_confirm(_ui: &mut egui::Ui, _palette: &crate::theme::ThemePalette, _display: u8, _pid: Option<u32>, _owner: String) -> bool {
-    // Session-loss confirmation is rendered by the plan dialog for actions routed there.
-    // Direct-execution fallback: proceed without a modal here.
-    true
-}
+        let results = self
+            .vnc_login_dialog
+            .as_ref()
+            .and_then(|dialog| dialog.pending.as_ref())
+            .map(|receiver| receiver.try_iter().collect::<Vec<_>>())
+            .unwrap_or_default();
+        if let Some(result) = results.into_iter().last() {
+            let key = self
+                .vnc_login_dialog
+                .as_ref()
+                .unwrap()
+                .key
+                .clone();
+            if let Some(dialog) = self.vnc_login_dialog.as_mut() {
+                dialog.status = Some(result.clone());
+                dialog.pending = None;
+            }
+            self.vnc_auth_result = Some((key, result));
+        }
 
-fn stop_confirm(_ui: &mut egui::Ui, _palette: &crate::theme::ThemePalette, _display: u8) -> bool {
-    true
-}
+        dialog_window("Test VNC login", id.with("window"), palette, ctx.screen_rect())
+            .show(&ctx, |ui| {
+                apply_dialog_style(ui, palette);
+                let Some(dialog) = self.vnc_login_dialog.as_mut() else {
+                    return;
+                };
+                ui.horizontal(|ui| {
+                    ui.strong("Test VNC login");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let close = dialog_button(ui, crate::lucide::X, "Close", palette);
+                        focus_lock(&ctx, &close, id.with("close_focus"), false);
+                        if allow_cancel && close.clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+                ui.add_space(10.0);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Display :{} · local port {}",
+                        dialog.display,
+                        5900u16.saturating_add(dialog.display as u16)
+                    ))
+                    .small()
+                    .color(palette.text_muted),
+                );
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new("VNC password").small().color(palette.text_muted));
+                ui.add_space(4.0);
+                let mut input = (*dialog.password).clone();
+                let editor = egui::TextEdit::singleline(&mut input)
+                    .password(!dialog.visible)
+                    .desired_width(ui.available_width() - 40.0)
+                    .min_size(egui::vec2(ui.available_width() - 40.0, 34.0))
+                    .hint_text("Password used by the VNC server");
+                let password_resp = ui.add(editor);
+                focus_lock(
+                    &ctx,
+                    &password_resp,
+                    id.with("password_focus"),
+                    !ctx.data(|data| data.get_temp::<bool>(id.with("password_focus"))).unwrap_or(false),
+                );
+                if password_resp.changed() {
+                    dialog.password = zeroize::Zeroizing::new(input);
+                }
+                let eye_icon = if dialog.visible {
+                    crate::lucide::EYE_OFF
+                } else {
+                    crate::lucide::EYE
+                };
+                let eye = dialog_button(ui, eye_icon, "Show or hide password", palette);
+                if eye.clicked() {
+                    dialog.visible = !dialog.visible;
+                }
+                ui.label(
+                    egui::RichText::new("Classic VNC passwords use 6–8 characters; username authentication can be longer.")
+                        .small()
+                        .color(palette.text_muted),
+                );
+                if let Some(status) = &dialog.status {
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        let color = if status.is_ok() { palette.success } else { palette.danger };
+                        ui.painter().circle_filled(ui.cursor().min + egui::vec2(5.0, 7.0), 4.0, color);
+                        ui.add_space(10.0);
+                        ui.label(egui::RichText::new(match status {
+                            Ok(message) => message.as_str(),
+                            Err(error) => error.as_str(),
+                        }).small().color(color));
+                    });
+                }
+                ui.add_space(6.0);
+                ui.collapsing("Raw details", |ui| {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "SSH tunnel → 127.0.0.1:{} → VNC authentication",
+                            5900u16.saturating_add(dialog.display as u16)
+                        ))
+                        .monospace()
+                        .small()
+                        .color(palette.text_muted),
+                    );
+                    if let Some(status) = &dialog.status {
+                        ui.label(
+                            egui::RichText::new(match status {
+                                Ok(message) => message.as_str(),
+                                Err(error) => error.as_str(),
+                            })
+                            .monospace()
+                            .small()
+                            .color(palette.text_muted),
+                        );
+                    }
+                });
+                ui.separator();
+                ui.add_space(8.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let cancel_btn = dialog_button(ui, "Cancel", "Cancel", palette);
+                    if allow_cancel && cancel_btn.clicked() {
+                        cancel = true;
+                    }
+                    ui.add_space(8.0);
+                    let text = if dialog.pending.is_some() {
+                        "Testing…"
+                    } else {
+                        "Test login"
+                    };
+                    let test_btn = ui.add_enabled(
+                        allow_cancel && !dialog.password.is_empty(),
+                        egui::Button::new(egui::RichText::new(text).strong().color(palette.accent_text))
+                            .fill(palette.accent)
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(8.0))
+                            .min_size(egui::vec2(104.0, 34.0)),
+                    );
+                    focus_lock(&ctx, &test_btn, id.with("test_focus"), false);
+                    if test_btn.clicked() {
+                        test = true;
+                    }
+                });
+            });
+        if cancel && allow_cancel {
+            self.vnc_login_dialog = None;
+            return;
+        }
+        if test && allow_cancel {
+            self.spawn_vnc_login(&ctx);
+        }
+    }
+
+    fn spawn_vnc_login(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = self.vnc_login_dialog.as_ref() else {
+            return;
+        };
+        let host = dialog.host.clone();
+        let config_path = dialog.config_path.clone();
+        let password = dialog.password.clone();
+        let port = 5900u16.saturating_add(dialog.display as u16);
+        let (tx, rx) = std::sync::mpsc::channel();
+        {
+            let dialog = self.vnc_login_dialog.as_mut().unwrap();
+            dialog.status = None;
+            dialog.pending = Some(rx);
+            dialog.password.clear();
+        }
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = super::vnc::authenticate_session(&host, Some(&config_path), port, &password);
+            let _ = tx.send(result);
+            ctx.request_repaint();
+        });
+    }
+
+    fn show_vnc_stop_review(&mut self, ui: &mut egui::Ui, palette: &crate::theme::ThemePalette) {
+        let mut rescan: Option<(crate::config::SshRemoteHost, String, Duration)> = None;
+        if let Some(rx) = &self.vnc_stop_pending {
+            let mut result = None;
+            for event in rx.try_iter() {
+                result = Some(event);
+            }
+            if let Some(result) = result {
+                self.vnc_stop_pending = None;
+                match result {
+                    Ok(_) => {
+                        if let Some(confirm) = self.vnc_stop_confirm.take() {
+                            rescan = Some((confirm.host, confirm.key, confirm.timeout));
+                            self.last = None;
+                            self.history_cache = None;
+                        }
+                    }
+                    Err(error) => self.vnc_stop_error = Some(error),
+                }
+            }
+        }
+        if let Some((host, key, timeout)) = rescan {
+            self.start(host, key, timeout, ui.ctx().clone());
+            return;
+        }
+
+        if self.vnc_stop_confirm.is_none() {
+            return;
+        }
+        let id = egui::Id::new("vnc_stop_review");
+        let ctx = ui.ctx().clone();
+        let running = self.vnc_stop_pending.is_some();
+        let mut cancel = false;
+        let mut stop = false;
+        if !running && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            cancel = true;
+        }
+        subdialog_backdrop(&ctx, id, palette, &mut cancel, !running);
+
+        dialog_window("Stop VNC session", id.with("window"), palette, ctx.screen_rect())
+            .show(&ctx, |ui| {
+                apply_dialog_style(ui, palette);
+                let Some(confirm) = self.vnc_stop_confirm.as_mut() else {
+                    return;
+                };
+                ui.horizontal(|ui| {
+                    ui.strong("Stop VNC session");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let close = dialog_button(ui, crate::lucide::X, "Close", palette);
+                        focus_lock(&ctx, &close, id.with("close_focus"), false);
+                        if !running && close.clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+                ui.add_space(10.0);
+                ui.add(
+                    egui::Label::new(egui::RichText::new(format!(
+                        "Stopping display :{} will disconnect everyone currently using it.",
+                        confirm.display
+                    )))
+                    .wrap(),
+                );
+                ui.add_space(8.0);
+                let detail = match confirm.pid {
+                    Some(pid) => format!("PID {pid} · owned by {}", confirm.owner),
+                    None => format!("Owner {}", confirm.owner),
+                };
+                ui.label(egui::RichText::new(detail).small().color(palette.text_muted));
+                ui.add_space(8.0);
+                let command = format!("$ vncserver -kill :{}", confirm.display);
+                modal_code_block(ui, &command, id.with("command"), palette, &mut confirm.copied);
+                if let Some(error) = &self.vnc_stop_error {
+                    ui.add_space(6.0);
+                    ui.colored_label(palette.danger, error);
+                }
+                ui.separator();
+                ui.add_space(8.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let cancel_btn = dialog_button(ui, "Cancel", "Cancel", palette);
+                    if !running && cancel_btn.clicked() {
+                        cancel = true;
+                    }
+                    ui.add_space(8.0);
+                    let stop_btn = ui.add_enabled(
+                        !running,
+                        egui::Button::new(egui::RichText::new("Stop session").strong().color(Color32::WHITE))
+                            .fill(palette.danger)
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(8.0))
+                            .min_size(egui::vec2(110.0, 34.0)),
+                    );
+                    focus_lock(&ctx, &stop_btn, id.with("stop_focus"), true);
+                    if stop_btn.clicked() {
+                        stop = true;
+                    }
+                });
+            });
+        if cancel && !running {
+            self.vnc_stop_confirm = None;
+            self.vnc_stop_error = None;
+            return;
+        }
+        if stop && !running {
+            self.spawn_vnc_stop(&ctx);
+        }
+    }
+
+    fn spawn_vnc_stop(&mut self, ctx: &egui::Context) {
+        let Some(confirm) = self.vnc_stop_confirm.as_ref() else {
+            return;
+        };
+        let host = confirm.host.clone();
+        let timeout = confirm.timeout;
+        let display = confirm.display;
+        let command = format!("vncserver -kill :{display}");
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.vnc_stop_pending = Some(rx);
+        self.vnc_stop_error = None;
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let command = crate::remote::build_ssh_command(&host, &command);
+            let result = crate::remote::ssh_probe_output(command, timeout)
+                .and_then(|out| {
+                    if out.status.success() {
+                        Ok("Session stopped.".to_owned())
+                    } else {
+                        let detail = String::from_utf8_lossy(&out.stderr).trim().to_owned();
+                        Err(std::io::Error::other(if detail.is_empty() {
+                            "Command failed".to_owned()
+                        } else {
+                            detail
+                        }))
+                    }
+                })
+                .map_err(|error| error.to_string());
+            let _ = tx.send(result);
+            ctx.request_repaint();
+        });
+    }
+
+    #[cfg(test)]
+    fn valid_vnc_password(input: &zeroize::Zeroizing<String>) -> bool {
+        let len = input.len();
+        (6..=8).contains(&len)
+    }
 
 fn report_owner(report: &super::setup::model::ServiceInventoryReport) -> String {
     report
@@ -1510,7 +2063,7 @@ fn report_vnc_display(report: &super::setup::model::ServiceInventoryReport) -> O
         .and_then(|n| n.parse::<u8>().ok())
 }
 
-/// Expanded accordion panels appear in the scrollable body below the password card
+/// Expanded accordion panels appear in the scrollable body below the status card
 /// (one open at a time, scrolled into view).
 fn show_accordion_panel(
     ui: &mut egui::Ui,
@@ -1518,6 +2071,7 @@ fn show_accordion_panel(
     protocol: DesktopProtocol,
     configured_port: u16,
     request_manual_scan: &mut bool,
+    manual_copied: &mut Option<Instant>,
     palette: &crate::theme::ThemePalette,
     tab: ServiceTab,
 ) {
@@ -1629,9 +2183,9 @@ fn show_accordion_panel(
                         return;
                     };
                     ui.label(instructions.note);
-                    show_manual_commands(ui, "Install manually", &instructions.install, palette);
-                    show_manual_commands(ui, "Start manually", &instructions.start, palette);
-                    show_manual_commands(ui, "Verify", &instructions.verify, palette);
+                    show_manual_commands(ui, "Install manually", &instructions.install, manual_copied, palette);
+                    show_manual_commands(ui, "Start manually", &instructions.start, manual_copied, palette);
+                    show_manual_commands(ui, "Verify", &instructions.verify, manual_copied, palette);
                     if ui.button("I did it manually, check again").clicked() {
                         *request_manual_scan = true;
                     }
@@ -1641,59 +2195,46 @@ fn show_accordion_panel(
     }
 }
 
-    fn show_action_review(&mut self, ui: &mut egui::Ui, key: &str) {
+    fn show_action_review(
+        &mut self,
+        ui: &mut egui::Ui,
+        key: &str,
+        palette: &crate::theme::ThemePalette,
+    ) {
         let Some(action) = self.action_review.as_ref().filter(|action| action.key == key) else {
             return;
         };
         let running = self.action_pending.is_some();
+        let focus_once = !action.focus_requested;
+        let destructive = is_destructive_intent(action.intent);
+        let mut review_copied = action.review_copied;
         let mut approve = false;
         let mut cancel = false;
         let mut cancel_after_step = false;
-        let mut window_open = true;
-        let mut window = egui::Window::new("Review remote service action")
-            .id(egui::Id::new(("service_action_review", key)))
-            .title_bar(false)
-            .collapsible(false)
-            .resizable(false)
-            .default_width(440.0)
-            .frame(
-                egui::Frame::window(&ui.ctx().style())
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(75)))
-                    .shadow(egui::epaint::Shadow {
-                        offset: egui::vec2(0.0, 6.0),
-                        blur: 18.0,
-                        spread: 2.0,
-                        color: egui::Color32::from_black_alpha(140),
-                    }),
-            );
-        if !running {
-            window = window.open(&mut window_open);
+        let id = egui::Id::new(("service_action_review", key));
+        let ctx = ui.ctx().clone();
+        if !running && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            cancel = true;
         }
-        window.show(ui.ctx(), |ui| {
-                ui.style_mut().text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
-                ui.style_mut().text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(11.5));
-                ui.style_mut().text_styles.insert(egui::TextStyle::Small, egui::FontId::proportional(10.5));
-                ui.style_mut().text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(11.0));
-                // — compact custom title bar —
+        subdialog_backdrop(&ctx, id, palette, &mut cancel, !running);
+        dialog_window("Review remote service action", id.with("window"), palette, ctx.screen_rect())
+            .show(&ctx, |ui| {
+                apply_dialog_style(ui, palette);
+                let Some(action) = self.action_review.as_ref().filter(|action| action.key == key) else {
+                    return;
+                };
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Service action review").size(12.0).strong());
+                    ui.strong("Service action review");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if !running {
-                            let close_btn = ui.add(
-                                egui::Button::new(egui::RichText::new("X").size(10.0))
-                                    .min_size(egui::vec2(18.0, 18.0))
-                                    .rounding(egui::Rounding::same(999.0)),
-                            ).on_hover_text("Cancel");
-                            if close_btn.clicked() {
-                                cancel = true;
-                            }
+                        let close = dialog_button(ui, crate::lucide::X, "Close", palette);
+                        focus_lock(&ctx, &close, id.with("close_focus"), false);
+                        if !running && close.clicked() {
+                            cancel = true;
                         }
                     });
                 });
-                ui.separator();
-                ui.add_space(4.0);
+                ui.add_space(10.0);
 
-                // — action title + subtitle —
                 ui.label(egui::RichText::new(action.plan.summary).size(15.0).strong());
                 ui.label(
                     egui::RichText::new("Review the commands below. Nothing runs until you click Run.")
@@ -1702,62 +2243,78 @@ fn show_accordion_panel(
                 );
                 ui.add_space(8.0);
 
-                egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-                    for (idx, step) in action.plan.steps.iter().enumerate() {
-                        egui::Frame::group(ui.style())
-                            .rounding(egui::Rounding::same(6.0))
-                            .inner_margin(egui::Margin::same(8.0))
-                            .show(ui, |ui| {
+                let commands: Vec<String> = action
+                    .plan
+                    .steps
+                    .iter()
+                    .map(|step| {
+                        super::setup::exec::command_for_step(
+                            step,
+                            action.host.user == "root",
+                            action.needs_password,
+                        )
+                        .unwrap_or_else(|_| "Unsupported plan command".into())
+                    })
+                    .collect();
+                egui::ScrollArea::vertical()
+                    .id_salt(id.with("steps"))
+                    .max_height(300.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        for (idx, step) in action.plan.steps.iter().enumerate() {
+                            card_frame(palette, 2, 10.0).show(ui, |ui| {
                                 ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        egui::RichText::new(format!("{}", idx + 1))
-                                            .small()
-                                            .weak()
-                                            .monospace(),
+                                ui.horizontal_top(|ui| {
+                                    let badge_color = if destructive { palette.danger } else { palette.accent };
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(format!("{:02}", idx + 1))
+                                                .monospace()
+                                                .small()
+                                                .strong()
+                                                .color(badge_color),
+                                        )
+                                        .selectable(false),
                                     );
-                                    ui.label(egui::RichText::new(step.title).strong().size(13.0));
+                                    ui.add_space(6.0);
+                                    ui.label(
+                                        egui::RichText::new(step.title)
+                                            .strong()
+                                            .color(palette.text_primary),
+                                    );
                                 });
-                                ui.add_space(2.0);
-                                ui.label(egui::RichText::new(step.effect).size(12.0));
+                                ui.add_space(4.0);
+                                ui.label(
+                                    egui::RichText::new(step.effect)
+                                        .small()
+                                        .color(palette.text_secondary),
+                                );
                                 ui.label(
                                     egui::RichText::new(format!("↩ {}", step.undo_note))
                                         .small()
-                                        .weak(),
+                                        .color(palette.text_muted),
                                 );
-                                ui.add_space(5.0);
-                                let command = super::setup::exec::command_for_step(
-                                    step,
-                                    action.host.user == "root",
-                                    action.needs_password,
-                                )
-                                .unwrap_or_else(|_| "Unsupported plan command".into());
-                                egui::Frame::none()
-                                    .fill(ui.visuals().extreme_bg_color)
-                                    .rounding(egui::Rounding::same(4.0))
-                                    .inner_margin(egui::Margin::symmetric(8.0, 5.0))
-                                    .show(ui, |ui| {
-                                        ui.set_width(ui.available_width());
-                                        ui.add(
-                                            egui::Label::new(
-                                                egui::RichText::new(command).monospace().size(11.0),
-                                            )
-                                            .wrap(),
-                                        );
-                                    });
+                                ui.add_space(6.0);
+                                modal_code_block(
+                                    ui,
+                                    &commands[idx],
+                                    id.with(("command", idx)),
+                                    palette,
+                                    &mut review_copied,
+                                );
                             });
-                        if idx + 1 < action.plan.steps.len() {
-                            ui.add_space(5.0);
+                            if idx + 1 < action.plan.steps.len() {
+                                ui.add_space(8.0);
+                            }
                         }
-                    }
-                });
+                    });
 
                 if !action.plan.warnings.is_empty() {
                     ui.add_space(6.0);
                     for warning in &action.plan.warnings {
                         ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new("⚠").color(ui.visuals().warn_fg_color));
-                            ui.label(egui::RichText::new(*warning).small().color(ui.visuals().warn_fg_color));
+                            ui.label(egui::RichText::new("⚠").color(palette.warning));
+                            ui.label(egui::RichText::new(*warning).small().color(palette.warning));
                         });
                     }
                 }
@@ -1769,7 +2326,7 @@ fn show_accordion_panel(
                 // — sudo / password section —
                 if !action.sudo_available {
                     ui.colored_label(
-                        ui.visuals().error_fg_color,
+                        palette.danger,
                         "sudo is not available for this SSH user. Use the manual instructions.",
                     );
                 } else if action.needs_password {
@@ -1781,11 +2338,17 @@ fn show_accordion_panel(
                         .size(12.0),
                     );
                     ui.add_space(3.0);
-                    ui.add(
+                    let password_resp = ui.add(
                         egui::TextEdit::singleline(&mut *self.action_password)
                             .password(true)
                             .hint_text("Enter sudo password…")
                             .desired_width(f32::INFINITY),
+                    );
+                    focus_lock(
+                        &ctx,
+                        &password_resp,
+                        id.with("password_focus"),
+                        focus_once && self.action_password.is_empty(),
                     );
                 } else {
                     ui.label(
@@ -1797,12 +2360,28 @@ fn show_accordion_panel(
 
                 if self.action_status.starts_with("Sudo password was rejected") {
                     ui.add_space(2.0);
-                    ui.colored_label(ui.visuals().error_fg_color, &self.action_status);
+                    ui.colored_label(palette.danger, &self.action_status);
                 }
 
+                if running && !self.action_logs.is_empty() {
+                    ui.add_space(6.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt(id.with("logs"))
+                        .max_height(100.0)
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(&self.action_logs)
+                                        .monospace()
+                                        .small()
+                                        .color(palette.text_muted),
+                                )
+                                .wrap(),
+                            );
+                        });
+                }
+                ui.separator();
                 ui.add_space(8.0);
-
-                // — footer buttons —
                 ui.horizontal(|ui| {
                     if running {
                         ui.spinner();
@@ -1812,34 +2391,55 @@ fn show_accordion_panel(
                             } else {
                                 self.action_status.as_str()
                             })
-                            .small(),
+                            .small()
+                            .color(palette.text_secondary),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("Cancel after this step").clicked() {
+                            let cancel_btn = dialog_button(ui, "Cancel after step", "Cancel after step", palette);
+                            if cancel_btn.clicked() {
                                 cancel_after_step = true;
                             }
                         });
                     } else {
-                        let can_run = action.sudo_available
-                            && (!action.needs_password || !self.action_password.is_empty());
-                        if ui.add_enabled(can_run, egui::Button::new("▶  Run")).clicked() {
-                            approve = true;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            cancel = true;
-                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let cancel_btn = dialog_button(ui, "Cancel", "Cancel", palette);
+                            if cancel_btn.clicked() {
+                                cancel = true;
+                            }
+                            ui.add_space(8.0);
+                            let can_run = action.sudo_available
+                                && (!action.needs_password || !self.action_password.is_empty());
+                            let run_fill = if destructive { palette.danger } else { palette.accent };
+                            let run_text = if destructive { Color32::WHITE } else { palette.accent_text };
+                            let run_btn = ui.add_enabled(
+                                can_run,
+                                egui::Button::new(
+                                    egui::RichText::new(if destructive { "Run destructive action" } else { "Run" })
+                                        .strong()
+                                        .color(run_text),
+                                )
+                                .fill(run_fill)
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(8.0))
+                                .min_size(egui::vec2(130.0, 34.0)),
+                            );
+                            focus_lock(&ctx, &run_btn, id.with("run_focus"), focus_once);
+                            if run_btn.clicked() {
+                                approve = true;
+                            }
+                        });
                     }
                 });
-
-                if running && !self.action_logs.is_empty() {
-                    ui.add_space(4.0);
-                    egui::ScrollArea::vertical().max_height(120.0).show(ui, |ui| {
-                        ui.add(egui::Label::new(egui::RichText::new(&self.action_logs).monospace().size(11.0)).wrap());
-                    });
-                }
             });
-        if !window_open {
-            self.action_review = None;
+        if let Some(current) = self
+            .action_review
+            .as_mut()
+            .filter(|current| current.key == key)
+        {
+            current.review_copied = review_copied;
+            if focus_once {
+                current.focus_requested = true;
+            }
         }
         if cancel_after_step {
             if let Some(cancel) = &self.action_cancel {
@@ -2033,6 +2633,7 @@ fn show_accordion_panel(
         ctx: egui::Context,
     ) {
         let (sender, receiver) = std::sync::mpsc::channel();
+        self.vnc_auth_result = None;
         self.pending = Some((key, receiver));
         std::thread::spawn(move || {
             let _ = sender.send(detect_servers(&host, timeout));
@@ -2285,6 +2886,7 @@ fn show_service_inventory(
     protocol: DesktopProtocol,
     configured_port: u16,
     request_manual_scan: &mut bool,
+    auth_result: Option<&Result<String, String>>,
     p: &crate::theme::ThemePalette,
 ) -> ExposureAction {
     let _ = configured_port;
@@ -2303,7 +2905,7 @@ fn show_service_inventory(
             .stroke(Stroke::NONE)
             .inner_margin(egui::Margin::same(12.0))
             .show(ui, |ui| {
-                show_check_strip(ui, report, protocol, handshake, p);
+                show_check_strip(ui, report, protocol, handshake.or(auth_result), p);
             });
     });
 
@@ -2337,6 +2939,13 @@ fn status_line(
 fn p_warn() -> Color32 { Color32::from_rgb(245, 158, 11) }
 fn p_danger() -> Color32 { Color32::from_rgb(235, 87, 87) }
 fn p_muted() -> Color32 { Color32::from_rgb(123, 131, 148) }
+
+fn is_destructive_intent(intent: Intent) -> bool {
+    matches!(
+        intent,
+        Intent::Stop | Intent::Uninstall | Intent::RestrictToLocalhost
+    )
+}
 
 fn show_status_hero(
     ui: &mut egui::Ui,
@@ -2791,6 +3400,7 @@ fn show_manual_commands(
     ui: &mut egui::Ui,
     title: &str,
     commands: &[String],
+    copied: &mut Option<Instant>,
     palette: &crate::theme::ThemePalette,
 ) {
     egui::CollapsingHeader::new(title)
@@ -2806,6 +3416,12 @@ fn show_manual_commands(
                 .clicked()
             {
                 ui.ctx().copy_text(commands.join("\n"));
+                *copied = Some(Instant::now());
+            }
+            if copied.is_some_and(|at| at.elapsed() < Duration::from_secs(2)) {
+                ui.label(egui::RichText::new("Copied").small().color(palette.success));
+            } else {
+                *copied = None;
             }
             ui.add_space(8.0);
             for (index, command) in commands.iter().enumerate() {
@@ -2838,6 +3454,7 @@ fn show_manual_commands(
                                     .clicked()
                                 {
                                     ui.ctx().copy_text(command.clone());
+                                    *copied = Some(Instant::now());
                                 }
                             });
                         });
@@ -3666,7 +4283,7 @@ mod tests {
 
     #[test]
     fn report_owner_derives_from_display_user_then_ssh_user() {
-        use super::super::setup::model::{ServiceInventory, ServiceInventoryReport, VncDisplay};
+        use super::super::setup::model::{ServiceInventoryReport, VncDisplay};
         let mut report = ServiceInventoryReport {
             user: Some("sshuser".into()),
             ..Default::default()
@@ -3692,7 +4309,6 @@ mod tests {
 
     #[test]
     fn mix_tint_and_tier_fill_produce_deterministic_tonal_colors() {
-        use crate::theme::ThemePalette;
         let p = crate::theme::ThemeMode::NocturnalCommand.palette();
         let base = p.bg_card;
         let accent = p.accent;

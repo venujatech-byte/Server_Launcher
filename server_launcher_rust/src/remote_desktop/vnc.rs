@@ -13,7 +13,7 @@ use std::{
     hash::{BuildHasher, RandomState},
     io::{self, BufReader, Read, Write},
     net::{IpAddr, TcpStream, ToSocketAddrs},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc, Mutex,
@@ -1024,6 +1024,28 @@ fn handshake(
     password: Option<&[u8]>,
     allow_tunneled_plain: bool,
 ) -> io::Result<[usize; 2]> {
+    authenticate(stream, username, password, allow_tunneled_plain)?;
+    stream.write_all(&[u8::from(shared)])?;
+    let mut init = [0; 24];
+    stream.read_exact(&mut init)?;
+    let name_length = u32::from_be_bytes(init[20..24].try_into().unwrap());
+    if name_length > 4096 {
+        return Err(error("The VNC desktop name exceeds the viewer limit."));
+    }
+    let mut name = [0; 4096];
+    stream.read_exact(&mut name[..name_length as usize])?;
+    Ok([
+        usize::from(u16::from_be_bytes([init[0], init[1]])),
+        usize::from(u16::from_be_bytes([init[2], init[3]])),
+    ])
+}
+
+fn authenticate(
+    stream: &mut (impl Read + Write + ?Sized),
+    username: Option<&[u8]>,
+    password: Option<&[u8]>,
+    allow_tunneled_plain: bool,
+) -> io::Result<()> {
     if username.is_some() && !allow_tunneled_plain {
         return Err(authentication_error(
             "VNC username authentication requires Tunnel via SSH so the credentials stay encrypted.",
@@ -1161,19 +1183,48 @@ fn handshake(
             ));
         }
     }
-    stream.write_all(&[u8::from(shared)])?;
-    let mut init = [0; 24];
-    stream.read_exact(&mut init)?;
-    let name_length = u32::from_be_bytes(init[20..24].try_into().unwrap());
-    if name_length > 4096 {
-        return Err(error("The VNC desktop name exceeds the viewer limit."));
+    Ok(())
+}
+
+pub(crate) fn authenticate_session(
+    host: &SshRemoteHost,
+    config_path: Option<&Path>,
+    port: u16,
+    password: &Zeroizing<String>,
+) -> Result<String, String> {
+    if password.is_empty() {
+        return Err("Enter the VNC password.".into());
     }
-    let mut name = [0; 4096];
-    stream.read_exact(&mut name[..name_length as usize])?;
-    Ok([
-        usize::from(u16::from_be_bytes([init[0], init[1]])),
-        usize::from(u16::from_be_bytes([init[2], init[3]])),
-    ])
+    let username = host
+        .vnc
+        .as_ref()
+        .and_then(|profile| (!profile.username.trim().is_empty()).then_some(profile.username.as_str()));
+    if username.is_none() && password.len() > 8 {
+        return Err("Classic VNC passwords use at most 8 characters.".into());
+    }
+    let target = super::probe::tunnel_target_for_session(host, DesktopProtocol::Vnc, port);
+    let mut stream = tunnel::open(host, target, port, TUNNEL_HANDSHAKE_TIMEOUT, config_path)
+        .map_err(|error| format!("SSH tunnel: {error}"))?;
+    stream
+        .set_read_timeout(TIMEOUT)
+        .map_err(|error| format!("SSH tunnel: {error}"))?;
+    authenticate(
+        &mut *stream,
+        username.map(str::as_bytes),
+        Some(password.as_bytes()),
+        true,
+    )
+    .map_err(|error| match error.kind() {
+        io::ErrorKind::PermissionDenied => error.to_string(),
+        io::ErrorKind::ConnectionRefused
+        | io::ErrorKind::UnexpectedEof
+        | io::ErrorKind::BrokenPipe
+        | io::ErrorKind::TimedOut => {
+            "Session not running or connection refused through the SSH tunnel.".into()
+        }
+        _ => error.to_string(),
+    })?;
+    Ok("Authenticated".into())
 }
 
 fn response(password: &[u8], challenge: [u8; 16]) -> Zeroizing<[u8; 16]> {

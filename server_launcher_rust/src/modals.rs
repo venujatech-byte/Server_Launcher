@@ -1158,8 +1158,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
         .open(&mut window_open)
         .collapsible(false).resizable(false).movable(true)
         .default_pos(screen.center()).pivot(egui::Align2::CENTER_CENTER)
-        .min_width(modal_w).max_width(modal_w)
-        .default_height(max_h).max_height(max_h)
+        .fixed_size(egui::vec2(modal_w, max_h))
         .frame(egui::Frame::none().fill(palette.bg_card)
             .stroke(Stroke::NONE).rounding(Rounding::same(14.0))
             .shadow(egui::epaint::Shadow { offset: egui::vec2(0.0, 4.0), blur: 16.0, spread: 0.0, color: Color32::from_black_alpha(120) })
@@ -1180,6 +1179,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
             ui.add_space(8.0);
             egui::ScrollArea::vertical().id_salt(("server_form", state.is_edit))
                 .auto_shrink([false, false]).max_width(ui.available_width())
+                .min_scrolled_height((max_h - 140.0).max(80.0))
                 .max_height((max_h - 140.0).max(80.0)).show(ui, |ui| {
                     ui.set_max_width(ui.available_width());
                     // Templates prefill the existing fields; nothing runs until the server is started.
@@ -1409,7 +1409,8 @@ pub fn render_command_palette(
 
     let screen = ctx.screen_rect();
     let modal_w = 540.0_f32.min(screen.width() - 40.0).max(360.0);
-    let max_h = (screen.height() - 100.0).max(300.0);
+    let modal_h = 380.0_f32.min((screen.height() - 100.0).max(300.0));
+    let list_h = (modal_h - 110.0).max(120.0);
 
     let mut is_open = state.open;
     Window::new("Quick Launch")
@@ -1417,11 +1418,8 @@ pub fn render_command_palette(
         .open(&mut is_open)
         .collapsible(false)
         .resizable(false)
-        .min_width(modal_w)
-        .max_width(modal_w)
         .anchor(egui::Align2::CENTER_TOP, [0.0, 70.0])
-        .default_height(400.0)
-        .max_height(max_h)
+        .fixed_size(egui::vec2(modal_w, modal_h))
         .frame(egui::Frame::none().fill(palette.bg_card).rounding(14.0)
             .inner_margin(14.0).shadow(egui::epaint::Shadow {
                 offset: egui::vec2(0.0, 4.0), blur: 16.0, spread: 0.0,
@@ -1468,7 +1466,8 @@ pub fn render_command_palette(
             ui.add_space(8.0);
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
-                .max_height(280.0)
+                .min_scrolled_height(list_h)
+                .max_height(list_h)
                 .show(ui, |ui| {
                     if filtered.is_empty() {
                         ui.add_space(10.0);
@@ -1765,8 +1764,7 @@ pub fn render_ssh_host_modal(
         .open(&mut window_open)
         .collapsible(false).resizable(false).movable(true)
         .default_pos(screen.center()).pivot(egui::Align2::CENTER_CENTER)
-        .min_width(modal_w).max_width(modal_w)
-        .default_height(max_h).max_height(max_h)
+        .fixed_size(egui::vec2(modal_w, max_h))
         .frame(egui::Frame::none().fill(palette.bg_card)
             .stroke(Stroke::NONE).rounding(Rounding::same(14.0))
             .shadow(egui::epaint::Shadow { offset: egui::vec2(0.0, 4.0), blur: 16.0, spread: 0.0, color: Color32::from_black_alpha(120) })
@@ -1826,6 +1824,7 @@ pub fn render_ssh_host_modal(
             egui::ScrollArea::vertical()
                 .id_salt(("ssh_host_form", state.tab as u8))
                 .max_width(ui.available_width())
+                .min_scrolled_height((max_h - 145.0).max(80.0))
                 .max_height((max_h - 145.0).max(80.0))
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
@@ -3008,8 +3007,7 @@ pub fn render_remote_start_server_modal(
         .open(&mut window_open)
         .collapsible(false).resizable(false).movable(true)
         .default_pos(screen.center()).pivot(egui::Align2::CENTER_CENTER)
-        .min_width(modal_w).max_width(modal_w)
-        .max_height(max_h)
+        .fixed_size(egui::vec2(modal_w, max_h))
         .frame(egui::Frame::none().fill(palette.bg_card)
             .stroke(Stroke::NONE).rounding(Rounding::same(14.0))
             .shadow(egui::epaint::Shadow { offset: egui::vec2(0.0, 4.0), blur: 16.0, spread: 0.0, color: Color32::from_black_alpha(120) })
@@ -3029,6 +3027,8 @@ pub fn render_remote_start_server_modal(
             ui.add_space(4.0);
 
             egui::ScrollArea::vertical().id_salt("remote_start_form")
+                .auto_shrink([false, false])
+                .min_scrolled_height((max_h - 100.0).max(80.0))
                 .max_height((max_h - 100.0).max(80.0)).show(ui, |ui| {
             // Subtitle: Target host info
             ui.horizontal(|ui| {

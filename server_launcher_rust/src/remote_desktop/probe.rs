@@ -1007,16 +1007,14 @@ impl ServerDetection {
                 DesktopProtocol::Rdp => "Service Manager — xrdp",
                 DesktopProtocol::Vnc => "Service Manager — TigerVNC",
             };
+            let screen = ui.ctx().screen_rect();
+            let window_w = 640.0_f32.min((screen.width() - 32.0).max(380.0));
+            let window_h = 720.0_f32.min((screen.height() - 48.0).max(380.0));
             egui::Window::new(window_title)
                 .id(egui::Id::new(("service_manager_window", protocol as u8)))
                 .title_bar(false)
-                .resizable(true)
-                .default_width(560.0)
-                .min_width(320.0)
-                .max_width(800.0)
-                .default_height(720.0)
-                .min_height(360.0)
-                .max_height(820.0)
+                .resizable(false)
+                .fixed_size(egui::vec2(window_w, window_h))
                 .frame(
                     egui::Frame::window(&ui.ctx().style())
                         .inner_margin(egui::Margin::symmetric(20.0, 16.0))
@@ -1125,7 +1123,7 @@ impl ServerDetection {
                                     });
                                 });
                         });
-                    let footer_height = if ui.available_width() < 460.0 { 92.0 } else { 58.0 };
+                    let footer_height = if window_w - 40.0 < 460.0 { 92.0 } else { 58.0 };
                     let content_height = (ui.available_height() - footer_height).max(80.0);
                     ui.style_mut().spacing.scroll.floating = false;
                     ui.style_mut().spacing.scroll.bar_width = 6.0;

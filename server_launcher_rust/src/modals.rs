@@ -1981,6 +1981,7 @@ pub fn render_ssh_host_modal(
                                 &detection_host,
                                 protocol,
                                 std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))),
+                                palette,
                             );
                             let assigned_port = state
                                 .server_detection
@@ -2053,6 +2054,7 @@ pub fn render_ssh_host_modal(
                                 &detection_host,
                                 protocol,
                                 std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))),
+                                palette,
                             );
                             let assigned_port = state
                                 .server_detection

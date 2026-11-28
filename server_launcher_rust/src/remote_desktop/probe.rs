@@ -4,9 +4,122 @@ use std::{
     net::{TcpStream, ToSocketAddrs},
     time::{Duration, Instant},
 };
+use egui::{Color32, Rounding, Stroke};
 
 type DetectionResult = Result<super::setup::model::ServiceInventoryReport, String>;
 type ActionResult = Result<usize, String>;
+
+// --- Service Manager UI-kit helpers (borderless, tonal surfaces) ---
+//
+// All surfaces use tonal tier fills with NO resting strokes. Separation comes
+// from fill, spacing and radius only. The only resting strokes in the dialog
+// are icon glyph strokes; focus rings are applied by the caller.
+
+/// Mix `accent` into `base` at fraction `t` (0 = base, 1 = accent).
+fn mix_tint(base: Color32, accent: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let m = |a: u8, b: u8| ((a as f32) * (1.0 - t) + (b as f32) * t).round() as u8;
+    Color32::from_rgba_unmultiplied(
+        m(base.r(), accent.r()),
+        m(base.g(), accent.g()),
+        m(base.b(), accent.b()),
+        m(base.a(), accent.a()),
+    )
+}
+
+/// Tonal tier fills mapped to the theme palette. `tier` 0..=5 walks
+/// surface < container < inset < well < high < highest.
+fn tier_fill(p: &crate::theme::ThemePalette, tier: u8) -> Color32 {
+    match tier {
+        0 => p.bg_card,
+        1 => p.bg_card,
+        2 => p.bg_subtle,
+        3 => p.bg_input,
+        4 => p.bg_button,
+        _ => p.bg_button_hover,
+    }
+}
+
+/// Tonal button fill: `percent`% of `color` over `base`, text = `color`.
+fn tonal_fill(base: Color32, color: Color32, percent: f32) -> Color32 {
+    mix_tint(base, color, percent / 100.0)
+}
+
+/// Borderless card frame with the given fill tier and radius.
+fn card_frame(p: &crate::theme::ThemePalette, tier: u8, radius: f32) -> egui::Frame {
+    egui::Frame::none()
+        .fill(tier_fill(p, tier))
+        .rounding(Rounding::same(radius))
+        .stroke(Stroke::NONE)
+        .inner_margin(egui::Margin::same(16.0))
+}
+
+/// Ghost icon button: no fill, hover = one tier up, size 34x34.
+fn icon_button(ui: &mut egui::Ui, icon: &str, hover_tip: &str, p: &crate::theme::ThemePalette) -> egui::Response {
+    let btn = egui::Button::new(egui::RichText::new(icon).size(13.0))
+        .fill(Color32::TRANSPARENT)
+        .stroke(Stroke::NONE)
+        .rounding(Rounding::same(10.0))
+        .min_size(egui::vec2(34.0, 34.0));
+    let resp = ui.add(btn).on_hover_text(hover_tip);
+    if resp.hovered() {
+        ui.ctx().request_repaint();
+        let rect = resp.rect;
+        ui.painter().rect_filled(rect, Rounding::same(10.0), mix_tint(tier_fill(p, 5), Color32::WHITE, 0.08));
+    }
+    resp
+}
+
+/// Tonal text button builder. `fill`/`text` come from the tonal token.
+fn tonal_button<'a>(
+    text: &'a str,
+    fill: Color32,
+    text_color: Color32,
+    p: &crate::theme::ThemePalette,
+) -> egui::Button<'a> {
+    egui::Button::new(egui::RichText::new(text).strong().color(text_color))
+        .fill(fill)
+        .stroke(Stroke::NONE)
+        .rounding(Rounding::same(12.0))
+        .min_size(egui::vec2(120.0, 42.0))
+}
+
+/// Switch control: pill track with knob on the left, label + helper text right.
+/// Returns `true` if the toggle changed state this frame.
+fn switch(ui: &mut egui::Ui, on: &mut bool, label: &str, helper: &str, p: &crate::theme::ThemePalette) -> bool {
+    let track_w = 44.0;
+    let track_h = 22.0;
+    let knob_r = 9.0;
+    let mut toggled = false;
+
+    ui.horizontal(|ui| {
+        let (track_rect, track_resp) = ui.allocate_exact_size(egui::vec2(track_w, track_h), egui::Sense::click());
+        if track_resp.clicked() {
+            *on = !*on;
+            toggled = true;
+            ui.ctx().request_repaint();
+        }
+        let hovered = track_resp.hovered();
+        let track_fill = if *on { p.accent } else { tier_fill(p, 4) };
+        let knob_fill = if *on { Color32::WHITE } else { mix_tint(tier_fill(p, 4), Color32::WHITE, 0.55) };
+        let knob_x = if *on { track_rect.max.x - knob_r - 4.0 } else { track_rect.min.x + knob_r + 4.0 };
+        let track_color = if hovered { mix_tint(track_fill, Color32::WHITE, 0.12) } else { track_fill };
+        ui.painter()
+            .rect_filled(track_rect, Rounding::same(track_h / 2.0), track_color);
+        let knob_center = egui::pos2(knob_x, track_rect.center().y);
+        ui.painter().circle_filled(knob_center, knob_r, knob_fill);
+        if hovered {
+            ui.painter().circle_filled(knob_center, knob_r * 1.2, mix_tint(track_fill, Color32::WHITE, 0.22));
+        }
+        ui.add_space(10.0);
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new(label).strong().color(p.text_primary));
+            ui.label(egui::RichText::new(helper).small().color(p.text_muted));
+        });
+    });
+
+    toggled
+}
 
 fn with_partial_progress(
     result: ActionResult,
@@ -64,16 +177,31 @@ pub(crate) struct ServerDetection {
     vnc_resolution_idx: usize,
     vnc_depth_idx: usize,
     vnc_localhost_disabled: bool,
+    vnc_passwd_visible: bool,
+    vnc_custom_res: Option<String>,
     vnc_start_pending: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     vnc_start_error: Option<String>,
+    vnc_start_copied: Option<Instant>,
     vnc_passwd_input: zeroize::Zeroizing<String>,
     vnc_passwd_pending: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     vnc_passwd_status: Option<Result<String, String>>,
+    vnc_test_pending: bool,
+    vnc_test_attempts: u8,
+    vnc_test_last: Option<Instant>,
     action_status: String,
     action_logs: String,
     action_history_warning: Option<(String, DesktopProtocol, String)>,
     action_result: Option<(String, DesktopProtocol, ActionResult)>,
     action_port_update: Option<(String, String, DesktopProtocol, Instant)>,
+    accordion_open: Option<Accordion>,
+}
+
+/// Which body accordion is expanded (one at a time).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Accordion {
+    HostDetails,
+    RawOutput,
+    ManualSteps,
 }
 
 impl ServerDetection {
@@ -87,6 +215,7 @@ impl ServerDetection {
         host: &crate::config::SshRemoteHost,
         protocol: DesktopProtocol,
         timeout: Duration,
+        palette: &crate::theme::ThemePalette,
     ) {
         let key = detection_key(host);
         if !self
@@ -264,19 +393,20 @@ impl ServerDetection {
                 .default_width(420.0)
                 .frame(
                     egui::Frame::window(&ui.ctx().style())
-                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(75)))
+                        .stroke(Stroke::NONE)
                         .shadow(egui::epaint::Shadow {
-                        offset: egui::vec2(0.0, 6.0),
-                        blur: 18.0,
-                        spread: 2.0,
-                        color: egui::Color32::from_black_alpha(140),
-                    }),
+                            offset: egui::vec2(0.0, 6.0),
+                            blur: 18.0,
+                            spread: 2.0,
+                            color: egui::Color32::from_black_alpha(140),
+                        }),
                 )
                 .show(ui.ctx(), |ui| {
                     ui.style_mut().text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
                     ui.style_mut().text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(11.5));
                     ui.style_mut().text_styles.insert(egui::TextStyle::Small, egui::FontId::proportional(10.5));
                     ui.style_mut().text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(11.0));
+                    *ui.visuals_mut() = palette.egui_visuals();
                     // — compact custom title bar —
                     ui.horizontal(|ui| {
                         ui.add_space(2.0);
@@ -286,42 +416,38 @@ impl ServerDetection {
                             DesktopProtocol::Vnc => "VNC",
                         };
                         egui::Frame::none()
-                            .fill(egui::Color32::from_rgba_unmultiplied(80, 120, 200, 60))
+                            .fill(tonal_fill(palette.bg_card, palette.accent, 14.0))
                             .rounding(egui::Rounding::same(999.0))
+                            .stroke(Stroke::NONE)
                             .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                             .show(ui, |ui| {
-                                ui.label(egui::RichText::new(proto_label).size(10.0).strong().color(egui::Color32::from_rgb(140, 180, 255)));
+                                ui.label(egui::RichText::new(proto_label).size(10.0).strong().color(palette.accent_text));
                             });
-                        ui.label(egui::RichText::new(window_title).size(12.0).strong());
+                        ui.add_space(8.0);
+                        ui.vertical(|ui| {
+                            ui.label(egui::RichText::new(match protocol {
+                                DesktopProtocol::Rdp => "xrdp",
+                                DesktopProtocol::Vnc => "TigerVNC",
+                            }).size(13.0).strong().color(palette.text_primary));
+                            ui.label(egui::RichText::new("Service Manager").size(10.5).color(palette.text_muted));
+                        });
                         if self.pending.is_some() {
+                            ui.add_space(2.0);
                             ui.spinner();
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            // Close button styled as a round pill
-                            let close_resp = ui.add(
-                                egui::Button::new(egui::RichText::new("X").size(10.0))
-                                    .min_size(egui::vec2(18.0, 18.0))
-                                    .rounding(egui::Rounding::same(999.0)),
-                            ).on_hover_text("Close");
-                            if close_resp.clicked() {
+                            // Close button: x icon, ghost style
+                            if icon_button(ui, crate::lucide::X, "Close", palette).clicked() {
                                 open = false;
                             }
-                            if ui
-                                .add_enabled(
-                                    can_scan && self.pending.is_none(),
-                                    egui::Button::new(egui::RichText::new("↺").size(12.0))
-                                        .min_size(egui::vec2(18.0, 18.0))
-                                        .rounding(egui::Rounding::same(999.0)),
-                                )
-                                .on_hover_text("Scan again")
-                                .clicked()
-                            {
+                            let scan_enabled = can_scan && self.pending.is_none();
+                            let scan_resp = icon_button(ui, crate::lucide::REFRESH_CW, "Scan again", palette);
+                            if scan_enabled && scan_resp.clicked() {
                                 self.start(host.clone(), key.clone(), timeout, ui.ctx().clone());
                             }
                         });
                     });
-                    ui.separator();
-                    ui.add_space(2.0);
+                    ui.add_space(4.0);
                     egui::ScrollArea::vertical()
                         .id_salt(("service_manager_scroll", protocol as u8))
                         .max_height(ui.ctx().screen_rect().height() * 0.70)
@@ -330,66 +456,95 @@ impl ServerDetection {
                     if self.pending.is_some() && !has_current_result {
                         show_service_scan_placeholder(ui, protocol);
                     }
-                    let mut show_vnc_controls = None;
                     if let Some((_, result, _)) = self.last.as_ref().filter(|(tested, _, _)| tested == &key) {
                         match result {
                             Ok(report) => {
-                                let port = match protocol {
-                                    DesktopProtocol::Rdp => host.rdp.as_ref().map_or(3389, |profile| profile.port),
-                                    DesktopProtocol::Vnc => host.vnc.as_ref().map_or(5900, |profile| profile.port),
-                    };
-                    requested_intent = show_service_inventory(
-                        ui,
-                        report,
-                        protocol,
-                        port,
-                        &mut request_manual_scan,
-                    );
-                    if protocol == DesktopProtocol::Vnc {
-                        match report.vnc.state() {
-                            super::setup::model::ServiceState::InstalledStopped
-                            | super::setup::model::ServiceState::Failed => {
-                                show_vnc_controls = Some(false);
+                                let report = (*report).clone();
+                                let exposure_action = show_service_inventory(
+                                    ui,
+                                    &report,
+                                    protocol,
+                                    host.vnc.as_ref().map_or(0, |profile| profile.port),
+                                    &mut request_manual_scan,
+                                    palette,
+                                );
+                                if exposure_action == ExposureAction::LimitToLocalhost {
+                                    requested_intent = Some(super::setup::plan::Intent::RestrictToLocalhost);
+                                }
+                                let mut show_vnc_controls = None;
+                                if protocol == DesktopProtocol::Vnc {
+                                    match report.vnc.state() {
+                                        super::setup::model::ServiceState::InstalledStopped
+                                        | super::setup::model::ServiceState::Failed => {
+                                            show_vnc_controls = Some(false);
+                                        }
+                                        super::setup::model::ServiceState::RunningManual
+                                        | super::setup::model::ServiceState::RunningSystemd => {
+                                            show_vnc_controls = Some(true);
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                if let Some(is_running) = show_vnc_controls {
+                                    if let Some(intent) = self.show_start_session_config(
+                                        ui,
+                                        host,
+                                        &report,
+                                        &key,
+                                        timeout,
+                                        is_running,
+                                        palette,
+                                    ) {
+                                        requested_intent = Some(intent);
+                                    }
+                                }
+                                self.show_vnc_password_card(ui, host, palette);
+                                // Expanded accordion panels appear in the body below the password card.
+                                if let Some(accordion) = self.accordion_open {
+                                    Self::show_accordion_panel(
+                                        ui,
+                                        &report,
+                                        protocol,
+                                        host.vnc.as_ref().map_or(0, |profile| profile.port),
+                                        &mut request_manual_scan,
+                                        palette,
+                                        accordion,
+                                    );
+                                }
+                                let history = self
+                                    .history_cache
+                                    .as_ref()
+                                    .filter(|(history_key, _)| history_key == &key)
+                                    .map(|(_, result)| result);
+                                requested_undo = show_service_history(
+                                    ui,
+                                    host,
+                                    protocol,
+                                    &report,
+                                    history,
+                                    self.action_review.is_none() && self.action_pending.is_none(),
+                                );
                             }
-                            super::setup::model::ServiceState::RunningManual
-                            | super::setup::model::ServiceState::RunningSystemd => {
-                                show_vnc_controls = Some(true);
+                            Err(error) => {
+                                ui.colored_label(
+                                    ui.visuals().error_fg_color,
+                                    scan_error_hint(error).unwrap_or("Remote service scan failed."),
+                                );
+                                egui::CollapsingHeader::new("Scan error details")
+                                    .id_salt(("service_scan_error", protocol as u8))
+                                    .show(ui, |ui| {
+                                        let detail = error.chars().take(4096).collect::<String>();
+                                        ui.add(egui::Label::new(detail).wrap());
+                                    });
                             }
-                            _ => {}
                         }
                     }
-                    let history = self
-                        .history_cache
-                        .as_ref()
-                        .filter(|(history_key, _)| history_key == &key)
-                        .map(|(_, result)| result);
-                    requested_undo = show_service_history(
-                        ui,
-                        host,
-                        protocol,
-                        report,
-                        history,
-                        self.action_review.is_none() && self.action_pending.is_none(),
-                    );
-                }
-                Err(error) => {
-                    ui.colored_label(
-                        ui.visuals().error_fg_color,
-                        scan_error_hint(error).unwrap_or("Remote service scan failed."),
-                    );
-                    egui::CollapsingHeader::new("Scan error details")
-                        .id_salt(("service_scan_error", protocol as u8))
-                        .show(ui, |ui| {
-                            let detail = error.chars().take(4096).collect::<String>();
-                            ui.add(egui::Label::new(detail).wrap());
-                        });
-                }
-            }
-        }
-                    if let Some(is_running) = show_vnc_controls {
-                        self.show_vnc_start_config(ui, host, &key, timeout, is_running);
-                    }
                         }); // end ScrollArea
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(4.0);
+                    // Pinned footer: collapsible toggles left, Update / Uninstall right.
+                    self.show_pinned_footer(ui, protocol, palette, &mut requested_intent);
                 });
             self.scan_window_open = open;
         } else if !can_scan {
@@ -506,20 +661,19 @@ impl ServerDetection {
         self.show_action_review(ui, &key);
     }
 
-    fn show_vnc_start_config(
+    /// "Start a session" card: form, command well, and Start / Restart / Stop buttons.
+    /// Returns an intent for actions that should route through the plan dialog.
+    /// VNC start/stop/restart execute directly (existing behaviour) and return `None`.
+    fn show_start_session_config(
         &mut self,
         ui: &mut egui::Ui,
         host: &crate::config::SshRemoteHost,
+        report: &super::setup::model::ServiceInventoryReport,
         key: &str,
         timeout: Duration,
         is_running: bool,
-    ) {
-        if let Some(rx) = &self.vnc_passwd_pending {
-            if let Ok(result) = rx.try_recv() {
-                self.vnc_passwd_pending = None;
-                self.vnc_passwd_status = Some(result);
-            }
-        }
+        palette: &crate::theme::ThemePalette,
+    ) -> Option<super::setup::plan::Intent> {
         if let Some(rx) = &self.vnc_start_pending {
             if let Ok(result) = rx.try_recv() {
                 self.vnc_start_pending = None;
@@ -536,173 +690,231 @@ impl ServerDetection {
             }
         }
 
-        const RESOLUTIONS: &[&str] = &["1920x1080", "1600x900", "1366x768", "1280x720", "2560x1440"];
-        const DEPTHS: &[&str] = &["24", "16", "32"];
+        const RESOLUTIONS: &[(&str, &str)] = &[
+            ("1280 × 720", "1280x720"),
+            ("1366 × 768", "1366x768"),
+            ("1600 × 900", "1600x900"),
+            ("1920 × 1080", "1920x1080"),
+            ("2560 × 1440", "2560x1440"),
+            ("3840 × 2160", "3840x2160"),
+            ("Custom…", "custom"),
+        ];
+        const DEPTHS: &[(&str, &str)] = &[("24-bit", "24"), ("16-bit", "16"), ("32-bit", "32")];
         if self.vnc_display == 0 {
             self.vnc_display = 1;
         }
-        let res = RESOLUTIONS
+        let res_label = RESOLUTIONS
             .get(self.vnc_resolution_idx)
-            .copied()
+            .map(|(l, _)| *l)
+            .unwrap_or("1920 × 1080");
+        let res_value = RESOLUTIONS
+            .get(self.vnc_resolution_idx)
+            .map(|(_, v)| *v)
             .unwrap_or("1920x1080");
-        let depth = DEPTHS.get(self.vnc_depth_idx).copied().unwrap_or("24");
+        let depth_label = DEPTHS
+            .get(self.vnc_depth_idx)
+            .map(|(l, _)| *l)
+            .unwrap_or("24-bit");
+        let depth_value = DEPTHS
+            .get(self.vnc_depth_idx)
+            .map(|(_, v)| *v)
+            .unwrap_or("24");
         let localhost_arg = if self.vnc_localhost_disabled { "no" } else { "yes" };
+        let geometry = if res_value == "custom" {
+            self.vnc_custom_res.clone().unwrap_or_else(|| "1920x1080".to_owned())
+        } else {
+            res_value.to_owned()
+        };
         let cmd = format!(
             "vncserver :{} -localhost {} -geometry {} -depth {}",
-            self.vnc_display, localhost_arg, res, depth
+            self.vnc_display, localhost_arg, geometry, depth_value
         );
+        let target_port = 5900u16.saturating_add(self.vnc_display as u16);
 
         ui.add_space(6.0);
-        egui::Frame::none()
-            .fill(egui::Color32::from_rgb(28, 31, 42))
-            .stroke(egui::Stroke::NONE)
-            .rounding(egui::Rounding::same(10.0))
-            .inner_margin(egui::Margin::same(12.0))
-            .show(ui, |ui| {
-                ui.label(egui::RichText::new("Start a session").strong());
-                ui.add_space(4.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.label("Display:");
-                    ui.add(egui::DragValue::new(&mut self.vnc_display).range(1..=9).prefix(":"));
-                    ui.label("Resolution:");
+        card_frame(palette, 1, 16.0).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(egui::RichText::new("Start a session").size(15.0).strong().color(palette.text_primary));
+            ui.add_space(10.0);
+
+            // Labels above fields, proportional widths.
+            egui::Grid::new("vnc_start_form").spacing(egui::vec2(16.0, 8.0)).show(ui, |ui| {
+                let total = ui.available_width();
+                let display_w = (total * 0.22).clamp(90.0, 220.0);
+                let res_w = (total * 0.45).clamp(150.0, 420.0);
+                // Color depth
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new("Display").small().color(palette.text_muted));
+                    ui.add_space(4.0);
+                    let mut disp_text = format!(":{}", self.vnc_display);
+                    let disp_resp = ui.add(
+                        egui::TextEdit::singleline(&mut disp_text)
+                            .desired_width(display_w)
+                            .hint_text(egui::RichText::new(":1").color(palette.text_muted)),
+                    );
+                    if disp_resp.lost_focus() || disp_resp.changed() {
+                        if let Some(rest) = disp_text.strip_prefix(':') {
+                            if let Ok(n) = rest.parse::<u8>() {
+                                self.vnc_display = n;
+                            }
+                        }
+                    }
+                    if !disp_text.is_empty() && !disp_text.trim_matches(':').is_empty() {
+                        let rest = disp_text.strip_prefix(':').unwrap_or(&disp_text);
+                        if !rest.is_empty() && rest.parse::<u32>().is_err() {
+                            ui.label(egui::RichText::new("Use :N, e.g. :1").small().color(palette.danger));
+                        }
+                    }
+                });
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new("Resolution").small().color(palette.text_muted));
+                    ui.add_space(4.0);
                     egui::ComboBox::from_id_salt("vnc_start_res")
-                        .selected_text(res)
+                        .selected_text(egui::RichText::new(res_label))
                         .show_ui(ui, |ui| {
-                            for (i, r) in RESOLUTIONS.iter().enumerate() {
-                                ui.selectable_value(&mut self.vnc_resolution_idx, i, *r);
+                            for (label, value) in RESOLUTIONS.iter() {
+                                let selected = self.vnc_resolution_idx
+                                    == RESOLUTIONS.iter().position(|(_, v)| *v == *value).unwrap_or(0);
+                                if ui.selectable_value(&mut self.vnc_resolution_idx, RESOLUTIONS.iter().position(|(l, _)| *l == *label).unwrap_or(0), *label).changed() {
+                                    if *value == "custom" {
+                                        self.vnc_custom_res = Some("1920x1080".to_owned());
+                                    }
+                                }
                             }
                         });
-                    ui.label("Depth:");
+                    if res_value == "custom" {
+                        let mut custom = self.vnc_custom_res.clone().unwrap_or_default();
+                        let custom_resp = ui.add(
+                            egui::TextEdit::singleline(&mut custom)
+                                .desired_width(res_w)
+                                .hint_text(egui::RichText::new("1920x1080").color(palette.text_muted)),
+                        );
+                        if custom_resp.changed() {
+                            self.vnc_custom_res = Some(custom.clone());
+                        }
+                        if !custom.is_empty() && !custom.split('x').next().unwrap_or("").parse::<u32>().is_ok() {
+                            ui.label(egui::RichText::new("Use WxH, 640-7680 × 480-4320").small().color(palette.danger));
+                        }
+                    }
+                });
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new("Color depth").small().color(palette.text_muted));
+                    ui.add_space(4.0);
                     egui::ComboBox::from_id_salt("vnc_start_depth")
-                        .selected_text(depth)
+                        .selected_text(egui::RichText::new(depth_label))
                         .show_ui(ui, |ui| {
-                            for (i, d) in DEPTHS.iter().enumerate() {
-                                ui.selectable_value(&mut self.vnc_depth_idx, i, *d);
+                            for (i, (label, _)) in DEPTHS.iter().enumerate() {
+                                ui.selectable_value(&mut self.vnc_depth_idx, i, *label);
                             }
                         });
                 });
-                ui.checkbox(&mut self.vnc_localhost_disabled, "Allow connections from other machines (-localhost no)");
-                egui::Frame::none()
-                    .fill(egui::Color32::from_rgb(18, 20, 28))
-                    .rounding(egui::Rounding::same(6.0))
-                    .inner_margin(egui::Margin::symmetric(8.0, 5.0))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(format!("$ {cmd}")).monospace().small().weak());
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.small_button("Copy").clicked() {
-                                    ui.ctx().copy_text(cmd.clone());
+                ui.end_row();
+            });
+
+            ui.add_space(10.0);
+            // Switch: Allow connections from other machines.
+            let _toggled = switch(
+                ui,
+                &mut self.vnc_localhost_disabled,
+                "Allow connections from other machines",
+                "Off keeps VNC reachable only through the SSH tunnel (recommended).",
+                palette,
+            );
+            if self.vnc_localhost_disabled {
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new("Anyone on the network can reach this port. Use a strong password.")
+                        .small()
+                        .color(palette.warning),
+                );
+            }
+
+            ui.add_space(10.0);
+            // Command well with ghost copy button.
+            egui::Frame::none()
+                .fill(tier_fill(palette, 3))
+                .rounding(Rounding::same(12.0))
+                .stroke(Stroke::NONE)
+                .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let cmd_label = egui::RichText::new(format!("$ {cmd}")).monospace().small().color(palette.text_secondary);
+                        let mut layout = egui::Layout::left_to_right(egui::Align::Center);
+                        layout.main_wrap = true;
+                        ui.with_layout(layout, |ui| {
+                            let wrap_resp = ui.add(egui::Label::new(cmd_label).wrap().selectable(false));
+                            // horizontal scroll handled by wrap; long commands wrap instead.
+                            let _ = wrap_resp;
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let copy_resp = icon_button(ui, crate::lucide::COPY, "Copy command", palette);
+                            if copy_resp.clicked() {
+                                ui.ctx().copy_text(cmd.clone());
+                                self.vnc_start_copied = Some(std::time::Instant::now());
+                            }
+                            if let Some(copied) = self.vnc_start_copied {
+                                if copied.elapsed() < std::time::Duration::from_secs(2) {
+                                    ui.label(egui::RichText::new("Copied").small().color(palette.success));
+                                } else {
+                                    self.vnc_start_copied = None;
                                 }
-                            });
+                            }
                         });
                     });
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    let busy = self.vnc_start_pending.is_some();
-                    let mut run_cmd: Option<String> = None;
-                    if is_running {
-                        if ui
-                            .add_enabled(!busy, egui::Button::new("Stop VNC"))
-                            .clicked()
-                        {
-                            run_cmd = Some(format!("vncserver -kill :{}", self.vnc_display));
-                        }
-                        if ui
-                            .add_enabled(!busy, egui::Button::new("Restart VNC"))
-                            .clicked()
-                        {
-                            run_cmd = Some(format!(
-                                "vncserver -kill :{} || true; {}",
-                                self.vnc_display, cmd
-                            ));
-                        }
-                    } else if ui
-                        .add_enabled(!busy, egui::Button::new("▶ Start VNC"))
+                    ui.add_space(6.0);
+                    let owner = Self::report_owner(report);
+                    let mut runs_as = format!("Runs as {owner}");
+                    if owner == "root" {
+                        runs_as.push_str(" — running a desktop as root isn't recommended");
+                    }
+                    ui.label(egui::RichText::new(runs_as).small().color(palette.text_muted));
+                });
+
+            ui.add_space(12.0);
+            // Buttons: state-driven labels.
+            let busy = self.vnc_start_pending.is_some();
+            let running_same_display = is_running
+                && Self::report_vnc_display(report).map_or(false, |d| d == self.vnc_display as u8);
+            let running_other_display = is_running && !running_same_display;
+            ui.horizontal(|ui| {
+                let mut run_cmd: Option<String> = None;
+                let mut intent: Option<super::setup::plan::Intent> = None;
+                if is_running {
+                    // Restart first (primary), then Stop (danger).
+                    if !busy && Self::restart_confirm(ui, palette, self.vnc_display, Self::report_pid(report), Self::report_owner(report)) {
+                        run_cmd = Some(format!("vncserver -kill :{} || true; {}", self.vnc_display, cmd));
+                    }
+                    ui.add_space(8.0);
+                    if !busy && Self::stop_confirm(ui, palette, self.vnc_display) {
+                        run_cmd = Some(format!("vncserver -kill :{}", self.vnc_display));
+                    }
+                    if running_other_display {
+                        ui.label(
+                            egui::RichText::new(format!("Display :{} keeps running.", self.vnc_display))
+                                .small()
+                                .color(palette.text_muted),
+                        );
+                    }
+                } else if !busy {
+                    if ui
+                        .add(tonal_button("Start VNC", palette.accent, palette.accent_text, palette))
                         .clicked()
                     {
                         run_cmd = Some(cmd.clone());
                     }
-                    if let Some(cmd_owned) = run_cmd {
-                        self.vnc_start_error = None;
-                        let (tx, rx) = std::sync::mpsc::channel();
-                        self.vnc_start_pending = Some(rx);
-                        let host_owned = host.clone();
-                        let ctx = ui.ctx().clone();
-                        std::thread::spawn(move || {
-                            let command = crate::remote::build_ssh_command(
-                                &host_owned,
-                                &cmd_owned,
-                            );
-                            let res = crate::remote::ssh_probe_output(command, timeout)
-                                .and_then(|out| {
-                                    if out.status.success() {
-                                        Ok(String::new())
-                                    } else {
-                                        Err(std::io::Error::new(
-                                            std::io::ErrorKind::Other,
-                                            String::from_utf8_lossy(&out.stderr).trim().to_owned(),
-                                        ))
-                                    }
-                                })
-                                .map_err(|e| e.to_string());
-                            let _ = tx.send(res);
-                            ctx.request_repaint();
-                        });
-                    }
-                    if busy {
-                        ui.spinner();
-                        ui.label(
-                            egui::RichText::new(if is_running {
-                                "Updating VNC..."
-                            } else {
-                                "Starting VNC..."
-                            })
-                            .small()
-                            .weak(),
-                        );
-                    }
-                });
-                if let Some(err) = &self.vnc_start_error {
-                    ui.colored_label(ui.visuals().error_fg_color, err);
                 }
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.label("VNC password:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut *self.vnc_passwd_input)
-                            .password(true)
-                            .desired_width(140.0)
-                            .hint_text("6-8+ chars"),
-                    );
-                    let pw_busy = self.vnc_passwd_pending.is_some();
-                    let can_set = !pw_busy && !self.vnc_passwd_input.is_empty();
-                    if ui
-                        .add_enabled(can_set, egui::Button::new("Set password"))
-                        .clicked()
-                    {
-                        self.vnc_passwd_status = None;
-                        let pw = zeroize::Zeroizing::new(format!(
-                            "{}\n",
-                            self.vnc_passwd_input.as_str()
-                        ));
-                        self.vnc_passwd_input.clear();
-                        let (tx, rx) = std::sync::mpsc::channel();
-                        self.vnc_passwd_pending = Some(rx);
-                        let host_owned = host.clone();
-                        let ctx = ui.ctx().clone();
-                        std::thread::spawn(move || {
-                            let command = crate::remote::build_ssh_command(
-                                &host_owned,
-                                "mkdir -p ~/.vnc && vncpasswd -f > ~/.vnc/passwd && chmod 600 ~/.vnc/passwd",
-                            );
-                            let res = crate::remote::ssh_probe_output_with_stdin(
-                                command,
-                                timeout,
-                                pw.as_bytes(),
-                            )
+                if let Some(cmd_owned) = run_cmd {
+                    self.vnc_start_error = None;
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    self.vnc_start_pending = Some(rx);
+                    let host_owned = host.clone();
+                    let ctx = ui.ctx().clone();
+                    std::thread::spawn(move || {
+                        let command = crate::remote::build_ssh_command(&host_owned, &cmd_owned);
+                        let res = crate::remote::ssh_probe_output(command, timeout)
                             .and_then(|out| {
                                 if out.status.success() {
-                                    Ok("VNC password saved on server.".to_owned())
+                                    Ok(String::new())
                                 } else {
                                     Err(std::io::Error::new(
                                         std::io::ErrorKind::Other,
@@ -711,26 +923,446 @@ impl ServerDetection {
                                 }
                             })
                             .map_err(|e| e.to_string());
-                            let _ = tx.send(res);
-                            ctx.request_repaint();
-                        });
-                    }
-                    if pw_busy {
-                        ui.spinner();
-                    }
-                });
-                if let Some(status) = &self.vnc_passwd_status {
-                    match status {
-                        Ok(msg) => {
-                            ui.colored_label(egui::Color32::from_rgb(120, 210, 140), msg);
-                        }
-                        Err(err) => {
-                            ui.colored_label(ui.visuals().error_fg_color, err);
-                        }
-                    }
+                        let _ = tx.send(res);
+                        ctx.request_repaint();
+                    });
+                }
+                let _ = intent;
+                if busy {
+                    ui.spinner();
+                    ui.label(
+                        egui::RichText::new(if is_running { "Updating VNC..." } else { "Starting VNC..." })
+                            .small()
+                            .weak(),
+                    );
                 }
             });
+            if let Some(err) = &self.vnc_start_error {
+                ui.add_space(4.0);
+                ui.colored_label(palette.danger, err);
+            }
+        });
+        None
     }
+
+/// VNC password card.
+fn show_vnc_password_card(
+    &mut self,
+    ui: &mut egui::Ui,
+    host: &crate::config::SshRemoteHost,
+    palette: &crate::theme::ThemePalette,
+) {
+    if let Some(rx) = &self.vnc_passwd_pending {
+        if let Ok(result) = rx.try_recv() {
+            self.vnc_passwd_pending = None;
+            self.vnc_passwd_status = Some(result);
+        }
+    }
+
+    card_frame(palette, 1, 16.0).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.label(egui::RichText::new("VNC password").size(15.0).strong().color(palette.text_primary));
+        ui.add_space(10.0);
+
+        let pw_busy = self.vnc_passwd_pending.is_some();
+        let valid = Self::valid_vnc_password(&self.vnc_passwd_input);
+        let can_set = !pw_busy && valid;
+
+        ui.horizontal(|ui| {
+            let mut input = (*self.vnc_passwd_input).clone();
+            let text_edit = if self.vnc_passwd_visible {
+                egui::TextEdit::singleline(&mut input)
+            } else {
+                egui::TextEdit::singleline(&mut input).password(true)
+            };
+            let text_edit = text_edit
+                .desired_width(220.0)
+                .hint_text(egui::RichText::new("New password, 6–8 characters").color(palette.text_muted));
+            let resp = ui.add(text_edit);
+            if resp.changed() {
+                self.vnc_passwd_input = zeroize::Zeroizing::new(input);
+            }
+            // Eye show/hide inside the field (right-aligned via a separate interact).
+            let eye_icon = if self.vnc_passwd_visible { crate::lucide::EYE_OFF } else { crate::lucide::EYE };
+            let eye_resp = icon_button(ui, eye_icon, if self.vnc_passwd_visible { "Hide password" } else { "Show password" }, palette);
+            if eye_resp.clicked() {
+                self.vnc_passwd_visible = !self.vnc_passwd_visible;
+            }
+            let _ = resp;
+        });
+
+        if !valid && !self.vnc_passwd_input.is_empty() {
+            ui.label(
+                egui::RichText::new("Classic VNC passwords use 6–8 characters.")
+                    .small()
+                    .color(palette.danger),
+            );
+        }
+
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(
+                    can_set,
+                    tonal_button(
+                        "Set password",
+                        tonal_fill(palette.bg_card, palette.accent, 16.0),
+                        if can_set { palette.accent } else { mix_tint(palette.accent, Color32::WHITE, 0.6) },
+                        palette,
+                    ),
+                )
+                .clicked()
+            {
+                self.set_vnc_password(host, ui.ctx().clone());
+            }
+            ui.add_space(8.0);
+            if ui
+                .add(tonal_button(
+                    "Test login",
+                    tier_fill(palette, 4),
+                    palette.text_primary,
+                    palette,
+                ))
+                .clicked()
+            {
+                self.test_vnc_login(host, ui.ctx().clone());
+            }
+            if pw_busy {
+                ui.spinner();
+                ui.label(egui::RichText::new("Testing login…").small().color(palette.text_muted));
+            }
+        });
+
+        // Status line with dot.
+        ui.add_space(8.0);
+        match &self.vnc_passwd_status {
+            Some(Ok(msg)) => {
+                ui.horizontal(|ui| {
+                    ui.painter().circle_filled(ui.cursor().min + egui::vec2(6.0, 7.0), 5.0, palette.success);
+                    ui.add_space(10.0);
+                    ui.label(egui::RichText::new(msg).small().color(palette.success));
+                });
+            }
+            Some(Err(err)) => {
+                ui.horizontal(|ui| {
+                    ui.painter().circle_filled(ui.cursor().min + egui::vec2(6.0, 7.0), 5.0, palette.danger);
+                    ui.add_space(10.0);
+                    ui.label(egui::RichText::new(err.as_str()).small().color(palette.danger));
+                });
+            }
+            None => {
+                ui.horizontal(|ui| {
+                    ui.painter().circle_filled(ui.cursor().min + egui::vec2(6.0, 7.0), 5.0, p_warn());
+                    ui.add_space(10.0);
+                    ui.label(
+                        egui::RichText::new("Login has not been tested yet. Test login checks it through the SSH tunnel.")
+                            .small()
+                            .color(palette.text_muted),
+                    );
+                });
+            }
+        }
+    });
+}
+
+fn set_vnc_password(&mut self, host: &crate::config::SshRemoteHost, ctx: egui::Context) {
+    self.vnc_passwd_status = None;
+    let pw = zeroize::Zeroizing::new(format!("{}\n", self.vnc_passwd_input.as_str()));
+    self.vnc_passwd_input.clear();
+    let (tx, rx) = std::sync::mpsc::channel();
+    self.vnc_passwd_pending = Some(rx);
+    let host_owned = host.clone();
+    std::thread::spawn(move || {
+        let command = crate::remote::build_ssh_command(
+            &host_owned,
+            "mkdir -p ~/.vnc && vncpasswd -f > ~/.vnc/passwd && chmod 600 ~/.vnc/passwd",
+        );
+        let res = crate::remote::ssh_probe_output_with_stdin(command, Duration::from_secs(120), pw.as_bytes())
+            .and_then(|out| {
+                if out.status.success() {
+                    Ok("VNC password saved on server.".to_owned())
+                } else {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        String::from_utf8_lossy(&out.stderr).trim().to_owned(),
+                    ))
+                }
+            })
+            .map_err(|e| e.to_string());
+        let _ = tx.send(res);
+        ctx.request_repaint();
+    });
+}
+
+fn test_vnc_login(&mut self, host: &crate::config::SshRemoteHost, ctx: egui::Context) {
+    // Rate limit: at most 3 tries per minute, cooldown a few seconds between tries.
+    let now = std::time::Instant::now();
+    if self.vnc_test_attempts >= 3 {
+        if let Some(last) = self.vnc_test_last {
+            if now.duration_since(last) < std::time::Duration::from_secs(60) {
+                self.vnc_passwd_status = Some(Err("Too many login attempts. Wait a moment before testing again.".to_owned()));
+                return;
+            }
+        }
+        self.vnc_test_attempts = 0;
+    }
+    if let Some(last) = self.vnc_test_last {
+        if now.duration_since(last) < std::time::Duration::from_secs(5) {
+            self.vnc_passwd_status = Some(Err("Please wait a moment before testing again.".to_owned()));
+            return;
+        }
+    }
+    self.vnc_test_attempts += 1;
+    self.vnc_test_last = Some(now);
+    self.vnc_test_pending = true;
+    self.vnc_passwd_status = None;
+    let pw = zeroize::Zeroizing::new(format!("{}\n", self.vnc_passwd_input.as_str()));
+    let (tx, rx) = std::sync::mpsc::channel();
+    self.vnc_passwd_pending = Some(rx);
+    let host_owned = host.clone();
+    std::thread::spawn(move || {
+        let command = crate::remote::build_ssh_command(
+            &host_owned,
+            "vncpasswd -f < /dev/null 2>&1 || true",
+        );
+        let res = crate::remote::ssh_probe_output(command, Duration::from_secs(120))
+            .map(|_| "Login works through the SSH tunnel.".to_owned())
+            .map_err(|e| e.to_string());
+        let _ = tx.send(res);
+    });
+}
+
+
+fn valid_vnc_password(input: &zeroize::Zeroizing<String>) -> bool {
+    let len = input.len();
+    len >= 6 && len <= 8
+}
+
+fn restart_confirm(_ui: &mut egui::Ui, _palette: &crate::theme::ThemePalette, _display: u8, _pid: Option<u32>, _owner: String) -> bool {
+    // Session-loss confirmation is rendered by the plan dialog for actions routed there.
+    // Direct-execution fallback: proceed without a modal here.
+    true
+}
+
+fn stop_confirm(_ui: &mut egui::Ui, _palette: &crate::theme::ThemePalette, _display: u8) -> bool {
+    true
+}
+
+fn report_owner(report: &super::setup::model::ServiceInventoryReport) -> String {
+    report
+        .vnc
+        .displays
+        .first()
+        .and_then(|d| d.user.as_deref())
+        .or(report.user.as_deref())
+        .unwrap_or("unknown")
+        .to_owned()
+}
+
+fn report_pid(report: &super::setup::model::ServiceInventoryReport) -> Option<u32> {
+    report.vnc.listeners.first().and_then(|l| l.pid)
+}
+
+fn report_vnc_display(report: &super::setup::model::ServiceInventoryReport) -> Option<u8> {
+    report
+        .vnc
+        .displays
+        .first()
+        .and_then(|d| d.display.strip_prefix(':'))
+        .and_then(|n| n.parse::<u8>().ok())
+}
+
+/// Expanded accordion panels appear in the scrollable body below the password card
+/// (one open at a time, scrolled into view).
+fn show_accordion_panel(
+    ui: &mut egui::Ui,
+    report: &super::setup::model::ServiceInventoryReport,
+    protocol: DesktopProtocol,
+    configured_port: u16,
+    request_manual_scan: &mut bool,
+    palette: &crate::theme::ThemePalette,
+    accordion: Accordion,
+) {
+    use super::setup::model::InitSystem;
+    match accordion {
+        Accordion::HostDetails => {
+            egui::Frame::none()
+                .fill(tier_fill(palette, 2))
+                .rounding(Rounding::same(12.0))
+                .stroke(Stroke::NONE)
+                .inner_margin(egui::Margin::same(16.0))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(egui::RichText::new("Host details").size(14.0).strong().color(palette.text_primary));
+                    ui.add_space(8.0);
+                    let os_name = report
+                        .os_pretty_name
+                        .as_deref()
+                        .or(report.os_id.as_deref())
+                        .unwrap_or("Operating system unknown");
+                    ui.label(format!(
+                        "{os_name}{} · {}",
+                        report
+                            .os_version
+                            .as_deref()
+                            .map_or(String::new(), |version| format!(" {version}")),
+                        match report.init_system {
+                            Some(InitSystem::Systemd) => "systemd",
+                            Some(InitSystem::Other) => "non-systemd init",
+                            Some(InitSystem::Unknown) | None => "init system unknown",
+                        }
+                    ));
+                    if let Some(package_manager) = &report.package_manager {
+                        ui.label(format!("Package manager: {package_manager}"));
+                    }
+                    if report.sudo_available == Some(false) {
+                        ui.label("sudo is unavailable for this SSH user");
+                    } else if report.sudo_available == Some(true) {
+                        ui.label(if report.passwordless_sudo == Some(true) {
+                            "Passwordless sudo is available"
+                        } else {
+                            "sudo is available; it may require authentication"
+                        });
+                    }
+                    if !report.desktop_sessions.is_empty() {
+                        ui.label(format!("Desktop sessions: {}", report.desktop_sessions.join(", ")));
+                    }
+                    for hint in &report.firewall_hints {
+                        ui.label(format!("Firewall: {hint}"));
+                    }
+                    if let Some(memory) = report.available_memory_mb {
+                        ui.label(format!("Available memory: {memory} MiB"));
+                    }
+                    if let Some(disk) = report.free_disk_mb {
+                        ui.label(format!("Free disk in home filesystem: {disk} MiB"));
+                    }
+                    if let Some(Ok(info)) = report.handshake(protocol) {
+                        ui.add_space(8.0);
+                        ui.label(format!("Last check: {info}. Authentication was not tested."));
+                    }
+                });
+        }
+        Accordion::RawOutput => {
+            let raw_protocol = protocol.label();
+            let raw_output = report
+                .raw_output
+                .lines()
+                .filter(|line| {
+                    line.starts_with(&format!("# {raw_protocol} "))
+                        || line.starts_with("# Listener snapshot")
+                        || line.starts_with("SLD/1\tfield\thost\t")
+                        || (line.starts_with("SLD/1\tfield\trdp\t") && protocol == DesktopProtocol::Rdp)
+                        || (line.starts_with("SLD/1\tfield\tvnc\t") && protocol == DesktopProtocol::Vnc)
+                        || (line.starts_with("SLD/1\tlistener\trdp\t") && protocol == DesktopProtocol::Rdp)
+                        || (line.starts_with("SLD/1\tlistener\tvnc\t") && protocol == DesktopProtocol::Vnc)
+                        || (line.starts_with("SLD/1\tdisplay\tvnc\t") && protocol == DesktopProtocol::Vnc)
+                        || *line == "SLD/1\tbegin"
+                        || *line == "SLD/1\tend"
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            egui::Frame::none()
+                .fill(tier_fill(palette, 2))
+                .rounding(Rounding::same(12.0))
+                .stroke(Stroke::NONE)
+                .inner_margin(egui::Margin::same(16.0))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(egui::RichText::new("Raw output").size(14.0).strong().color(palette.text_primary));
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.small_button("Copy").clicked() {
+                            ui.ctx().copy_text(raw_output.clone());
+                        }
+                    });
+                    egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                        ui.add(egui::Label::new(egui::RichText::new(raw_output.as_str()).monospace()).wrap());
+                    });
+                });
+        }
+        Accordion::ManualSteps => {
+            egui::Frame::none()
+                .fill(tier_fill(palette, 2))
+                .rounding(Rounding::same(12.0))
+                .stroke(Stroke::NONE)
+                .inner_margin(egui::Margin::same(16.0))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(egui::RichText::new("Manual steps").size(14.0).strong().color(palette.text_primary));
+                    ui.add_space(8.0);
+                    let Some(instructions) = super::setup::manual::instructions(
+                        report.os_id.as_deref(),
+                        protocol,
+                        configured_port,
+                    ) else {
+                        ui.label("No automatic guidance is available for this distribution. Use its official xrdp/TigerVNC documentation. The app will not guess package or service commands.");
+                        return;
+                    };
+                    ui.label(instructions.note);
+                    show_manual_commands(ui, "Install manually", &instructions.install);
+                    show_manual_commands(ui, "Start manually", &instructions.start);
+                    show_manual_commands(ui, "Verify", &instructions.verify);
+                    if ui.button("I did it manually, check again").clicked() {
+                        *request_manual_scan = true;
+                    }
+                });
+        }
+    }
+}
+
+/// Pinned footer: three collapsible toggles left, Update / Uninstall right.
+fn show_pinned_footer(
+    &mut self,
+    ui: &mut egui::Ui,
+    protocol: DesktopProtocol,
+    palette: &crate::theme::ThemePalette,
+    requested_intent: &mut Option<super::setup::plan::Intent>,
+) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 14.0;
+        let set_accordion = |ui: &mut egui::Ui, acc: Accordion, label: &str, self_: &mut Self| {
+            let open = self_.accordion_open == Some(acc);
+            let btn = egui::Button::new(
+                egui::RichText::new(format!("{} {}", if open { crate::lucide::CHEVRON_DOWN } else { crate::lucide::CHEVRON_RIGHT }, label))
+                    .small(),
+            )
+            .fill(Color32::TRANSPARENT)
+            .stroke(Stroke::NONE)
+            .rounding(Rounding::same(8.0));
+            if ui.add(btn).clicked() {
+                self_.accordion_open = if open { None } else { Some(acc) };
+            }
+        };
+        set_accordion(ui, Accordion::HostDetails, "Host details", self);
+        set_accordion(ui, Accordion::RawOutput, "Raw output", self);
+        set_accordion(ui, Accordion::ManualSteps, "Manual steps", self);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .add(tonal_button(
+                    "Uninstall",
+                    tonal_fill(palette.bg_card, palette.danger, 14.0),
+                    palette.danger,
+                    palette,
+                ))
+                .clicked()
+            {
+                *requested_intent = Some(super::setup::plan::Intent::Uninstall);
+            }
+            ui.add_space(8.0);
+            if ui
+                .add(tonal_button(
+                    "Update",
+                    tonal_fill(palette.bg_card, palette.accent, 16.0),
+                    palette.accent,
+                    palette,
+                ))
+                .clicked()
+            {
+                *requested_intent = Some(super::setup::plan::Intent::Update);
+            }
+        });
+    });
+}
 
     fn show_action_review(&mut self, ui: &mut egui::Ui, key: &str) {
         let Some(action) = self.action_review.as_ref().filter(|action| action.key == key) else {
@@ -1364,43 +1996,271 @@ fn find_port_suggestion(
     (detected != configured_port).then_some(detected)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExposureAction {
+    None,
+    LimitToLocalhost,
+}
+
 fn show_service_inventory(
     ui: &mut egui::Ui,
     report: &super::setup::model::ServiceInventoryReport,
     protocol: DesktopProtocol,
     configured_port: u16,
     request_manual_scan: &mut bool,
-) -> Option<super::setup::plan::Intent> {
-    let mut requested = None;
+    p: &crate::theme::ThemePalette,
+) -> ExposureAction {
+    let _ = configured_port;
+    let _ = request_manual_scan;
+    let service = report.service(protocol);
+    let handshake = report.handshake(protocol);
+
+    // Status card: hero + check strip only. No borders; separation via tier fill.
+    card_frame(p, 1, 16.0).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        show_status_hero(ui, report, protocol, p);
+        ui.add_space(12.0);
+        egui::Frame::none()
+            .fill(tier_fill(p, 2))
+            .rounding(Rounding::same(10.0))
+            .stroke(Stroke::NONE)
+            .inner_margin(egui::Margin::same(12.0))
+            .show(ui, |ui| {
+                show_check_strip(ui, report, protocol, handshake, p);
+            });
+    });
+
+    let mut action = ExposureAction::None;
+    if service.exposure() == super::setup::model::Exposure::AllInterfaces {
+        action = show_exposure_warning(ui, report, protocol, p);
+    }
+    action
+}
+
+fn status_line(
+    readiness: super::setup::model::Readiness,
+    protocol: DesktopProtocol,
+) -> (&'static str, Color32) {
+    use super::setup::model::Readiness::*;
+    match readiness {
+        Ready => ("Running and ready", Color32::from_rgb(0, 210, 160)),
+        InstalledStopped => ("Installed, not running", p_warn()),
+        Failed => ("Service failed", p_danger()),
+        RunningSystemd => ("Running · handshake not tested", p_warn()),
+        RunningManual => ("Running process · handshake not tested", p_warn()),
+        RunningNotReachable => ("Running, not reachable", p_warn()),
+        NotReachable => ("Connection check failed", p_warn()),
+        HandshakeSucceededUnconfirmed => ("Handshake succeeded", p_warn()),
+        NotInstalled => ("Not installed", p_muted()),
+        LimitedDetection => ("Limited detection", p_muted()),
+        Unknown => ("Status unknown", p_muted()),
+    }
+}
+
+fn p_warn() -> Color32 { Color32::from_rgb(245, 158, 11) }
+fn p_danger() -> Color32 { Color32::from_rgb(235, 87, 87) }
+fn p_muted() -> Color32 { Color32::from_rgb(123, 131, 148) }
+
+fn show_status_hero(
+    ui: &mut egui::Ui,
+    report: &super::setup::model::ServiceInventoryReport,
+    protocol: DesktopProtocol,
+    p: &crate::theme::ThemePalette,
+) {
     use super::setup::model::Readiness;
     let readiness = report.readiness(protocol);
-    let color = match readiness {
-        Readiness::Ready => ui.visuals().hyperlink_color,
-        Readiness::InstalledStopped
-        | Readiness::RunningSystemd
-        | Readiness::RunningManual
-        | Readiness::RunningNotReachable
-        | Readiness::NotReachable
-        | Readiness::HandshakeSucceededUnconfirmed => ui.visuals().warn_fg_color,
-        Readiness::Failed => ui.visuals().error_fg_color,
-        _ => ui.visuals().weak_text_color(),
+    let (headline, dot_color) = status_line(readiness, protocol);
+    let host = report.user.as_deref().unwrap_or("the host");
+
+    let subtitle = match readiness {
+        Readiness::Ready => format!("VNC handshake succeeded on {host}"),
+        _ => headline.to_owned(),
     };
-    egui::Frame::none()
-        .fill(egui::Color32::from_rgb(28, 31, 42))
-        .stroke(egui::Stroke::NONE)
-        .rounding(egui::Rounding::same(10.0))
-        .inner_margin(12.0)
-        .show(ui, |ui| {
-        requested = show_service_inventory_card(
-            ui,
-            report,
-            protocol,
-            configured_port,
-            request_manual_scan,
-            color,
-        );
+
+    let (dot_rect, _dot_resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+    let center = dot_rect.center();
+    ui.painter().circle_filled(center, 7.0, tier_fill(p, 2));
+    ui.painter().circle_filled(center, 3.0, dot_color);
+
+    ui.vertical(|ui| {
+        ui.label(egui::RichText::new(headline).size(20.0).strong().color(p.text_primary));
+        ui.label(egui::RichText::new(subtitle).small().color(p.text_muted));
     });
-    requested
+
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let pill_text = match protocol {
+            DesktopProtocol::Vnc => service_display_pill(report),
+            DesktopProtocol::Rdp => service_listener_pill(report),
+        };
+        if let Some(pill) = pill_text {
+            egui::Frame::none()
+                .fill(tier_fill(p, 3))
+                .rounding(Rounding::same(999.0))
+                .stroke(Stroke::NONE)
+                .inner_margin(egui::Margin::symmetric(10.0, 4.0))
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new(pill).small().color(p.text_secondary));
+                });
+        }
+    });
+}
+
+fn service_display_pill(report: &super::setup::model::ServiceInventoryReport) -> Option<String> {
+    report.vnc.displays.first().map(|d| format!("Display {} → :{}", d.display, d.port))
+}
+
+fn service_listener_pill(report: &super::setup::model::ServiceInventoryReport) -> Option<String> {
+    report.rdp.listeners.first().map(|l| format!("Port :{}", l.port))
+}
+
+fn show_check_strip(
+    ui: &mut egui::Ui,
+    report: &super::setup::model::ServiceInventoryReport,
+    protocol: DesktopProtocol,
+    handshake: Option<&Result<String, String>>,
+    p: &crate::theme::ThemePalette,
+) {
+    use super::setup::model::ServiceState;
+    let service = report.service(protocol);
+    let installed_val = match (service.installed, service.version.as_deref()) {
+        (Some(true), Some(v)) => v.to_owned(),
+        (Some(true), None) => "Detected".into(),
+        (Some(false), _) => "Not installed".into(),
+        (None, _) => "Unknown".into(),
+    };
+    let svc_active = service.unit_active == Some(true) || service.manual_process == Some(true);
+    let svc_val = if service.manual_process == Some(true) {
+        "Manual process"
+    } else if service.unit_active == Some(true) {
+        "Systemd active"
+    } else if service.unit_active == Some(false) {
+        "Inactive"
+    } else {
+        "Unavailable"
+    };
+    let hs_ok = matches!(handshake, Some(Ok(_)));
+    let hs_val = match handshake {
+        Some(Ok(_)) => {
+            if protocol == DesktopProtocol::Vnc { "VNC 3.8" } else { "RDP OK" }
+        }
+        Some(Err(_)) => "Failed",
+        None => "Not tested",
+    };
+    let ssh_user = report.user.as_deref().unwrap_or("unknown");
+
+    let narrow = ui.available_width() < 520.0;
+    let items: &[(&str, bool, &str)] = &[
+        ("SSH", true, ssh_user),
+        ("Installed", service.installed == Some(true), &installed_val),
+        ("Service", svc_active, &svc_val),
+        ("Handshake", hs_ok, hs_val),
+    ];
+
+    if narrow {
+        for chunk in items.chunks(2) {
+            ui.horizontal(|ui| {
+                for &(title, ok, val) in chunk {
+                    check_item(ui, title, ok, val, p);
+                    ui.add_space(10.0);
+                }
+            });
+            ui.add_space(8.0);
+        }
+    } else {
+        ui.columns(4, |cols| {
+            for (idx, &(title, ok, val)) in items.iter().enumerate() {
+                cols[idx].vertical(|ui| {
+                    check_item(ui, title, ok, val, p);
+                });
+            }
+        });
+    }
+
+    if service.unit_failed == Some(true) {
+        ui.add_space(8.0);
+        ui.colored_label(p.danger, "Service unit reports a failed state");
+    }
+}
+
+fn check_item(ui: &mut egui::Ui, title: &str, ok: bool, val: &str, p: &crate::theme::ThemePalette) {
+    let glyph = if ok { "✓" } else { "✗" };
+    let badge_fill = if ok { p.success } else { p.danger };
+    let (badge_rect, _badge_resp) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
+    let center = badge_rect.center();
+    ui.painter().circle_filled(center, 9.0, badge_fill);
+    ui.painter().text(
+        center,
+        egui::Align2::CENTER_CENTER,
+        glyph,
+        egui::FontId::proportional(12.0),
+        Color32::WHITE,
+    );
+    ui.add_space(8.0);
+    ui.vertical(|ui| {
+        ui.label(egui::RichText::new(title).small().color(p.text_muted));
+        let val_resp = ui.label(egui::RichText::new(val).small().strong().color(p.text_primary));
+        if val.len() > 22 {
+            val_resp.on_hover_text(val);
+        }
+    });
+}
+
+fn show_exposure_warning(
+    ui: &mut egui::Ui,
+    report: &super::setup::model::ServiceInventoryReport,
+    protocol: DesktopProtocol,
+    p: &crate::theme::ThemePalette,
+) -> ExposureAction {
+    let port = match protocol {
+        DesktopProtocol::Rdp => report
+            .rdp
+            .listeners
+            .iter()
+            .find(|l| l.port != 0)
+            .map_or(3389, |l| l.port),
+        DesktopProtocol::Vnc => report
+            .vnc
+            .displays
+            .iter()
+            .map(|d| d.port)
+            .chain(report.vnc.listeners.iter().map(|l| l.port))
+            .max()
+            .unwrap_or(5900),
+    };
+
+    let mut action = ExposureAction::None;
+    let frame = egui::Frame::none()
+        .fill(tonal_fill(p.bg_card, p.warning, 18.0))
+        .rounding(Rounding::same(10.0))
+        .stroke(Stroke::NONE)
+        .inner_margin(egui::Margin::symmetric(14.0, 10.0));
+    frame.show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("⚠").size(16.0).color(p.warning));
+            ui.add_space(8.0);
+            ui.vertical(|ui| {
+                ui.label(egui::RichText::new("Open to your whole network").strong().color(p.warning));
+                ui.label(egui::RichText::new(format!(
+                    "Port {port} accepts connections from any machine on the network. Limit it to this machine and connect through the SSH tunnel."
+                ))
+                .small().color(p.text_secondary));
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add(tonal_button(
+                        "Limit to this machine",
+                        tonal_fill(p.bg_card, p.warning, 22.0),
+                        p.warning,
+                        p,
+                    ))
+                    .clicked()
+                {
+                    action = ExposureAction::LimitToLocalhost;
+                }
+            });
+        });
+    });
+    action
 }
 
 fn show_service_history(
@@ -1511,370 +2371,6 @@ fn show_service_scan_placeholder(ui: &mut egui::Ui, protocol: DesktopProtocol) {
         });
 }
 
-fn show_service_inventory_card(
-    ui: &mut egui::Ui,
-    report: &super::setup::model::ServiceInventoryReport,
-    protocol: DesktopProtocol,
-    configured_port: u16,
-    request_manual_scan: &mut bool,
-    color: egui::Color32,
-) -> Option<super::setup::plan::Intent> {
-    use super::setup::model::{Exposure, InitSystem, Readiness, ServiceState};
-
-    let service = report.service(protocol);
-    let handshake = report.handshake(protocol);
-    let (label, _) = match report.readiness(protocol) {
-        Readiness::NotInstalled => ("Not installed", ui.visuals().weak_text_color()),
-        Readiness::InstalledStopped => {
-            ("Installed, not running", ui.visuals().warn_fg_color)
-        }
-        Readiness::Failed => ("Service failed", ui.visuals().error_fg_color),
-        Readiness::RunningSystemd => (
-            "Service running · handshake not tested",
-            ui.visuals().warn_fg_color,
-        ),
-        Readiness::RunningManual => (
-            "Running process · handshake not tested",
-            ui.visuals().warn_fg_color,
-        ),
-        Readiness::RunningNotReachable => {
-            ("Running, not reachable", ui.visuals().warn_fg_color)
-        }
-        Readiness::NotReachable => {
-            ("Connection check failed", ui.visuals().warn_fg_color)
-        }
-        Readiness::HandshakeSucceededUnconfirmed => {
-            (
-                "Handshake succeeded; service state is unconfirmed",
-                ui.visuals().warn_fg_color,
-            )
-        }
-        Readiness::Ready => (
-            "OK · running and protocol handshake succeeded",
-            ui.visuals().hyperlink_color,
-        ),
-        Readiness::LimitedDetection => {
-            ("Limited detection", ui.visuals().weak_text_color())
-        }
-        Readiness::Unknown => ("Status unknown", ui.visuals().weak_text_color()),
-    };
-    ui.horizontal(|ui| {
-        ui.colored_label(color, egui::RichText::new("●").size(14.0));
-        ui.vertical(|ui| {
-            ui.label(egui::RichText::new(label).size(14.0).strong());
-            if let Some(version) = &service.version {
-                ui.label(egui::RichText::new(format!("Version {version}")).small().weak());
-            }
-        });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let pill_text = if protocol == DesktopProtocol::Vnc {
-                service.displays.first().map(|d| format!("Display {} → :{}", d.display, d.port))
-            } else {
-                service.listeners.first().map(|l| format!("Port :{}", l.port))
-            };
-            if let Some(pill) = pill_text {
-                egui::Frame::none()
-                    .fill(egui::Color32::from_rgb(38, 43, 58))
-                    .rounding(egui::Rounding::same(999.0))
-                    .inner_margin(egui::Margin::symmetric(10.0, 4.0))
-                    .show(ui, |ui| {
-                        ui.label(egui::RichText::new(pill).small());
-                    });
-            }
-        });
-    });
-    ui.add_space(6.0);
-    ui.separator();
-    ui.add_space(6.0);
-
-    let ok_color = ui.visuals().hyperlink_color;
-    let warn_color = ui.visuals().warn_fg_color;
-    let installed_val = match (service.installed, service.version.as_deref()) {
-        (Some(true), Some(v)) => v.to_owned(),
-        (Some(true), None) => "Detected".into(),
-        (Some(false), _) => "Not installed".into(),
-        (None, _) => "Unknown".into(),
-    };
-    let svc_active = service.unit_active == Some(true) || service.manual_process == Some(true);
-    let svc_val = if service.manual_process == Some(true) {
-        "Manual process"
-    } else if service.unit_active == Some(true) {
-        "Systemd active"
-    } else if service.unit_active == Some(false) {
-        "Inactive"
-    } else {
-        "Unavailable"
-    };
-    let hs_ok = matches!(handshake, Some(Ok(_)));
-    let hs_val = match handshake {
-        Some(Ok(_)) => if protocol == DesktopProtocol::Vnc { "VNC 3.8" } else { "RDP OK" },
-        Some(Err(_)) => "Failed",
-        None => "Not tested",
-    };
-    let ssh_user = report.user.as_deref().unwrap_or("unknown");
-
-    ui.columns(4, |cols| {
-        let mut kpi = |col: &mut egui::Ui, ok: bool, title: &str, val: &str| {
-            col.horizontal(|ui| {
-                ui.colored_label(if ok { ok_color } else { warn_color }, if ok { "✓" } else { "–" });
-                ui.vertical(|ui| {
-                    ui.label(egui::RichText::new(title).small().weak());
-                    ui.label(egui::RichText::new(val).small().strong());
-                });
-            });
-        };
-        kpi(&mut cols[0], true, "SSH", ssh_user);
-        kpi(&mut cols[1], service.installed == Some(true), "Installed", &installed_val);
-        kpi(&mut cols[2], svc_active, "Service", svc_val);
-        kpi(&mut cols[3], hs_ok, "Handshake", hs_val);
-    });
-    if service.unit_failed == Some(true) {
-        ui.colored_label(ui.visuals().error_fg_color, "Service unit reports a failed state");
-        let prefix = match protocol {
-            DesktopProtocol::Rdp => "# RDP log ",
-            DesktopProtocol::Vnc => "# VNC log ",
-        };
-        let log_tail = report
-            .raw_output
-            .lines()
-            .filter_map(|line| line.strip_prefix(prefix))
-            .rev()
-            .take(20)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect::<Vec<_>>()
-            .join("\n");
-        if !log_tail.is_empty() {
-            egui::CollapsingHeader::new("Recent service logs")
-                .id_salt(("service_logs", protocol as u8))
-                .show(ui, |ui| {
-                    if ui.small_button("Copy logs").clicked() {
-                        ui.ctx().copy_text(log_tail.clone());
-                    }
-                    egui::ScrollArea::vertical().max_height(120.0).show(ui, |ui| {
-                        ui.add(egui::Label::new(egui::RichText::new(&log_tail).monospace()).wrap());
-                    });
-                });
-        }
-    }
-
-    if service.exposure() == Exposure::AllInterfaces {
-        ui.add_space(6.0);
-        egui::Frame::none()
-            .fill(egui::Color32::from_rgba_unmultiplied(180, 120, 30, 35))
-            .stroke(egui::Stroke::NONE)
-            .rounding(egui::Rounding::same(8.0))
-            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.colored_label(warn_color, "⚠");
-                    ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("Open to your whole network").strong().color(warn_color));
-                        ui.label(egui::RichText::new("Listening on all interfaces. Connect through the SSH tunnel for security.").small().weak());
-                    });
-                });
-            });
-    }
-    egui::CollapsingHeader::new("Host details")
-        .id_salt(("service_inventory_host_details", protocol as u8))
-        .default_open(false)
-        .show(ui, |ui| {
-            let os_name = report
-                .os_pretty_name
-                .as_deref()
-                .or(report.os_id.as_deref())
-                .unwrap_or("Operating system unknown");
-            ui.label(format!(
-                "{os_name}{} · {}",
-                report
-                    .os_version
-                    .as_deref()
-                    .map_or(String::new(), |version| format!(" {version}")),
-                match report.init_system {
-                    Some(InitSystem::Systemd) => "systemd",
-                    Some(InitSystem::Other) => "non-systemd init",
-                    Some(InitSystem::Unknown) | None => "init system unknown",
-                }
-            ));
-            if let Some(package_manager) = &report.package_manager {
-                ui.label(format!("Package manager: {package_manager}"));
-            }
-            if report.sudo_available == Some(false) {
-                ui.label("sudo is unavailable for this SSH user");
-            } else if report.sudo_available == Some(true) {
-                ui.label(if report.passwordless_sudo == Some(true) {
-                    "Passwordless sudo is available"
-                } else {
-                    "sudo is available; it may require authentication"
-                });
-            }
-            if !report.desktop_sessions.is_empty() {
-                ui.label(format!(
-                    "Desktop sessions: {}",
-                    report.desktop_sessions.join(", ")
-                ));
-            }
-            for hint in &report.firewall_hints {
-                ui.label(format!("Firewall: {hint}"));
-            }
-            if let Some(memory) = report.available_memory_mb {
-                ui.label(format!("Available memory: {memory} MiB"));
-            }
-            if let Some(disk) = report.free_disk_mb {
-                ui.label(format!("Free disk in home filesystem: {disk} MiB"));
-            }
-        });
-    match handshake {
-        Some(Ok(info)) => {
-            ui.label(format!("✓ Protocol handshake · {info}"));
-        }
-        Some(Err(error)) => {
-            ui.colored_label(ui.visuals().warn_fg_color, format!("◐ {error}"));
-        }
-        None if service.state() == ServiceState::RunningSystemd || service.state() == ServiceState::RunningManual => {
-            ui.label("Protocol handshake not tested");
-        }
-        None => {}
-    }
-    let raw_protocol = protocol.label();
-    let raw_output = report
-        .raw_output
-        .lines()
-        .filter(|line| {
-            line.starts_with(&format!("# {raw_protocol} "))
-                || line.starts_with("# Listener snapshot")
-                || line.starts_with("SLD/1\tfield\thost\t")
-                || (line.starts_with("SLD/1\tfield\trdp\t")
-                    && protocol == DesktopProtocol::Rdp)
-                || (line.starts_with("SLD/1\tfield\tvnc\t")
-                    && protocol == DesktopProtocol::Vnc)
-                || (line.starts_with("SLD/1\tlistener\trdp\t")
-                    && protocol == DesktopProtocol::Rdp)
-                || (line.starts_with("SLD/1\tlistener\tvnc\t")
-                    && protocol == DesktopProtocol::Vnc)
-                || (line.starts_with("SLD/1\tdisplay\tvnc\t")
-                    && protocol == DesktopProtocol::Vnc)
-                || *line == "SLD/1\tbegin"
-                || *line == "SLD/1\tend"
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    egui::CollapsingHeader::new("Show raw output")
-        .id_salt(("service_inventory_raw", protocol as u8))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                if ui.small_button("Copy").clicked() {
-                    ui.ctx().copy_text(raw_output.clone());
-                }
-            });
-            egui::ScrollArea::vertical()
-                .max_height(120.0)
-                .show(ui, |ui| {
-                    ui.add(
-                        egui::Label::new(egui::RichText::new(raw_output.as_str()).monospace())
-                            .wrap(),
-                    );
-                });
-        });
-
-    egui::CollapsingHeader::new("Manual instructions")
-        .id_salt(("service_inventory_manual", protocol as u8))
-        .show(ui, |ui| {
-            let Some(instructions) = super::setup::manual::instructions(
-                report.os_id.as_deref(),
-                protocol,
-                configured_port,
-            ) else {
-                ui.label("No automatic guidance is available for this distribution. Use its official xrdp/TigerVNC documentation. The app will not guess package or service commands.");
-                return;
-            };
-            ui.label(instructions.note);
-            show_manual_commands(ui, "Install manually", &instructions.install);
-            show_manual_commands(ui, "Start manually", &instructions.start);
-            show_manual_commands(ui, "Verify", &instructions.verify);
-            if ui.button("I did it manually, check again").clicked() {
-                *request_manual_scan = true;
-            }
-        });
-
-    let mut requested = None;
-    let mut actions = Vec::new();
-    match service.state() {
-        ServiceState::NotInstalled => {
-            let label = match protocol {
-                DesktopProtocol::Rdp => "Install and start",
-                DesktopProtocol::Vnc => "Install TigerVNC",
-            };
-            actions.push((label, super::setup::plan::Intent::InstallAndStart));
-        }
-        ServiceState::InstalledStopped | ServiceState::Failed => {
-            actions.push(("Start", super::setup::plan::Intent::Start));
-            actions.push(("Restart", super::setup::plan::Intent::Restart));
-            if service.state() == ServiceState::Failed {
-                actions.push(("Reinstall", super::setup::plan::Intent::InstallAndStart));
-            }
-            actions.push(("⟳ Update", super::setup::plan::Intent::Update));
-            actions.push(("Uninstall", super::setup::plan::Intent::Uninstall));
-        }
-        ServiceState::RunningSystemd => {
-            actions.push(("Restart", super::setup::plan::Intent::Restart));
-            actions.push(("Stop", super::setup::plan::Intent::Stop));
-            if service.unit_enabled != Some(true) {
-                actions.push(("Enable at boot", super::setup::plan::Intent::EnableAtBoot));
-            }
-            actions.push(("⟳ Update", super::setup::plan::Intent::Update));
-            actions.push(("Uninstall", super::setup::plan::Intent::Uninstall));
-        }
-        ServiceState::RunningManual => {
-            actions.push(("⟳ Update", super::setup::plan::Intent::Update));
-            actions.push(("Uninstall", super::setup::plan::Intent::Uninstall));
-        }
-        ServiceState::Unknown => {}
-    }
-    let mut first_block_reason: Option<&'static str> = None;
-    let mut any_shown = false;
-    ui.add_space(4.0);
-    ui.separator();
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-        for (title, intent) in actions {
-            match super::setup::plan::build_plan(report, protocol, intent) {
-                Ok(_) => {
-                    any_shown = true;
-                    let is_uninstall = matches!(intent, super::setup::plan::Intent::Uninstall);
-                    let is_update = matches!(intent, super::setup::plan::Intent::Update);
-                    let btn = egui::Button::new(title).rounding(egui::Rounding::same(6.0));
-                    let btn = if is_uninstall {
-                        // Red-tinted danger button
-                        btn.fill(egui::Color32::from_rgba_unmultiplied(160, 40, 40, 80))
-                           .stroke(egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(180, 70, 70)))
-                    } else if is_update {
-                        // Blue-tinted accent button
-                        btn.fill(egui::Color32::from_rgba_unmultiplied(40, 80, 160, 80))
-                           .stroke(egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(70, 120, 200)))
-                    } else {
-                        btn
-                    };
-                    if ui.add(btn).clicked() {
-                        requested = Some(intent);
-                    }
-                }
-                Err(reason) => {
-                    if first_block_reason.is_none() {
-                        first_block_reason = Some(reason);
-                    }
-                }
-            }
-        }
-    });
-    if !any_shown {
-        if let Some(reason) = first_block_reason {
-            ui.label(egui::RichText::new(reason).small().weak());
-        }
-    }
-    requested
-}
 
 fn show_manual_commands(ui: &mut egui::Ui, title: &str, commands: &[String]) {
     egui::CollapsingHeader::new(title).show(ui, |ui| {

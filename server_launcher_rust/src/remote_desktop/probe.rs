@@ -84,6 +84,14 @@ fn tonal_button<'a>(
         .min_size(egui::vec2(120.0, 42.0))
 }
 
+fn compact_tonal_button<'a>(text: &'a str, fill: Color32, text_color: Color32) -> egui::Button<'a> {
+    egui::Button::new(egui::RichText::new(text).size(11.0).strong().color(text_color))
+        .fill(fill)
+        .stroke(Stroke::NONE)
+        .rounding(Rounding::same(8.0))
+        .min_size(egui::vec2(84.0, 28.0))
+}
+
 /// Switch control: pill track with knob on the left, label + helper text right.
 /// Returns `true` if the toggle changed state this frame.
 fn switch(ui: &mut egui::Ui, on: &mut bool, label: &str, helper: &str, p: &crate::theme::ThemePalette) -> bool {
@@ -392,7 +400,9 @@ impl ServerDetection {
                 .id(egui::Id::new(("service_manager_window", protocol as u8)))
                 .title_bar(false)
                 .resizable(true)
-                .default_width(420.0)
+                .default_width(380.0)
+                .min_width(340.0)
+                .max_width(420.0)
                 .frame(
                     egui::Frame::window(&ui.ctx().style())
                         .stroke(Stroke::NONE)
@@ -549,7 +559,9 @@ impl ServerDetection {
                                                 requested_intent = Some(intent);
                                             }
                                         }
-                                        self.show_vnc_password_card(ui, host, palette);
+                                        if protocol == DesktopProtocol::Vnc {
+                                            self.show_vnc_password_card(ui, host, palette);
+                                        }
                                     }
                                     ServiceTab::HostDetails => {
                                         Self::show_accordion_panel(
@@ -581,6 +593,7 @@ impl ServerDetection {
                                             &report,
                                             history,
                                             self.action_review.is_none() && self.action_pending.is_none(),
+                                            palette,
                                         );
                                     }
                                 }
@@ -603,26 +616,23 @@ impl ServerDetection {
                     ui.add_space(8.0);
                     ui.separator();
                     ui.add_space(4.0);
-                    // Pinned footer: Update / Uninstall on the right.
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
-                            .add(tonal_button(
+                            .add(compact_tonal_button(
                                 "Uninstall",
                                 tonal_fill(palette.bg_card, palette.danger, 14.0),
                                 palette.danger,
-                                palette,
                             ))
                             .clicked()
                         {
                             requested_intent = Some(super::setup::plan::Intent::Uninstall);
                         }
-                        ui.add_space(8.0);
+                        ui.add_space(6.0);
                         if ui
-                            .add(tonal_button(
+                            .add(compact_tonal_button(
                                 "Update",
                                 tonal_fill(palette.bg_card, palette.accent, 16.0),
                                 palette.accent,
-                                palette,
                             ))
                             .clicked()
                         {
@@ -2263,6 +2273,7 @@ fn show_service_history(
     report: &super::setup::model::ServiceInventoryReport,
     history: Option<&Result<Vec<super::setup::history::HistoryRecord>, String>>,
     allow_undo: bool,
+    palette: &crate::theme::ThemePalette,
 ) -> Option<super::setup::history::HistoryRecord> {
     let records = match history {
         Some(Ok(records)) => records
@@ -2270,9 +2281,19 @@ fn show_service_history(
             .filter(|record| record.protocol == protocol.label())
             .collect::<Vec<_>>(),
         Some(Err(error)) => {
-            egui::CollapsingHeader::new("Local service history")
-                .id_salt(("service_history_error", protocol as u8))
+            egui::Frame::none()
+                .fill(tier_fill(palette, 2))
+                .rounding(Rounding::same(12.0))
+                .stroke(Stroke::NONE)
+                .inner_margin(egui::Margin::same(16.0))
                 .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new("Recent service changes")
+                            .size(14.0)
+                            .strong()
+                            .color(palette.text_primary),
+                    );
+                    ui.add_space(8.0);
                     ui.colored_label(
                         ui.visuals().warn_fg_color,
                         format!("History unavailable: {error}"),
@@ -2283,52 +2304,80 @@ fn show_service_history(
         None => return None,
     };
     if records.is_empty() {
+        egui::Frame::none()
+            .fill(tier_fill(palette, 2))
+            .rounding(Rounding::same(12.0))
+            .stroke(Stroke::NONE)
+            .inner_margin(egui::Margin::same(16.0))
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("Recent service changes")
+                        .size(14.0)
+                        .strong()
+                        .color(palette.text_primary),
+                );
+                ui.add_space(8.0);
+                ui.label("No service changes recorded yet.");
+            });
         return None;
     }
 
     let mut requested_undo = None;
-    egui::CollapsingHeader::new("Recent service changes")
-        .id_salt(("service_history", protocol as u8))
-        .default_open(false)
+    egui::Frame::none()
+        .fill(tier_fill(palette, 2))
+        .rounding(Rounding::same(12.0))
+        .stroke(Stroke::NONE)
+        .inner_margin(egui::Margin::same(16.0))
         .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                egui::RichText::new("Recent service changes")
+                    .size(14.0)
+                    .strong()
+                    .color(palette.text_primary),
+            );
+            ui.add_space(8.0);
             egui::ScrollArea::vertical()
                 .id_salt(("service_history_scroll", protocol as u8))
-                .max_height(180.0)
+                .max_height(220.0)
                 .show(ui, |ui| {
                     for (index, record) in records.iter().enumerate() {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(&record.action);
-                    ui.weak(&record.at);
-                    if let Some(distro) = &record.distro {
-                        ui.weak(distro);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(&record.action);
+                            ui.weak(&record.at);
+                            if let Some(distro) = &record.distro {
+                                ui.weak(distro);
+                            }
+                            ui.weak(if record.completed { "Complete" } else { "Partial" });
+                            ui.weak(format!("{} step(s)", record.completed_steps.len()));
+                            if index == 0 && protocol == DesktopProtocol::Rdp {
+                                let service = report.service(protocol);
+                                let undo_available =
+                                    service.unit_present == Some(true)
+                                        && super::setup::plan::build_restore_plan(
+                                            record.prior_unit_active,
+                                            record.prior_unit_enabled,
+                                            service.unit_active,
+                                            service.unit_enabled,
+                                        )
+                                        .is_ok();
+                                if allow_undo
+                                    && ui
+                                        .add_enabled(undo_available, egui::Button::new("Undo"))
+                                        .on_disabled_hover_text(
+                                            "Undo needs a known prior state and a current systemd status.",
+                                        )
+                                        .clicked()
+                                {
+                                    requested_undo = Some((**record).clone());
+                                }
+                            }
+                        });
                     }
-                    ui.weak(if record.completed { "Complete" } else { "Partial" });
-                    ui.weak(format!("{} step(s)", record.completed_steps.len()));
-                    if index == 0 && protocol == DesktopProtocol::Rdp {
-                        let service = report.service(protocol);
-                        let undo_available =
-                            service.unit_present == Some(true)
-                                && super::setup::plan::build_restore_plan(
-                                    record.prior_unit_active,
-                                    record.prior_unit_enabled,
-                                    service.unit_active,
-                                    service.unit_enabled,
-                                )
-                                .is_ok();
-                        if allow_undo
-                            && ui
-                                .add_enabled(undo_available, egui::Button::new("Undo"))
-                                .on_disabled_hover_text(
-                                    "Undo needs a known prior state and a current systemd status.",
-                                )
-                                .clicked()
-                        {
-                            requested_undo = Some((**record).clone());
-                        }
-                    }
-                });
-            }
-            ui.weak(format!("History for {} · {}@{}:{}", host.name, host.user, host.host, host.port));
+                    ui.weak(format!(
+                        "History for {} · {}@{}:{}",
+                        host.name, host.user, host.host, host.port
+                    ));
                 });
         });
     requested_undo

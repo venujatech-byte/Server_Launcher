@@ -364,7 +364,7 @@ where
                     .max_rect(rect)
                     .layout(egui::Layout::left_to_right(egui::Align::Center)),
             );
-            child.set_clip_rect(rect);
+            child.set_clip_rect(child.clip_rect().intersect(rect));
             let value_text = format!("{prefix}{}", value.to_f64());
             let galley = child.fonts(|fonts| {
                 fonts.layout_no_wrap(

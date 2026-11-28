@@ -3342,7 +3342,7 @@ fn show_exposure_warning(
         .rounding(Rounding::same(10.0))
         .stroke(Stroke::NONE)
         .inner_margin(egui::Margin::symmetric(14.0, 10.0));
-    frame.show(ui, |ui| {
+    let frame_response = frame.show(ui, |ui| {
         ui.set_width(ui.available_width());
         let body = format!(
             "Port {port} accepts connections from any machine on the network. Limit it to this machine and connect through the SSH tunnel."
@@ -3422,6 +3422,18 @@ fn show_exposure_warning(
             });
         }
     });
+    let card_response = ui.interact(
+        frame_response.response.rect,
+        egui::Id::new(("service_exposure_warning", protocol as u8)),
+        egui::Sense::click(),
+    );
+    if card_response.hovered() {
+        ui.ctx()
+            .set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    if card_response.clicked() {
+        action = ExposureAction::LimitToLocalhost;
+    }
     action
 }
 

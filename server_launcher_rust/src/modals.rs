@@ -1149,8 +1149,8 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
     let mut action = ModalAction::None;
     let title = if state.is_edit { "Edit Server" } else { "Add Server" };
     let screen = ctx.screen_rect();
-    let modal_w = 520.0_f32.min((screen.width() - 48.0).max(200.0));
-    let max_h = 540.0_f32.min((screen.height() - 60.0).max(200.0));
+    let modal_w = 480.0_f32.min((screen.width() - 48.0).max(200.0));
+    let max_h = 500.0_f32.min((screen.height() - 60.0).max(200.0));
     let mut window_open = state.open;
     let mut is_open = state.open;
     Window::new(RichText::new(title).size(17.0).strong())
@@ -1408,8 +1408,8 @@ pub fn render_command_palette(
     }
 
     let screen = ctx.screen_rect();
-    let modal_w = 540.0_f32.min(screen.width() - 40.0).max(360.0);
-    let modal_h = 380.0_f32.min((screen.height() - 100.0).max(300.0));
+    let modal_w = 470.0_f32.min(screen.width() - 40.0).max(340.0);
+    let modal_h = 350.0_f32.min((screen.height() - 100.0).max(280.0));
     let list_h = (modal_h - 110.0).max(120.0);
 
     let mut is_open = state.open;
@@ -1755,8 +1755,8 @@ pub fn render_ssh_host_modal(
     let title = if state.is_edit { "Edit Remote PC" } else { "Add Remote PC" };
 
     let screen = ctx.screen_rect();
-    let modal_w = 520.0_f32.min((screen.width() - 48.0).max(200.0));
-    let max_h = 540.0_f32.min((screen.height() - 60.0).max(200.0));
+    let modal_w = 480.0_f32.min((screen.width() - 48.0).max(200.0));
+    let max_h = 500.0_f32.min((screen.height() - 60.0).max(200.0));
     let mut window_open = state.open;
     let mut is_open = state.open;
     Window::new(RichText::new(title).size(17.0).strong())
@@ -2998,8 +2998,8 @@ pub fn render_remote_start_server_modal(
     let mut result = None;
     let title = "Start Remote Server";
     let screen = ctx.screen_rect();
-    let modal_w = 520.0_f32.min((screen.width() - 48.0).max(200.0));
-    let max_h = 540.0_f32.min((screen.height() - 60.0).max(200.0));
+    let modal_w = 480.0_f32.min((screen.width() - 48.0).max(200.0));
+    let max_h = 500.0_f32.min((screen.height() - 60.0).max(200.0));
     let mut window_open = state.open;
     let mut is_open = state.open;
     Window::new(RichText::new(title).size(17.0).strong())

@@ -453,16 +453,14 @@ pub(crate) fn switch(
     response.expect("switch row always allocates its control")
 }
 
-/// 35px borderless collapsible row with a right chevron.
-pub(crate) fn collapsible_row<R>(
+/// Static section heading with a padded body.
+pub(crate) fn section<R>(
     ui: &mut Ui,
-    _palette: &ThemePalette,
-    open: &mut bool,
     label: &str,
     contents: impl FnOnce(&mut Ui) -> R,
-) -> Option<R> {
+) -> R {
     let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 35.0), Sense::click());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 35.0), Sense::hover());
     let enabled = ui.is_enabled();
     let fill = if enabled {
         WINDOW
@@ -480,43 +478,19 @@ pub(crate) fn collapsible_row<R>(
                 } else {
                     PLACEHOLDER
                 }));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(
-                        RichText::new(if *open {
-                            crate::lucide::CHEVRON_DOWN
-                        } else {
-                            crate::lucide::CHEVRON_RIGHT
-                        })
-                        .size(12.0)
-                        .color(if enabled { MUTED } else { PLACEHOLDER }),
-                    );
-                });
             });
         },
     );
-    let toggled = response.clicked()
-        || (response.has_focus() && ui.input(|input| input.key_pressed(Key::Enter)));
-    if toggled {
-        *open = !*open;
-        ui.ctx().request_repaint();
-    }
-    focus_ring(ui, &response, rect, CONTROL_RADIUS);
-    if *open {
-        ui.add_space(8.0);
-        Some(
-            Frame::none()
-                .fill(fill)
-                .rounding(Rounding::same(CONTROL_RADIUS))
-                .inner_margin(egui::Margin::same(10.0))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    contents(ui)
-                })
-                .inner,
-        )
-    } else {
-        None
-    }
+    ui.add_space(8.0);
+    Frame::none()
+        .fill(fill)
+        .rounding(Rounding::same(CONTROL_RADIUS))
+        .inner_margin(egui::Margin::same(10.0))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            contents(ui)
+        })
+        .inner
 }
 
 /// Two equal columns when the card has at least 440px of content width.

@@ -1624,9 +1624,6 @@ enum RemotePcTab {
 pub struct SshHostModalState {
     tab: RemotePcTab,
     scroll_to_top: bool,
-    rdp_input_options_open: bool,
-    rdp_drive_open: bool,
-    rdp_experience_open: bool,
     vnc_advanced_open: bool,
     vnc_notes_open: bool,
     vnc_port_text: String,
@@ -1726,9 +1723,6 @@ impl SshHostModalState {
         self.tab = RemotePcTab::General;
         self.rdp_probe = Default::default();
         self.scroll_to_top = true;
-        self.rdp_input_options_open = false;
-        self.rdp_drive_open = false;
-        self.rdp_experience_open = false;
         self.vnc_advanced_open = true;
         self.vnc_notes_open = true;
         self.vnc_probe = Default::default();
@@ -1773,9 +1767,6 @@ impl SshHostModalState {
         self.tab = RemotePcTab::General;
         self.rdp_probe = Default::default();
         self.scroll_to_top = true;
-        self.rdp_input_options_open = false;
-        self.rdp_drive_open = false;
-        self.rdp_experience_open = false;
         self.vnc_advanced_open = true;
         self.vnc_notes_open = true;
         self.vnc_probe = Default::default();
@@ -2589,7 +2580,6 @@ pub fn render_ssh_host_modal(
                                             crate::remote_desktop::editor::rdp_input(
                                                 ui,
                                                 &mut state.rdp,
-                                                &mut state.rdp_input_options_open,
                                                 palette,
                                             );
                                         },
@@ -2605,8 +2595,6 @@ pub fn render_ssh_host_modal(
                                             crate::remote_desktop::editor::rdp_devices(
                                                 ui,
                                                 &mut state.rdp,
-                                                &mut state.rdp_drive_open,
-                                                &mut state.rdp_experience_open,
                                                 palette,
                                             );
                                         },

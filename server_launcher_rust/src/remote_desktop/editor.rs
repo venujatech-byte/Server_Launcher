@@ -407,7 +407,6 @@ pub(crate) fn rdp_display(
 pub(crate) fn rdp_input(
     ui: &mut Ui,
     draft: &mut Option<RdpProfile>,
-    input_options_open: &mut bool,
     palette: &ThemePalette,
 ) {
     let mut profile = draft.clone().unwrap_or_default();
@@ -458,6 +457,7 @@ pub(crate) fn rdp_input(
                 )
             },
             |ui| {
+                ui.add_space(25.5);
                 let mic_hint = profile.mic.then_some(
                     "The remote PC can receive audio from your selected microphone while connected.",
                 );
@@ -472,22 +472,28 @@ pub(crate) fn rdp_input(
         );
 
         ui.add_space(12.0);
-        kit::collapsible_row(ui, palette, input_options_open, "Input options", |ui| {
+        kit::section(ui, "Input options", |ui| {
             ui.add_space(4.0);
-            kit::switch(
+            kit::two_fields(
                 ui,
-                &mut profile.view_only,
-                "Start in view-only mode",
-                None,
-                palette,
-            );
-            ui.add_space(10.0);
-            kit::switch(
-                ui,
-                &mut profile.left_handed_mouse,
-                "Left-handed mouse support",
-                None,
-                palette,
+                |ui| {
+                    kit::switch(
+                        ui,
+                        &mut profile.view_only,
+                        "Start in view-only mode",
+                        None,
+                        palette,
+                    )
+                },
+                |ui| {
+                    kit::switch(
+                        ui,
+                        &mut profile.left_handed_mouse,
+                        "Left-handed mouse support",
+                        None,
+                        palette,
+                    )
+                },
             );
             ui.add_space(10.0);
             kit::switch(
@@ -507,13 +513,11 @@ pub(crate) fn rdp_input(
 pub(crate) fn rdp_devices(
     ui: &mut Ui,
     draft: &mut Option<RdpProfile>,
-    drive_open: &mut bool,
-    experience_open: &mut bool,
     palette: &ThemePalette,
 ) {
     let mut profile = draft.clone().unwrap_or_default();
     ui.add_enabled_ui(profile.enabled, |ui| {
-        kit::collapsible_row(ui, palette, drive_open, "Drive redirection", |ui| {
+        kit::section(ui, "Drive redirection", |ui| {
             ui.add_space(4.0);
             kit::status_line(ui, "Shared folders are visible to the remote PC for this session.");
             if kit::compact_button(ui, "Add folder…", palette).clicked() {
@@ -560,21 +564,21 @@ pub(crate) fn rdp_devices(
         });
 
         ui.add_space(10.0);
-        kit::collapsible_row(ui, palette, experience_open, "Experience", |ui| {
+        kit::section(ui, "Experience", |ui| {
             ui.add_space(4.0);
-            kit::switch(ui, &mut profile.wallpaper, "Wallpaper", None, palette);
-            ui.add_space(10.0);
-            kit::switch(
+            kit::two_fields(
                 ui,
-                &mut profile.font_smoothing,
-                "Font smoothing",
-                None,
-                palette,
+                |ui| kit::switch(ui, &mut profile.wallpaper, "Wallpaper", None, palette),
+                |ui| {
+                    kit::switch(ui, &mut profile.font_smoothing, "Font smoothing", None, palette)
+                },
             );
             ui.add_space(10.0);
-            kit::switch(ui, &mut profile.animations, "Animations", None, palette);
-            ui.add_space(10.0);
-            kit::switch(ui, &mut profile.themes, "Themes", None, palette);
+            kit::two_fields(
+                ui,
+                |ui| kit::switch(ui, &mut profile.animations, "Animations", None, palette),
+                |ui| kit::switch(ui, &mut profile.themes, "Themes", None, palette),
+            );
         });
 
         ui.add_space(12.0);
@@ -773,12 +777,26 @@ pub(crate) fn vnc_behavior(ui: &mut Ui, draft: &mut Option<VncProfile>, palette:
             },
         );
         ui.add_space(10.0);
-        kit::switch(
+        kit::two_fields(
             ui,
-            &mut profile.show_remote_cursor,
-            "Show remote cursor",
-            None,
-            palette,
+            |ui| {
+                kit::switch(
+                    ui,
+                    &mut profile.show_remote_cursor,
+                    "Show remote cursor",
+                    None,
+                    palette,
+                )
+            },
+            |ui| {
+                kit::switch(
+                    ui,
+                    &mut profile.disable_smooth_scrolling,
+                    "Disable smooth scrolling",
+                    None,
+                    palette,
+                )
+            },
         );
     });
     if draft.is_some() || profile.enabled {
@@ -844,39 +862,21 @@ pub(crate) fn vnc_advanced(ui: &mut Ui, draft: &mut Option<VncProfile>, palette:
         }
 
         ui.add_space(12.0);
-        kit::two_fields(
+        #[cfg(target_os = "linux")]
+        kit::drag_field(
             ui,
-            |ui| {
-                #[cfg(target_os = "linux")]
-                {
-                    kit::drag_field(
-                        ui,
-                        palette,
-                        "TCP user timeout (seconds)",
-                        &mut profile.tcp_user_timeout_secs,
-                        0..=2_147_483,
-                        "",
-                        false,
-                        None,
-                    );
-                }
-                #[cfg(not(target_os = "linux"))]
-                {
-                    kit::status_line(
-                        ui,
-                        "TCP user timeout is available for direct Linux connections only.",
-                    );
-                }
-            },
-            |ui| {
-                kit::switch(
-                    ui,
-                    &mut profile.disable_smooth_scrolling,
-                    "Disable smooth scrolling",
-                    None,
-                    palette,
-                );
-            },
+            palette,
+            "TCP user timeout (seconds)",
+            &mut profile.tcp_user_timeout_secs,
+            0..=2_147_483,
+            "",
+            false,
+            None,
+        );
+        #[cfg(not(target_os = "linux"))]
+        kit::status_line(
+            ui,
+            "TCP user timeout is available for direct Linux connections only.",
         );
         #[cfg(target_os = "linux")]
         kit::hint(

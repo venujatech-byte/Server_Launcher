@@ -3363,7 +3363,7 @@ fn show_exposure_warning(
         if ui.available_width() >= 460.0 {
             let button_width = 174.0;
             let text_width = (ui.available_width() - button_width - 46.0).max(160.0);
-            ui.horizontal_top(|ui| {
+            ui.horizontal(|ui| {
                 ui.set_width(ui.available_width());
                 ui.spacing_mut().item_spacing.x = 8.0;
                 ui.label(egui::RichText::new("⚠").size(16.0).color(p.warning));
@@ -3389,11 +3389,9 @@ fn show_exposure_warning(
                         );
                     },
                 );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.add(button(button_width)).clicked() {
-                        action = ExposureAction::LimitToLocalhost;
-                    }
-                });
+                if ui.add(button(button_width)).clicked() {
+                    action = ExposureAction::LimitToLocalhost;
+                }
             });
         } else {
             ui.vertical(|ui| {

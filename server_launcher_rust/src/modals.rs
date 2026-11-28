@@ -1,9 +1,11 @@
-use crate::theme::CompactTooltip as _;
 use crate::commands::CommandModalState;
-use crate::config::{CustomAction, CustomLink, CustomScript, SavedCommand, ServerConfig, SshRemoteHost};
+use crate::config::{
+    CustomAction, CustomLink, CustomScript, SavedCommand, ServerConfig, SshRemoteHost,
+};
+use crate::remote_desktop::ui_kit as kit;
 use crate::scripts::ScriptModalState;
 use crate::systemd::NewServiceDefinition;
-use crate::remote_desktop::ui_kit as kit;
+use crate::theme::CompactTooltip as _;
 use crate::theme::ThemePalette;
 use egui::{Color32, Context, Key, RichText, Rounding, Stroke, Window};
 use std::collections::HashMap;
@@ -641,10 +643,17 @@ impl AddEditModalState {
         }
         self.port_str = port.to_string();
         self.command = command.to_string();
-        self.cwd = if cwd.is_empty() { ".".to_string() } else { cwd.to_string() };
+        self.cwd = if cwd.is_empty() {
+            ".".to_string()
+        } else {
+            cwd.to_string()
+        };
         self.group = "Imported".to_string();
         if port > 0 {
-            self.links.push(("Localhost".to_string(), format!("http://localhost:{}", port)));
+            self.links.push((
+                "Localhost".to_string(),
+                format!("http://localhost:{}", port),
+            ));
         }
     }
 
@@ -763,7 +772,8 @@ impl AddEditModalState {
                 .next()
                 .map(|(k, v)| (k.clone(), v))
                 .ok_or_else(|| "The servers object is empty.".to_string())?
-        } else if obj.contains_key("url") || obj.contains_key("command") || obj.contains_key("type") {
+        } else if obj.contains_key("url") || obj.contains_key("command") || obj.contains_key("type")
+        {
             let key = obj
                 .get("name")
                 .and_then(|v| v.as_str())
@@ -814,7 +824,9 @@ impl AddEditModalState {
                     .map(|s| {
                         let mut chars = s.chars();
                         match chars.next() {
-                            Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                            Some(first) => {
+                                first.to_uppercase().collect::<String>() + chars.as_str()
+                            }
                             None => String::new(),
                         }
                     })
@@ -862,9 +874,7 @@ impl AddEditModalState {
                 self.actions
                     .push(("Test Ping".to_string(), self.command.clone()));
             }
-            if !self.url.trim().is_empty()
-                && !self.links.iter().any(|(l, _)| l == "MCP Endpoint")
-            {
+            if !self.url.trim().is_empty() && !self.links.iter().any(|(l, _)| l == "MCP Endpoint") {
                 self.links
                     .push(("MCP Endpoint".to_string(), self.url.trim().to_string()));
             }
@@ -1045,17 +1055,17 @@ pub struct CommandPaletteState {
     pub selected_idx: usize,
 }
 
-pub fn render_modal_titlebar(
-    ui: &mut egui::Ui,
-    title: &str,
-    is_open: &mut bool,
-) {
+pub fn render_modal_titlebar(ui: &mut egui::Ui, title: &str, is_open: &mut bool) {
     // In every popup dialog, ensure inputs have clean light grey text and clearly visible hint text
     ui.visuals_mut().override_text_color = Some(Color32::from_rgb(215, 220, 230));
-    ui.visuals_mut().widgets.inactive.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(205, 210, 220));
-    ui.visuals_mut().widgets.hovered.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(230, 235, 245));
-    ui.visuals_mut().widgets.active.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(240, 242, 250));
-    ui.visuals_mut().widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(205, 210, 220));
+    ui.visuals_mut().widgets.inactive.fg_stroke =
+        Stroke::new(1.0_f32, Color32::from_rgb(205, 210, 220));
+    ui.visuals_mut().widgets.hovered.fg_stroke =
+        Stroke::new(1.0_f32, Color32::from_rgb(230, 235, 245));
+    ui.visuals_mut().widgets.active.fg_stroke =
+        Stroke::new(1.0_f32, Color32::from_rgb(240, 242, 250));
+    ui.visuals_mut().widgets.noninteractive.fg_stroke =
+        Stroke::new(1.0_f32, Color32::from_rgb(205, 210, 220));
     ui.visuals_mut().widgets.noninteractive.weak_bg_fill = Color32::from_rgb(180, 185, 195);
     ui.visuals_mut().text_cursor.stroke = Stroke::new(1.0_f32, Color32::from_rgb(205, 210, 220));
     ui.visuals_mut().extreme_bg_color = Color32::from_rgb(22, 25, 35);
@@ -1071,7 +1081,9 @@ pub fn render_modal_titlebar(
         let delta = resp.drag_delta();
         let layer_id = ui.layer_id();
         let offset_id = layer_id.id.with("modal_drag_offset");
-        let current_offset = ui.data(|d| d.get_temp::<egui::Vec2>(offset_id)).unwrap_or_default();
+        let current_offset = ui
+            .data(|d| d.get_temp::<egui::Vec2>(offset_id))
+            .unwrap_or_default();
         let new_offset = current_offset + delta;
         ui.data_mut(|d| d.insert_temp(offset_id, new_offset));
         ui.ctx().request_repaint();
@@ -1107,48 +1119,100 @@ pub fn render_modal_titlebar(
         egui::vec2(btn_w, btn_h),
     );
     let square_rect = egui::Rect::from_min_size(
-        egui::pos2(close_rect.min.x - btn_w - 2.0, rect.center().y - btn_h / 2.0),
+        egui::pos2(
+            close_rect.min.x - btn_w - 2.0,
+            rect.center().y - btn_h / 2.0,
+        ),
         egui::vec2(btn_w, btn_h),
     );
 
-    let square_resp = ui.interact(square_rect, ui.id().with("modal_square_btn"), egui::Sense::click());
+    let square_resp = ui.interact(
+        square_rect,
+        ui.id().with("modal_square_btn"),
+        egui::Sense::click(),
+    );
     if square_resp.hovered() {
-        painter.rect_filled(square_rect, Rounding::same(4.0), Color32::from_rgba_unmultiplied(255, 255, 255, 18));
+        painter.rect_filled(
+            square_rect,
+            Rounding::same(4.0),
+            Color32::from_rgba_unmultiplied(255, 255, 255, 18),
+        );
     }
     let sq_center = square_rect.center();
     let sq_icon_rect = egui::Rect::from_center_size(sq_center, egui::vec2(8.5, 8.5));
     painter.rect_stroke(
         sq_icon_rect,
         Rounding::ZERO,
-        Stroke::new(1.1_f32, if square_resp.hovered() { Color32::from_rgb(220, 224, 235) } else { Color32::from_rgb(140, 146, 162) }),
+        Stroke::new(
+            1.1_f32,
+            if square_resp.hovered() {
+                Color32::from_rgb(220, 224, 235)
+            } else {
+                Color32::from_rgb(140, 146, 162)
+            },
+        ),
     );
 
-    let close_resp = ui.interact(close_rect, ui.id().with("modal_close_btn"), egui::Sense::click());
+    let close_resp = ui.interact(
+        close_rect,
+        ui.id().with("modal_close_btn"),
+        egui::Sense::click(),
+    );
     if close_resp.hovered() {
-        painter.rect_filled(close_rect, Rounding::same(4.0), Color32::from_rgb(220, 53, 69));
+        painter.rect_filled(
+            close_rect,
+            Rounding::same(4.0),
+            Color32::from_rgb(220, 53, 69),
+        );
     }
     let cl_center = close_rect.center();
     let d = 4.0;
     let cl_stroke = Stroke::new(
         1.2_f32,
-        if close_resp.hovered() { Color32::WHITE } else { Color32::from_rgb(140, 146, 162) },
+        if close_resp.hovered() {
+            Color32::WHITE
+        } else {
+            Color32::from_rgb(140, 146, 162)
+        },
     );
-    painter.line_segment([egui::pos2(cl_center.x - d, cl_center.y - d), egui::pos2(cl_center.x + d, cl_center.y + d)], cl_stroke);
-    painter.line_segment([egui::pos2(cl_center.x + d, cl_center.y - d), egui::pos2(cl_center.x - d, cl_center.y + d)], cl_stroke);
+    painter.line_segment(
+        [
+            egui::pos2(cl_center.x - d, cl_center.y - d),
+            egui::pos2(cl_center.x + d, cl_center.y + d),
+        ],
+        cl_stroke,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(cl_center.x + d, cl_center.y - d),
+            egui::pos2(cl_center.x - d, cl_center.y + d),
+        ],
+        cl_stroke,
+    );
 
     if close_resp.clicked() {
         *is_open = false;
     }
 }
 
-pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palette: &ThemePalette) -> ModalAction {
-    if !state.open { return ModalAction::None; }
+pub fn render_add_edit_modal(
+    ctx: &Context,
+    state: &mut AddEditModalState,
+    palette: &ThemePalette,
+) -> ModalAction {
+    if !state.open {
+        return ModalAction::None;
+    }
     if ctx.input(|input| input.key_pressed(Key::Escape)) {
         state.open = false;
         return ModalAction::None;
     }
     let mut action = ModalAction::None;
-    let title = if state.is_edit { "Edit Server" } else { "Add Server" };
+    let title = if state.is_edit {
+        "Edit Server"
+    } else {
+        "Add Server"
+    };
     let screen = ctx.screen_rect();
     let modal_w = 480.0_f32.min((screen.width() - 48.0).max(200.0));
     let max_h = 500.0_f32.min((screen.height() - 60.0).max(200.0));
@@ -1356,7 +1420,9 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                 });
             });
         });
-    if !window_open || !is_open { state.open = false; }
+    if !window_open || !is_open {
+        state.open = false;
+    }
     action
 }
 
@@ -1422,11 +1488,18 @@ pub fn render_command_palette(
         .resizable(false)
         .anchor(egui::Align2::CENTER_TOP, [0.0, 70.0])
         .fixed_size(egui::vec2(modal_w, modal_h))
-        .frame(egui::Frame::none().fill(palette.bg_card).rounding(14.0)
-            .inner_margin(14.0).shadow(egui::epaint::Shadow {
-                offset: egui::vec2(0.0, 4.0), blur: 16.0, spread: 0.0,
-                color: Color32::from_black_alpha(120),
-            }))
+        .frame(
+            egui::Frame::none()
+                .fill(palette.bg_card)
+                .rounding(14.0)
+                .inner_margin(14.0)
+                .shadow(egui::epaint::Shadow {
+                    offset: egui::vec2(0.0, 4.0),
+                    blur: 16.0,
+                    spread: 0.0,
+                    color: Color32::from_black_alpha(120),
+                }),
+        )
         .show(ctx, |ui| {
             *ui.visuals_mut() = palette.egui_visuals();
             ui.spacing_mut().item_spacing.y = 4.0;
@@ -1441,7 +1514,11 @@ pub fn render_command_palette(
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .button(RichText::new(crate::lucide::X).size(12.0).color(palette.text_secondary))
+                        .button(
+                            RichText::new(crate::lucide::X)
+                                .size(12.0)
+                                .color(palette.text_secondary),
+                        )
                         .clicked()
                     {
                         state.open = false;
@@ -1458,7 +1535,10 @@ pub fn render_command_palette(
 
             let res = ui.add(
                 egui::TextEdit::singleline(&mut state.query)
-                    .hint_text(RichText::new("Search servers, actions, groups, or links…").color(palette.text_muted))
+                    .hint_text(
+                        RichText::new("Search servers, actions, groups, or links…")
+                            .color(palette.text_muted),
+                    )
                     .font(egui::FontId::proportional(12.0))
                     .margin(egui::vec2(8.0, 6.0))
                     .desired_width(f32::INFINITY),
@@ -1477,17 +1557,33 @@ pub fn render_command_palette(
                     } else {
                         for (i, (label, act)) in filtered.iter().enumerate() {
                             let selected = i == state.selected_idx;
-                            let text = RichText::new(label).size(12.0)
-                                .color(if selected { palette.accent_text } else { palette.text_secondary });
+                            let text = RichText::new(label).size(12.0).color(if selected {
+                                palette.accent_text
+                            } else {
+                                palette.text_secondary
+                            });
                             let row = egui::Button::new(text)
-                                .fill(if selected { palette.accent } else { palette.bg_card })
-                                .stroke(Stroke::NONE).rounding(8.0)
+                                .fill(if selected {
+                                    palette.accent
+                                } else {
+                                    palette.bg_card
+                                })
+                                .stroke(Stroke::NONE)
+                                .rounding(8.0)
                                 .wrap_mode(egui::TextWrapMode::Truncate);
                             let width = ui.available_width();
-                            let resp = ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
-                                ui.add_sized([width, 27.0], row)
-                            }).inner.hover_tip(label);
-                            if selected && ui.input(|i| i.key_pressed(Key::ArrowDown) || i.key_pressed(Key::ArrowUp)) {
+                            let resp = ui
+                                .with_layout(
+                                    egui::Layout::top_down_justified(egui::Align::Min),
+                                    |ui| ui.add_sized([width, 27.0], row),
+                                )
+                                .inner
+                                .hover_tip(label);
+                            if selected
+                                && ui.input(|i| {
+                                    i.key_pressed(Key::ArrowDown) || i.key_pressed(Key::ArrowUp)
+                                })
+                            {
                                 resp.scroll_to_me(None);
                             }
                             if resp.clicked() {
@@ -1561,7 +1657,10 @@ pub struct SshHostModalState {
 }
 
 type RemotePcSaveResult = Result<
-    (crate::config::SshRemoteHost, crate::remote_desktop::credentials::StagedCredentials),
+    (
+        crate::config::SshRemoteHost,
+        crate::remote_desktop::credentials::StagedCredentials,
+    ),
     String,
 >;
 
@@ -1575,7 +1674,10 @@ impl SshHostModalState {
             profile.port = port;
         }
         crate::config::SshRemoteHost {
-            id: self.editing_id.clone().unwrap_or_else(|| "remote-probe".into()),
+            id: self
+                .editing_id
+                .clone()
+                .unwrap_or_else(|| "remote-probe".into()),
             name: self.name.clone(),
             host: self.host.clone(),
             port: self.port_str.parse().unwrap_or(22),
@@ -1607,9 +1709,11 @@ impl SshHostModalState {
         std::thread::spawn(move || {
             let mut staged = StagedCredentials::default();
             let result = (|| {
-                staged.stage(&mut host, DesktopProtocol::Rdp, rdp)
+                staged
+                    .stage(&mut host, DesktopProtocol::Rdp, rdp)
                     .map_err(|error| format!("RDP password: {error}"))?;
-                staged.stage(&mut host, DesktopProtocol::Vnc, vnc)
+                staged
+                    .stage(&mut host, DesktopProtocol::Vnc, vnc)
                     .map_err(|error| format!("VNC password: {error}"))?;
                 Ok((host, staged))
             })();
@@ -1695,7 +1799,11 @@ impl SshHostModalState {
         self.ssh_credential_ref = h.credential_ref.clone();
         self.rdp = h.rdp.clone();
         self.vnc = h.vnc.clone();
-        self.vnc_port_text = h.vnc.as_ref().map_or(5900, |profile| profile.port).to_string();
+        self.vnc_port_text = h
+            .vnc
+            .as_ref()
+            .map_or(5900, |profile| profile.port)
+            .to_string();
     }
 }
 
@@ -1782,7 +1890,8 @@ pub fn render_ssh_host_modal(
     };
 
     let screen = ctx.screen_rect();
-    let modal_w = 600.0_f32.min((screen.width() - 32.0).max(200.0));
+    // Window's frame adds the 20px side margins around the content area.
+    let modal_w = 560.0_f32.min((screen.width() - 72.0).max(160.0));
     let max_h = 500.0_f32.min((screen.height() - 60.0).max(200.0));
     let mut window_open = state.open;
     let mut is_open = state.open;
@@ -1825,7 +1934,7 @@ pub fn render_ssh_host_modal(
             ui.visuals_mut().widgets.inactive.rounding = Rounding::same(9.0);
             ui.visuals_mut().widgets.hovered.rounding = Rounding::same(9.0);
             ui.visuals_mut().widgets.active.rounding = Rounding::same(9.0);
-            let column_width = modal_w - 40.0;
+            let column_width = modal_w;
             ui.set_width(column_width);
             ui.set_min_width(column_width);
             ui.set_max_width(column_width);
@@ -1843,10 +1952,10 @@ pub fn render_ssh_host_modal(
                     .fill(kit::CARD)
                     .rounding(Rounding::same(12.0))
                     .stroke(Stroke::NONE)
-                    .inner_margin(egui::Margin::symmetric(4.0, 3.0))
+                    .inner_margin(egui::Margin::symmetric(3.0, 3.0))
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
-                        ui.set_width(column_width - 8.0);
+                        ui.set_width(column_width - 6.0);
                         ui.horizontal(|ui| {
                             let tab_width = ui.available_width() / 4.0;
                             let detection_host = state.remote_detection_host();
@@ -1871,7 +1980,7 @@ pub fn render_ssh_host_modal(
                                     })
                                     .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(9.0))
-                                    .min_size(egui::vec2(tab_width, 32.0)),
+                                    .min_size(egui::vec2(tab_width, 30.0)),
                                 );
                                 if response.clicked() {
                                     state.tab = tab;
@@ -1911,30 +2020,42 @@ pub fn render_ssh_host_modal(
                 ui.add_space(8.0);
 
                 // Pinned content viewport: the only scrolling region.
-                ui.allocate_ui_with_layout(
-                    egui::vec2(column_width + 16.0, content_height),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        let content_width = column_width;
-                        ui.set_clip_rect(ui.clip_rect().expand2(egui::vec2(16.0, 0.0)));
-                        ui.set_width(column_width + 16.0);
-                        ui.set_min_width(column_width + 16.0);
-                        ui.set_max_width(column_width + 16.0);
-                        let reset_scroll = state.scroll_to_top;
-                        state.scroll_to_top = false;
-                        let mut scroll = egui::ScrollArea::vertical()
-                            .id_salt("edit_remote_pc_content")
-                            .scroll(egui::Vec2b::new(false, true))
-                            .scroll_bar_visibility(
-                                egui::containers::scroll_area::ScrollBarVisibility::AlwaysHidden,
-                            )
-                            .auto_shrink([false, false])
-                            .max_height(content_height)
-                            .min_scrolled_height(content_height);
-                        if reset_scroll {
-                            scroll = scroll.vertical_scroll_offset(0.0);
-                        }
-                        let output = scroll.show(ui, |ui| {
+                let viewport_rect = egui::Rect::from_min_size(
+                    egui::pos2(ui.cursor().left() - 20.0, ui.cursor().top()),
+                    egui::vec2(column_width + 40.0, content_height),
+                );
+                ui.set_clip_rect(ui.clip_rect().expand2(egui::vec2(20.0, 0.0)));
+                let mut scroll_ui = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(viewport_rect)
+                        .layout(egui::Layout::top_down(egui::Align::Min)),
+                );
+                scroll_ui.set_clip_rect(ui.clip_rect());
+                let content_width = column_width;
+                let reset_scroll = state.scroll_to_top;
+                state.scroll_to_top = false;
+                let mut scroll = egui::ScrollArea::vertical()
+                    .id_salt("edit_remote_pc_content")
+                    .scroll(egui::Vec2b::new(false, true))
+                    .scroll_bar_visibility(
+                        egui::containers::scroll_area::ScrollBarVisibility::AlwaysHidden,
+                    )
+                    .auto_shrink([false, false])
+                    .max_height(content_height)
+                    .min_scrolled_height(content_height);
+                if reset_scroll {
+                    scroll = scroll.vertical_scroll_offset(0.0);
+                }
+                let output = scroll.show(&mut scroll_ui, |ui| {
+                            ui.set_width(column_width + 40.0);
+                            ui.set_min_width(column_width + 40.0);
+                            ui.set_max_width(column_width + 40.0);
+                            ui.horizontal(|ui| {
+                                ui.add_space(20.0);
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(content_width, 0.0),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| {
                             ui.set_width(content_width);
                             ui.set_min_width(content_width);
                             ui.set_max_width(content_width);
@@ -2785,10 +2906,12 @@ pub fn render_ssh_host_modal(
                                 );
                             }
                         ui.add_space(20.0);
+                                    },
+                                );
+                            });
                         });
-                        kit::paint_overlay_scrollbar(ui, &output);
-                    },
-                );
+                ui.allocate_space(egui::vec2(column_width, content_height));
+                kit::paint_overlay_scrollbar(ui, &output);
 
                 ui.add_space(2.0);
 
@@ -2796,6 +2919,8 @@ pub fn render_ssh_host_modal(
                 ui.vertical(|ui| {
                     if let Some(error) = validation_error {
                         ui.label(RichText::new(error).size(12.0).color(kit::DANGER));
+                    } else {
+                        ui.allocate_space(egui::vec2(ui.available_width(), 14.0));
                     }
                     ui.horizontal(|ui| {
                     if state.is_edit {
@@ -2924,7 +3049,9 @@ pub fn render_ssh_host_modal(
 
 fn uuid_short() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let d = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let d = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
     format!("{:x}", d.as_millis() % 0xffffff)
 }
 
@@ -3095,13 +3222,19 @@ pub fn render_script_modal(
     state: &mut ScriptModalState,
     palette: &ThemePalette,
 ) -> Option<CustomScript> {
-    if !state.open { return None; }
+    if !state.open {
+        return None;
+    }
     if ctx.input(|input| input.key_pressed(Key::Escape)) {
         state.open = false;
         return None;
     }
     let mut result = None;
-    let title = if state.is_edit { "Edit script" } else { "New script" };
+    let title = if state.is_edit {
+        "Edit script"
+    } else {
+        "New script"
+    };
     let screen = ctx.screen_rect();
     let modal_w = 560.0_f32.min((screen.width() - 64.0).max(200.0));
     let max_h = 560.0_f32.min((screen.height() - 96.0).max(200.0));
@@ -3110,45 +3243,82 @@ pub fn render_script_modal(
     Window::new(RichText::new(title).size(17.0).strong())
         .id(egui::Id::new("script_modal_dialog"))
         .open(&mut window_open)
-        .collapsible(false).resizable(false).movable(true)
-        .default_pos(screen.center()).pivot(egui::Align2::CENTER_CENTER)
-        .min_width(modal_w).max_width(modal_w)
+        .collapsible(false)
+        .resizable(false)
+        .movable(true)
+        .default_pos(screen.center())
+        .pivot(egui::Align2::CENTER_CENTER)
+        .min_width(modal_w)
+        .max_width(modal_w)
         .fixed_size(egui::vec2(modal_w, max_h))
-        .frame(egui::Frame::none().fill(palette.bg_card).stroke(Stroke::NONE)
-            .rounding(Rounding::same(14.0))
-            .shadow(egui::epaint::Shadow { offset: egui::vec2(0.0, 4.0), blur: 16.0, spread: 0.0, color: Color32::from_black_alpha(120) })
-            .inner_margin(egui::Margin::same(18.0)))
+        .frame(
+            egui::Frame::none()
+                .fill(palette.bg_card)
+                .stroke(Stroke::NONE)
+                .rounding(Rounding::same(14.0))
+                .shadow(egui::epaint::Shadow {
+                    offset: egui::vec2(0.0, 4.0),
+                    blur: 16.0,
+                    spread: 0.0,
+                    color: Color32::from_black_alpha(120),
+                })
+                .inner_margin(egui::Margin::same(18.0)),
+        )
         .show(ctx, |ui| {
             *ui.visuals_mut() = palette.egui_visuals();
             ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
             ui.spacing_mut().interact_size.y = 26.0;
             ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
-            ui.style_mut().text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
-            ui.style_mut().text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(11.5));
-            ui.style_mut().text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(11.5));
+            ui.style_mut()
+                .text_styles
+                .insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
+            ui.style_mut()
+                .text_styles
+                .insert(egui::TextStyle::Button, egui::FontId::proportional(11.5));
+            ui.style_mut()
+                .text_styles
+                .insert(egui::TextStyle::Monospace, egui::FontId::monospace(11.5));
             ui.visuals_mut().widgets.inactive.weak_bg_fill = palette.bg_button;
-            ui.label(RichText::new("Save a reusable script for this host.").size(11.5).color(palette.text_muted));
+            ui.label(
+                RichText::new("Save a reusable script for this host.")
+                    .size(11.5)
+                    .color(palette.text_muted),
+            );
             ui.add_space(8.0);
-            let body_height = (ui.available_height() - 40.0 - 2.0 * ui.spacing().item_spacing.y).max(0.0);
-            egui::ScrollArea::vertical().id_salt(("script_modal_body", &state.id))
-                .max_height(body_height).auto_shrink([false, false]).drag_to_scroll(false)
+            let body_height =
+                (ui.available_height() - 40.0 - 2.0 * ui.spacing().item_spacing.y).max(0.0);
+            egui::ScrollArea::vertical()
+                .id_salt(("script_modal_body", &state.id))
+                .max_height(body_height)
+                .auto_shrink([false, false])
+                .drag_to_scroll(false)
                 .show(ui, |ui| {
                     if let Some(error) = &state.error {
                         ui.label(RichText::new(error).size(11.5).color(palette.danger));
                     }
                     // Script name and interpreter use the same field sizing as the server form.
                     ui.label(RichText::new("Script name *").size(12.0).strong());
-                    ui.add(egui::TextEdit::singleline(&mut state.name)
-                        .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0))
-                        .min_size(egui::vec2(0.0, 30.0)).clip_text(true).desired_width(ui.available_width())
-                        .hint_text(RichText::new("e.g. Health check or database backup").color(palette.text_muted)));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.name)
+                            .text_color(palette.text_secondary)
+                            .margin(egui::vec2(8.0, 6.0))
+                            .min_size(egui::vec2(0.0, 30.0))
+                            .clip_text(true)
+                            .desired_width(ui.available_width())
+                            .hint_text(
+                                RichText::new("e.g. Health check or database backup")
+                                    .color(palette.text_muted),
+                            ),
+                    );
                     ui.add_space(8.0);
                     // Shell / interpreter selection preserves the saved interpreter when editing.
                     ui.horizontal(|ui| {
                         ui.set_min_height(30.0);
                         ui.label(RichText::new("Interpreter").size(12.0).strong());
                         egui::ComboBox::from_id_salt("script_shell_combo")
-                            .selected_text(RichText::new(&state.shell).color(palette.text_secondary))
+                            .selected_text(
+                                RichText::new(&state.shell).color(palette.text_secondary),
+                            )
                             .width(160.0_f32.min(ui.available_width().max(0.0)))
                             .show_ui(ui, |ui| {
                                 for shell in ["bash", "sh", "python3", "zsh"] {
@@ -3160,13 +3330,29 @@ pub fn render_script_modal(
                     // The directory gets a full row so long paths cannot displace Browse.
                     ui.label(RichText::new("Working directory").size(12.0).strong());
                     ui.horizontal(|ui| {
-                        let width = (ui.available_width() - 76.0 - ui.spacing().item_spacing.x).max(0.0);
-                        ui.add_sized([width, 30.0], egui::TextEdit::singleline(&mut state.cwd)
-                            .text_color(palette.text_secondary).font(egui::TextStyle::Monospace)
-                            .margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).clip_text(true)
-                            .hint_text(RichText::new("Optional · current directory").color(palette.text_muted)));
-                        let browse = egui::Button::new(RichText::new("Browse…").size(11.5).color(palette.text_secondary))
-                            .fill(palette.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(8.0));
+                        let width =
+                            (ui.available_width() - 76.0 - ui.spacing().item_spacing.x).max(0.0);
+                        ui.add_sized(
+                            [width, 30.0],
+                            egui::TextEdit::singleline(&mut state.cwd)
+                                .text_color(palette.text_secondary)
+                                .font(egui::TextStyle::Monospace)
+                                .margin(egui::vec2(8.0, 6.0))
+                                .min_size(egui::vec2(0.0, 30.0))
+                                .clip_text(true)
+                                .hint_text(
+                                    RichText::new("Optional · current directory")
+                                        .color(palette.text_muted),
+                                ),
+                        );
+                        let browse = egui::Button::new(
+                            RichText::new("Browse…")
+                                .size(11.5)
+                                .color(palette.text_secondary),
+                        )
+                        .fill(palette.bg_button)
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(8.0));
                         if ui.add_sized([76.0, 30.0], browse).clicked() {
                             if let Some(path) = rfd::FileDialog::new().pick_folder() {
                                 state.cwd = path.to_string_lossy().into_owned();
@@ -3175,25 +3361,54 @@ pub fn render_script_modal(
                     });
                     ui.add_space(8.0);
                     // Startup behaviour stays explicit and separate from the code editor.
-                    egui::Frame::none().fill(palette.bg_subtle).rounding(Rounding::same(10.0))
-                        .inner_margin(egui::Margin::same(8.0)).show(ui, |ui| {
+                    egui::Frame::none()
+                        .fill(palette.bg_subtle)
+                        .rounding(Rounding::same(10.0))
+                        .inner_margin(egui::Margin::same(8.0))
+                        .show(ui, |ui| {
                             ui.set_width(ui.available_width());
-                            ui.checkbox(&mut state.autostart, RichText::new("Run automatically").size(11.5).color(palette.text_primary));
-                            ui.label(RichText::new("Run when the launcher opens or connects to this host.").size(10.5).color(palette.text_muted));
+                            ui.checkbox(
+                                &mut state.autostart,
+                                RichText::new("Run automatically")
+                                    .size(11.5)
+                                    .color(palette.text_primary),
+                            );
+                            ui.label(
+                                RichText::new(
+                                    "Run when the launcher opens or connects to this host.",
+                                )
+                                .size(10.5)
+                                .color(palette.text_muted),
+                            );
                         });
                     ui.add_space(8.0);
                     ui.label(RichText::new("Script content *").size(12.0).strong());
                     let editor_height = (body_height - 300.0).clamp(120.0, 280.0);
-                    egui::Frame::none().fill(palette.terminal_bg).rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::same(8.0)).show(ui, |ui| {
-                            egui::ScrollArea::vertical().id_salt(("script_modal_editor", &state.id))
-                                .min_scrolled_height(editor_height).max_height(editor_height)
-                                .auto_shrink([false, false]).drag_to_scroll(false).show(ui, |ui| {
-                                    ui.add(egui::TextEdit::multiline(&mut state.script_body).code_editor()
-                                        .text_color(palette.text_secondary).frame(false)
-                                        .hint_text(RichText::new("Enter your script…").color(palette.text_muted))
-                                        .desired_rows(1).desired_width(ui.available_width())
-                                        .min_size(egui::vec2(0.0, editor_height)));
+                    egui::Frame::none()
+                        .fill(palette.terminal_bg)
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::same(8.0))
+                        .show(ui, |ui| {
+                            egui::ScrollArea::vertical()
+                                .id_salt(("script_modal_editor", &state.id))
+                                .min_scrolled_height(editor_height)
+                                .max_height(editor_height)
+                                .auto_shrink([false, false])
+                                .drag_to_scroll(false)
+                                .show(ui, |ui| {
+                                    ui.add(
+                                        egui::TextEdit::multiline(&mut state.script_body)
+                                            .code_editor()
+                                            .text_color(palette.text_secondary)
+                                            .frame(false)
+                                            .hint_text(
+                                                RichText::new("Enter your script…")
+                                                    .color(palette.text_muted),
+                                            )
+                                            .desired_rows(1)
+                                            .desired_width(ui.available_width())
+                                            .min_size(egui::vec2(0.0, editor_height)),
+                                    );
                                 });
                         });
                 });
@@ -3202,9 +3417,15 @@ pub fn render_script_modal(
             ui.horizontal(|ui| {
                 ui.set_min_height(30.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let save = egui::Button::new(RichText::new(format!("{} Save script", crate::lucide::SAVE)).size(11.5).color(palette.accent_text))
-                        .fill(palette.accent).stroke(Stroke::NONE).rounding(Rounding::same(8.0))
-                        .min_size(egui::vec2(104.0, 30.0));
+                    let save = egui::Button::new(
+                        RichText::new(format!("{} Save script", crate::lucide::SAVE))
+                            .size(11.5)
+                            .color(palette.accent_text),
+                    )
+                    .fill(palette.accent)
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding::same(8.0))
+                    .min_size(egui::vec2(104.0, 30.0));
                     if ui.add(save).clicked() {
                         if state.name.trim().is_empty() {
                             state.error = Some("Script name cannot be empty".to_string());
@@ -3212,22 +3433,36 @@ pub fn render_script_modal(
                             state.error = Some("Script body cannot be empty".to_string());
                         } else {
                             result = Some(CustomScript {
-                                id: state.id.clone(), name: state.name.trim().to_string(), script: state.script_body.clone(),
-                                shell: state.shell.trim().to_string(), cwd: state.cwd.trim().to_string(),
-                                autostart: state.autostart, host_id: state.host_id.clone(),
+                                id: state.id.clone(),
+                                name: state.name.trim().to_string(),
+                                script: state.script_body.clone(),
+                                shell: state.shell.trim().to_string(),
+                                cwd: state.cwd.trim().to_string(),
+                                autostart: state.autostart,
+                                host_id: state.host_id.clone(),
                             });
                             state.open = false;
                             is_open = false;
                         }
                     }
-                    let cancel = egui::Button::new(RichText::new("Cancel").size(11.5).color(palette.text_secondary))
-                        .fill(palette.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(8.0))
-                        .min_size(egui::vec2(76.0, 30.0));
-                    if ui.add(cancel).clicked() { is_open = false; }
+                    let cancel = egui::Button::new(
+                        RichText::new("Cancel")
+                            .size(11.5)
+                            .color(palette.text_secondary),
+                    )
+                    .fill(palette.bg_button)
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding::same(8.0))
+                    .min_size(egui::vec2(76.0, 30.0));
+                    if ui.add(cancel).clicked() {
+                        is_open = false;
+                    }
                 });
             });
         });
-    if !window_open || !is_open { state.open = false; }
+    if !window_open || !is_open {
+        state.open = false;
+    }
     result
 }
 
@@ -3239,13 +3474,19 @@ pub fn render_command_modal(
     state: &mut CommandModalState,
     palette: &ThemePalette,
 ) -> Option<SavedCommand> {
-    if !state.open { return None; }
+    if !state.open {
+        return None;
+    }
     if ctx.input(|input| input.key_pressed(Key::Escape)) {
         state.open = false;
         return None;
     }
     let mut result = None;
-    let title = if state.is_edit { "Edit command" } else { "Save command" };
+    let title = if state.is_edit {
+        "Edit command"
+    } else {
+        "Save command"
+    };
     let screen = ctx.screen_rect();
     let modal_w = 520.0_f32.min((screen.width() - 64.0).max(200.0));
     let max_h = 480.0_f32.min((screen.height() - 96.0).max(200.0));
@@ -3364,7 +3605,9 @@ pub fn render_command_modal(
                 });
             });
         });
-    if !window_open || !is_open { state.open = false; }
+    if !window_open || !is_open {
+        state.open = false;
+    }
     result
 }
 
@@ -3391,7 +3634,9 @@ pub fn render_new_service_modal(
     state: &mut NewServiceModalState,
     palette: &ThemePalette,
 ) -> Option<NewServiceDefinition> {
-    if !state.open { return None; }
+    if !state.open {
+        return None;
+    }
     if ctx.input(|input| input.key_pressed(Key::Escape)) {
         state.open = false;
         return None;
@@ -3405,37 +3650,70 @@ pub fn render_new_service_modal(
     Window::new(RichText::new("New systemd service").size(17.0).strong())
         .id(egui::Id::new("new_systemd_service_modal_dialog"))
         .open(&mut window_open)
-        .collapsible(false).resizable(false).movable(true)
-        .default_pos(screen.center()).pivot(egui::Align2::CENTER_CENTER)
-        .min_width(modal_w).max_width(modal_w)
+        .collapsible(false)
+        .resizable(false)
+        .movable(true)
+        .default_pos(screen.center())
+        .pivot(egui::Align2::CENTER_CENTER)
+        .min_width(modal_w)
+        .max_width(modal_w)
         .fixed_size(egui::vec2(modal_w, max_h))
-        .frame(egui::Frame::none().fill(palette.bg_card).stroke(Stroke::NONE)
-            .rounding(Rounding::same(14.0))
-            .shadow(egui::epaint::Shadow { offset: egui::vec2(0.0, 4.0), blur: 16.0, spread: 0.0, color: Color32::from_black_alpha(120) })
-            .inner_margin(egui::Margin::same(18.0)))
+        .frame(
+            egui::Frame::none()
+                .fill(palette.bg_card)
+                .stroke(Stroke::NONE)
+                .rounding(Rounding::same(14.0))
+                .shadow(egui::epaint::Shadow {
+                    offset: egui::vec2(0.0, 4.0),
+                    blur: 16.0,
+                    spread: 0.0,
+                    color: Color32::from_black_alpha(120),
+                })
+                .inner_margin(egui::Margin::same(18.0)),
+        )
         .show(ctx, |ui| {
             *ui.visuals_mut() = palette.egui_visuals();
             ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
             ui.spacing_mut().interact_size.y = 26.0;
             ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
-            ui.style_mut().text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
-            ui.style_mut().text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(11.5));
-            ui.style_mut().text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(11.5));
+            ui.style_mut()
+                .text_styles
+                .insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
+            ui.style_mut()
+                .text_styles
+                .insert(egui::TextStyle::Button, egui::FontId::proportional(11.5));
+            ui.style_mut()
+                .text_styles
+                .insert(egui::TextStyle::Monospace, egui::FontId::monospace(11.5));
             ui.visuals_mut().widgets.inactive.weak_bg_fill = palette.bg_button;
-            ui.label(RichText::new("Configure a service, then create and enable its unit.").size(11.5).color(palette.text_muted));
+            ui.label(
+                RichText::new("Configure a service, then create and enable its unit.")
+                    .size(11.5)
+                    .color(palette.text_muted),
+            );
             if let Some(error) = &state.error {
                 ui.label(RichText::new(error).size(11.5).color(palette.danger));
             }
             ui.add_space(8.0);
-            let body_height = (ui.available_height() - 40.0 - 2.0 * ui.spacing().item_spacing.y).max(0.0);
-            egui::ScrollArea::vertical().id_salt("new_service_form")
-                .max_height(body_height).auto_shrink([false, false]).drag_to_scroll(false)
+            let body_height =
+                (ui.available_height() - 40.0 - 2.0 * ui.spacing().item_spacing.y).max(0.0);
+            egui::ScrollArea::vertical()
+                .id_salt("new_service_form")
+                .max_height(body_height)
+                .auto_shrink([false, false])
+                .drag_to_scroll(false)
                 .show(ui, |ui| {
                     // Unit name
                     ui.label(RichText::new("Service unit name *").size(12.0).strong());
-                    ui.add(egui::TextEdit::singleline(&mut state.def.name).text_color(palette.text_secondary)
-                        .margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).clip_text(true)
-                        .desired_width(ui.available_width()).hint_text(RichText::new("my-app.service").color(palette.text_muted)));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.def.name)
+                            .text_color(palette.text_secondary)
+                            .margin(egui::vec2(8.0, 6.0))
+                            .min_size(egui::vec2(0.0, 30.0))
+                            .clip_text(true)
+                            .desired_width(ui.available_width())
+                            .hint_text(RichText::new("my-app.service").color(palette.text_muted)),
+                    );
                     ui.add_space(8.0);
                     // Scope and restart policy stack on narrower displays.
                     let columns = if ui.available_width() >= 420.0 { 2 } else { 1 };
@@ -3443,19 +3721,41 @@ pub fn render_new_service_modal(
                         cols[0].vertical(|ui| {
                             ui.label(RichText::new("Scope").size(12.0).strong());
                             egui::ComboBox::from_id_salt("service_scope_combo")
-                                .selected_text(RichText::new(if state.def.is_user { "User (--user)" } else { "System" }).size(11.5).color(palette.text_secondary))
-                                .width(ui.available_width()).show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut state.def.is_user, true, "User (--user)");
+                                .selected_text(
+                                    RichText::new(if state.def.is_user {
+                                        "User (--user)"
+                                    } else {
+                                        "System"
+                                    })
+                                    .size(11.5)
+                                    .color(palette.text_secondary),
+                                )
+                                .width(ui.available_width())
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(
+                                        &mut state.def.is_user,
+                                        true,
+                                        "User (--user)",
+                                    );
                                     ui.selectable_value(&mut state.def.is_user, false, "System");
                                 });
                         });
                         cols[columns - 1].vertical(|ui| {
                             ui.label(RichText::new("Restart policy").size(12.0).strong());
                             egui::ComboBox::from_id_salt("service_restart_combo")
-                                .selected_text(RichText::new(&state.def.restart).size(11.5).color(palette.text_secondary))
-                                .width(ui.available_width()).show_ui(ui, |ui| {
+                                .selected_text(
+                                    RichText::new(&state.def.restart)
+                                        .size(11.5)
+                                        .color(palette.text_secondary),
+                                )
+                                .width(ui.available_width())
+                                .show_ui(ui, |ui| {
                                     for policy in ["always", "on-failure", "no"] {
-                                        ui.selectable_value(&mut state.def.restart, policy.to_string(), policy);
+                                        ui.selectable_value(
+                                            &mut state.def.restart,
+                                            policy.to_string(),
+                                            policy,
+                                        );
                                     }
                                 });
                         });
@@ -3463,39 +3763,84 @@ pub fn render_new_service_modal(
                     ui.add_space(8.0);
                     // Description
                     ui.label(RichText::new("Description").size(12.0).strong());
-                    ui.add(egui::TextEdit::singleline(&mut state.def.description).text_color(palette.text_secondary)
-                        .margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).clip_text(true)
-                        .desired_width(ui.available_width()).hint_text(RichText::new("My background service").color(palette.text_muted)));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.def.description)
+                            .text_color(palette.text_secondary)
+                            .margin(egui::vec2(8.0, 6.0))
+                            .min_size(egui::vec2(0.0, 30.0))
+                            .clip_text(true)
+                            .desired_width(ui.available_width())
+                            .hint_text(
+                                RichText::new("My background service").color(palette.text_muted),
+                            ),
+                    );
                     ui.add_space(8.0);
                     // ExecStart: executable and arguments
                     ui.label(RichText::new("ExecStart *").size(12.0).strong());
-                    ui.add(egui::TextEdit::singleline(&mut state.def.exec_start).font(egui::TextStyle::Monospace)
-                        .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0))
-                        .clip_text(true).desired_width(ui.available_width())
-                        .hint_text(RichText::new("/usr/bin/python3 /home/user/app/server.py").color(palette.text_muted)));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.def.exec_start)
+                            .font(egui::TextStyle::Monospace)
+                            .text_color(palette.text_secondary)
+                            .margin(egui::vec2(8.0, 6.0))
+                            .min_size(egui::vec2(0.0, 30.0))
+                            .clip_text(true)
+                            .desired_width(ui.available_width())
+                            .hint_text(
+                                RichText::new("/usr/bin/python3 /home/user/app/server.py")
+                                    .color(palette.text_muted),
+                            ),
+                    );
                     ui.add_space(8.0);
                     // Working directory
-                    ui.label(RichText::new("Working directory (optional)").size(12.0).strong());
-                    ui.add(egui::TextEdit::singleline(&mut state.def.working_dir).font(egui::TextStyle::Monospace)
-                        .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0))
-                        .clip_text(true).desired_width(ui.available_width())
-                        .hint_text(RichText::new("/home/user/app").color(palette.text_muted)));
+                    ui.label(
+                        RichText::new("Working directory (optional)")
+                            .size(12.0)
+                            .strong(),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.def.working_dir)
+                            .font(egui::TextStyle::Monospace)
+                            .text_color(palette.text_secondary)
+                            .margin(egui::vec2(8.0, 6.0))
+                            .min_size(egui::vec2(0.0, 30.0))
+                            .clip_text(true)
+                            .desired_width(ui.available_width())
+                            .hint_text(RichText::new("/home/user/app").color(palette.text_muted)),
+                    );
                     ui.add_space(8.0);
                     // Environment
                     ui.label(RichText::new("Environment (optional)").size(12.0).strong());
-                    ui.add(egui::TextEdit::singleline(&mut state.def.environment).font(egui::TextStyle::Monospace)
-                        .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0))
-                        .clip_text(true).desired_width(ui.available_width())
-                        .hint_text(RichText::new("PORT=8080 NODE_ENV=production").color(palette.text_muted)));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.def.environment)
+                            .font(egui::TextStyle::Monospace)
+                            .text_color(palette.text_secondary)
+                            .margin(egui::vec2(8.0, 6.0))
+                            .min_size(egui::vec2(0.0, 30.0))
+                            .clip_text(true)
+                            .desired_width(ui.available_width())
+                            .hint_text(
+                                RichText::new("PORT=8080 NODE_ENV=production")
+                                    .color(palette.text_muted),
+                            ),
+                    );
                     ui.add_space(8.0);
                     // Generated preview remains read-only and selectable.
                     egui::CollapsingHeader::new(RichText::new("Preview unit file").size(11.5))
-                        .id_salt("new_service_preview").show(ui, |ui| {
+                        .id_salt("new_service_preview")
+                        .show(ui, |ui| {
                             let preview = state.def.generate_service_content();
-                            egui::ScrollArea::vertical().id_salt("new_service_preview_scroll").max_height(160.0)
-                                .drag_to_scroll(false).show(ui, |ui| {
-                                    ui.add(egui::TextEdit::multiline(&mut preview.as_str()).font(egui::TextStyle::Monospace)
-                                        .text_color(palette.text_secondary).desired_rows(6).desired_width(ui.available_width()));
+                            egui::ScrollArea::vertical()
+                                .id_salt("new_service_preview_scroll")
+                                .max_height(160.0)
+                                .drag_to_scroll(false)
+                                .show(ui, |ui| {
+                                    ui.add(
+                                        egui::TextEdit::multiline(&mut preview.as_str())
+                                            .font(egui::TextStyle::Monospace)
+                                            .text_color(palette.text_secondary)
+                                            .desired_rows(6)
+                                            .desired_width(ui.available_width()),
+                                    );
                                 });
                         });
                 });
@@ -3504,9 +3849,15 @@ pub fn render_new_service_modal(
             ui.horizontal(|ui| {
                 ui.set_min_height(30.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let create = egui::Button::new(RichText::new(format!("{} Create & enable", crate::lucide::PLAY_FILLED)).size(11.5).color(palette.accent_text))
-                        .fill(palette.accent).stroke(Stroke::NONE).rounding(Rounding::same(8.0))
-                        .min_size(egui::vec2(140.0, 30.0));
+                    let create = egui::Button::new(
+                        RichText::new(format!("{} Create & enable", crate::lucide::PLAY_FILLED))
+                            .size(11.5)
+                            .color(palette.accent_text),
+                    )
+                    .fill(palette.accent)
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding::same(8.0))
+                    .min_size(egui::vec2(140.0, 30.0));
                     if ui.add(create).clicked() {
                         if state.def.name.trim().is_empty() {
                             state.error = Some("Service name cannot be empty".to_string());
@@ -3518,14 +3869,24 @@ pub fn render_new_service_modal(
                             is_open = false;
                         }
                     }
-                    let cancel = egui::Button::new(RichText::new("Cancel").size(11.5).color(palette.text_secondary))
-                        .fill(palette.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(8.0))
-                        .min_size(egui::vec2(76.0, 30.0));
-                    if ui.add(cancel).clicked() { is_open = false; }
+                    let cancel = egui::Button::new(
+                        RichText::new("Cancel")
+                            .size(11.5)
+                            .color(palette.text_secondary),
+                    )
+                    .fill(palette.bg_button)
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding::same(8.0))
+                    .min_size(egui::vec2(76.0, 30.0));
+                    if ui.add(cancel).clicked() {
+                        is_open = false;
+                    }
                 });
             });
         });
-    if !window_open || !is_open { state.open = false; }
+    if !window_open || !is_open {
+        state.open = false;
+    }
     result
 }
 
@@ -3587,103 +3948,176 @@ pub fn render_remote_start_server_modal(
     Window::new(RichText::new(title).size(17.0).strong())
         .id(egui::Id::new("remote_start_server_modal_dialog"))
         .open(&mut window_open)
-        .collapsible(false).resizable(false).movable(true)
-        .default_pos(screen.center()).pivot(egui::Align2::CENTER_CENTER)
+        .collapsible(false)
+        .resizable(false)
+        .movable(true)
+        .default_pos(screen.center())
+        .pivot(egui::Align2::CENTER_CENTER)
         .fixed_size(egui::vec2(modal_w, max_h))
-        .frame(egui::Frame::none().fill(palette.bg_card)
-            .stroke(Stroke::NONE).rounding(Rounding::same(14.0))
-            .shadow(egui::epaint::Shadow { offset: egui::vec2(0.0, 4.0), blur: 16.0, spread: 0.0, color: Color32::from_black_alpha(120) })
-            .inner_margin(egui::Margin::same(18.0)))
+        .frame(
+            egui::Frame::none()
+                .fill(palette.bg_card)
+                .stroke(Stroke::NONE)
+                .rounding(Rounding::same(14.0))
+                .shadow(egui::epaint::Shadow {
+                    offset: egui::vec2(0.0, 4.0),
+                    blur: 16.0,
+                    spread: 0.0,
+                    color: Color32::from_black_alpha(120),
+                })
+                .inner_margin(egui::Margin::same(18.0)),
+        )
         .show(ctx, |ui| {
             *ui.visuals_mut() = palette.egui_visuals();
             ui.spacing_mut().interact_size.y = 24.0;
             ui.spacing_mut().item_spacing = egui::vec2(8.0, 4.0);
             ui.spacing_mut().button_padding = egui::vec2(8.0, 3.0);
-            ui.style_mut().text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
-            ui.style_mut().text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(11.5));
-            ui.style_mut().text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(11.5));
+            ui.style_mut()
+                .text_styles
+                .insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
+            ui.style_mut()
+                .text_styles
+                .insert(egui::TextStyle::Button, egui::FontId::proportional(11.5));
+            ui.style_mut()
+                .text_styles
+                .insert(egui::TextStyle::Monospace, egui::FontId::monospace(11.5));
             ui.visuals_mut().widgets.inactive.weak_bg_fill = palette.bg_button;
             ui.visuals_mut().widgets.inactive.bg_fill = palette.bg_button;
             ui.visuals_mut().widgets.hovered.weak_bg_fill = palette.bg_card_active;
             ui.visuals_mut().widgets.active.weak_bg_fill = palette.accent_subtle;
             ui.add_space(4.0);
 
-            egui::ScrollArea::vertical().id_salt("remote_start_form")
+            egui::ScrollArea::vertical()
+                .id_salt("remote_start_form")
                 .auto_shrink([false, false])
                 .min_scrolled_height((max_h - 100.0).max(80.0))
-                .max_height((max_h - 100.0).max(80.0)).show(ui, |ui| {
-            // Subtitle: Target host info
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Target Host:").size(11.0).color(palette.text_muted));
-                egui::Frame::none()
-                    .fill(palette.accent_subtle)
-                    .rounding(Rounding::same(8.0))
-                    .inner_margin(egui::Margin::symmetric(8.0, 2.0))
-                    .show(ui, |ui| {
-                        ui.label(RichText::new(&state.host_name).size(11.0).strong().color(palette.accent));
+                .max_height((max_h - 100.0).max(80.0))
+                .show(ui, |ui| {
+                    // Subtitle: Target host info
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Target Host:")
+                                .size(11.0)
+                                .color(palette.text_muted),
+                        );
+                        egui::Frame::none()
+                            .fill(palette.accent_subtle)
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(8.0, 2.0))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new(&state.host_name)
+                                        .size(11.0)
+                                        .strong()
+                                        .color(palette.accent),
+                                );
+                            });
                     });
-            });
-            ui.add_space(4.0);
+                    ui.add_space(4.0);
 
-            if let Some(ref err) = state.error {
-                egui::Frame::none()
-                    .fill(palette.danger_subtle)
-                    .rounding(Rounding::same(8.0))
-                    .inner_margin(egui::Margin::symmetric(10.0, 6.0))
-                    .show(ui, |ui| {
-                        ui.label(RichText::new(format!("{} {}", crate::lucide::ALERT_TRIANGLE, err)).size(11.0).color(palette.danger));
-                    });
-                ui.add_space(4.0);
-            }
+                    if let Some(ref err) = state.error {
+                        egui::Frame::none()
+                            .fill(palette.danger_subtle)
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{} {}",
+                                        crate::lucide::ALERT_TRIANGLE,
+                                        err
+                                    ))
+                                    .size(11.0)
+                                    .color(palette.danger),
+                                );
+                            });
+                        ui.add_space(4.0);
+                    }
 
-            // Server Name
-            ui.label(RichText::new("Server / Service Name:").size(11.5).strong().color(palette.text_primary));
-            ui.add(
-                egui::TextEdit::singleline(&mut state.name)
-                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0))
-                    .hint_text(RichText::new("e.g. web-app, node-backend, nginx").color(palette.text_muted))
-                    .desired_width(ui.available_width()),
-            );
-            ui.add_space(4.0);
+                    // Server Name
+                    ui.label(
+                        RichText::new("Server / Service Name:")
+                            .size(11.5)
+                            .strong()
+                            .color(palette.text_primary),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.name)
+                            .text_color(palette.text_secondary)
+                            .margin(egui::vec2(8.0, 6.0))
+                            .hint_text(
+                                RichText::new("e.g. web-app, node-backend, nginx")
+                                    .color(palette.text_muted),
+                            )
+                            .desired_width(ui.available_width()),
+                    );
+                    ui.add_space(4.0);
 
-            // Port (optional)
-            ui.label(RichText::new("Port (optional):").size(11.5).strong().color(palette.text_primary));
-            ui.add(
-                egui::TextEdit::singleline(&mut state.port)
-                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0))
-                    .hint_text(RichText::new("e.g. 8080 or 3000").color(palette.text_muted))
-                    .desired_width(ui.available_width()),
-            );
-            ui.add_space(4.0);
+                    // Port (optional)
+                    ui.label(
+                        RichText::new("Port (optional):")
+                            .size(11.5)
+                            .strong()
+                            .color(palette.text_primary),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.port)
+                            .text_color(palette.text_secondary)
+                            .margin(egui::vec2(8.0, 6.0))
+                            .hint_text(RichText::new("e.g. 8080 or 3000").color(palette.text_muted))
+                            .desired_width(ui.available_width()),
+                    );
+                    ui.add_space(4.0);
 
-            // Command
-            ui.label(RichText::new("Launch Command:").size(11.5).strong().color(palette.text_primary));
-            ui.add(
-                egui::TextEdit::singleline(&mut state.command)
-                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0))
-                    .hint_text(RichText::new("e.g. python3 -m http.server 8080 or npm run dev").color(palette.text_muted))
-                    .desired_width(ui.available_width()),
-            );
-            ui.add_space(4.0);
+                    // Command
+                    ui.label(
+                        RichText::new("Launch Command:")
+                            .size(11.5)
+                            .strong()
+                            .color(palette.text_primary),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.command)
+                            .text_color(palette.text_secondary)
+                            .margin(egui::vec2(8.0, 6.0))
+                            .hint_text(
+                                RichText::new("e.g. python3 -m http.server 8080 or npm run dev")
+                                    .color(palette.text_muted),
+                            )
+                            .desired_width(ui.available_width()),
+                    );
+                    ui.add_space(4.0);
 
-            // Working directory
-            ui.label(RichText::new("Working Directory:").size(11.5).strong().color(palette.text_primary));
-            ui.add(
-                egui::TextEdit::singleline(&mut state.cwd)
-                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0))
-                    .hint_text(RichText::new("e.g. /var/www or ~/projects/app").color(palette.text_muted))
-                    .desired_width(ui.available_width()),
-            );
-            ui.add_space(14.0);
-
+                    // Working directory
+                    ui.label(
+                        RichText::new("Working Directory:")
+                            .size(11.5)
+                            .strong()
+                            .color(palette.text_primary),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.cwd)
+                            .text_color(palette.text_secondary)
+                            .margin(egui::vec2(8.0, 6.0))
+                            .hint_text(
+                                RichText::new("e.g. /var/www or ~/projects/app")
+                                    .color(palette.text_muted),
+                            )
+                            .desired_width(ui.available_width()),
+                    );
+                    ui.add_space(14.0);
                 });
             // Buttons
             ui.horizontal(|ui| {
-                let btn_cancel = egui::Button::new(RichText::new("Cancel").size(12.0).color(palette.text_secondary))
-                    .fill(palette.bg_button)
-                    .stroke(Stroke::NONE)
-                    .rounding(Rounding::same(8.0))
-                    .min_size(egui::vec2(75.0, 28.0));
+                let btn_cancel = egui::Button::new(
+                    RichText::new("Cancel")
+                        .size(12.0)
+                        .color(palette.text_secondary),
+                )
+                .fill(palette.bg_button)
+                .stroke(Stroke::NONE)
+                .rounding(Rounding::same(8.0))
+                .min_size(egui::vec2(75.0, 28.0));
                 if ui.add(btn_cancel).clicked() {
                     state.open = false;
                     is_open = false;
@@ -3691,7 +4125,10 @@ pub fn render_remote_start_server_modal(
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_start = egui::Button::new(
-                        RichText::new(format!("{} Start Server", crate::lucide::PLAY)).size(12.0).strong().color(palette.accent_text),
+                        RichText::new(format!("{} Start Server", crate::lucide::PLAY))
+                            .size(12.0)
+                            .strong()
+                            .color(palette.accent_text),
                     )
                     .fill(palette.accent)
                     .rounding(Rounding::same(8.0))
@@ -3706,7 +4143,11 @@ pub fn render_remote_start_server_modal(
                                 if let Ok(p) = state.port.trim().parse::<u16>() {
                                     format!("port_{}", p)
                                 } else {
-                                    cmd_trimmed.split_whitespace().next().unwrap_or("remote_server").to_string()
+                                    cmd_trimmed
+                                        .split_whitespace()
+                                        .next()
+                                        .unwrap_or("remote_server")
+                                        .to_string()
                                 }
                             } else {
                                 state.name.trim().to_string()
@@ -3829,7 +4270,11 @@ pub fn render_sudo_modal(
             render_modal_titlebar(ui, &title, &mut is_open);
             ui.add_space(10.0);
 
-            let script_name = state.script.as_ref().map(|s| s.name.as_str()).unwrap_or("Script");
+            let script_name = state
+                .script
+                .as_ref()
+                .map(|s| s.name.as_str())
+                .unwrap_or("Script");
             let target_desc = if let Some(ref h) = state.host_name {
                 format!("Target Host: {}", h)
             } else {
@@ -3843,14 +4288,21 @@ pub fn render_sudo_modal(
                 .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(crate::lucide::SHIELD).size(22.0).color(palette.accent));
+                        ui.label(
+                            RichText::new(crate::lucide::SHIELD)
+                                .size(22.0)
+                                .color(palette.accent),
+                        );
                         ui.add_space(6.0);
                         ui.vertical(|ui| {
                             ui.label(
-                                RichText::new(format!("'{}' requires sudo / root privileges", script_name))
-                                    .size(12.5)
-                                    .strong()
-                                    .color(palette.text_primary),
+                                RichText::new(format!(
+                                    "'{}' requires sudo / root privileges",
+                                    script_name
+                                ))
+                                .size(12.5)
+                                .strong()
+                                .color(palette.text_primary),
                             );
                             ui.label(
                                 RichText::new(target_desc)
@@ -3871,7 +4323,11 @@ pub fn render_sudo_modal(
                     .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(crate::lucide::X).size(12.0).color(palette.danger));
+                            ui.label(
+                                RichText::new(crate::lucide::X)
+                                    .size(12.0)
+                                    .color(palette.danger),
+                            );
                             ui.label(RichText::new(err).size(11.5).color(palette.danger));
                         });
                     });
@@ -3886,29 +4342,40 @@ pub fn render_sudo_modal(
             );
             ui.add_space(4.0);
 
-            let text_edit_response = ui.horizontal(|ui| {
-                let avail_w = (ui.available_width() - 36.0).max(100.0);
-                let text_edit = egui::TextEdit::singleline(&mut state.password)
-                    .password(!state.show_password)
-                    .hint_text("Enter root/sudo password...")
-                    .desired_width(avail_w);
-                let resp = ui.add(text_edit);
-                if state.auto_focus_requested {
-                    resp.request_focus();
-                    state.auto_focus_requested = false;
-                }
+            let text_edit_response = ui
+                .horizontal(|ui| {
+                    let avail_w = (ui.available_width() - 36.0).max(100.0);
+                    let text_edit = egui::TextEdit::singleline(&mut state.password)
+                        .password(!state.show_password)
+                        .hint_text("Enter root/sudo password...")
+                        .desired_width(avail_w);
+                    let resp = ui.add(text_edit);
+                    if state.auto_focus_requested {
+                        resp.request_focus();
+                        state.auto_focus_requested = false;
+                    }
 
-                let eye_btn = egui::Button::new(
-                    RichText::new(if state.show_password { crate::lucide::EYE_OFF } else { crate::lucide::EYE }).size(12.0),
-                )
-                .fill(Color32::from_rgb(30, 34, 48))
-                .rounding(Rounding::same(6.0));
-                if ui.add(eye_btn).hover_tip("Toggle password visibility").clicked() {
-                    state.show_password = !state.show_password;
-                }
+                    let eye_btn = egui::Button::new(
+                        RichText::new(if state.show_password {
+                            crate::lucide::EYE_OFF
+                        } else {
+                            crate::lucide::EYE
+                        })
+                        .size(12.0),
+                    )
+                    .fill(Color32::from_rgb(30, 34, 48))
+                    .rounding(Rounding::same(6.0));
+                    if ui
+                        .add(eye_btn)
+                        .hover_tip("Toggle password visibility")
+                        .clicked()
+                    {
+                        state.show_password = !state.show_password;
+                    }
 
-                resp
-            }).inner;
+                    resp
+                })
+                .inner;
 
             if text_edit_response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                 submit_requested = true;
@@ -3916,9 +4383,12 @@ pub fn render_sudo_modal(
 
             ui.add_space(6.0);
             ui.label(
-                RichText::new(format!("{} Password is securely provided via askpass helper and not saved.", crate::lucide::LOCK))
-                    .size(10.5)
-                    .color(palette.text_muted),
+                RichText::new(format!(
+                    "{} Password is securely provided via askpass helper and not saved.",
+                    crate::lucide::LOCK
+                ))
+                .size(10.5)
+                .color(palette.text_muted),
             );
 
             ui.add_space(14.0);
@@ -3940,9 +4410,7 @@ pub fn render_sudo_modal(
                     }
 
                     let btn_cancel = egui::Button::new(
-                        RichText::new("Cancel")
-                            .size(12.0)
-                            .color(palette.text_muted),
+                        RichText::new("Cancel").size(12.0).color(palette.text_muted),
                     )
                     .fill(Color32::from_rgb(30, 34, 48))
                     .rounding(Rounding::same(8.0))
@@ -4209,7 +4677,8 @@ pub fn render_remote_reboot_modal(
 
     if submit_requested {
         if state.password.trim().is_empty() {
-            state.error = Some("Password is required to authorize sudo reboot on remote device.".to_string());
+            state.error =
+                Some("Password is required to authorize sudo reboot on remote device.".to_string());
         } else {
             result = Some((host, state.password.clone()));
             state.close();
@@ -4440,7 +4909,9 @@ pub fn render_remote_shutdown_modal(
 
     if submit_requested {
         if state.password.trim().is_empty() {
-            state.error = Some("Password is required to authorize sudo poweroff on remote device.".to_string());
+            state.error = Some(
+                "Password is required to authorize sudo poweroff on remote device.".to_string(),
+            );
         } else {
             result = Some((host, state.password.clone()));
             state.close();
@@ -4477,17 +4948,19 @@ mod tests {
         assert_eq!(modal.group, "MCP");
         assert_eq!(modal.headers.len(), 1);
         assert_eq!(modal.headers[0].0, "X-Goog-Api-Key");
-        assert_eq!(
-            modal.headers[0].1,
-            "YOUR_API_KEY"
-        );
+        assert_eq!(modal.headers[0].1, "YOUR_API_KEY");
         assert!(modal.command.contains("curl -i"));
         assert!(modal.command.contains("X-Goog-Api-Key"));
 
-        let cfg = modal.to_server_config().expect("Should convert to ServerConfig");
+        let cfg = modal
+            .to_server_config()
+            .expect("Should convert to ServerConfig");
         assert_eq!(cfg.key, "stitch");
         assert_eq!(cfg.server_type.as_deref(), Some("http"));
-        assert_eq!(cfg.url.as_deref(), Some("https://stitch.googleapis.com/mcp"));
+        assert_eq!(
+            cfg.url.as_deref(),
+            Some("https://stitch.googleapis.com/mcp")
+        );
         assert_eq!(cfg.group, "MCP");
     }
 
@@ -4506,7 +4979,10 @@ mod tests {
 
         modal.open_for_script(script.clone(), None);
         assert!(modal.open);
-        assert_eq!(modal.script.as_ref().map(|s| s.name.as_str()), Some("Test Sudo"));
+        assert_eq!(
+            modal.script.as_ref().map(|s| s.name.as_str()),
+            Some("Test Sudo")
+        );
         assert_eq!(modal.host_id, None);
         assert!(modal.password.is_empty());
         assert!(modal.auto_focus_requested);
@@ -4525,7 +5001,9 @@ mod tests {
 
         modal.open_add();
 
-        assert!(sender.send(Ok("Connected to previous host".into())).is_err());
+        assert!(sender
+            .send(Ok("Connected to previous host".into()))
+            .is_err());
         assert!(modal.test_result.is_none());
     }
 
@@ -4549,7 +5027,10 @@ mod tests {
         };
         modal.open_for_host(&host);
         assert!(modal.open);
-        assert_eq!(modal.host.as_ref().map(|h| h.name.as_str()), Some("My Server"));
+        assert_eq!(
+            modal.host.as_ref().map(|h| h.name.as_str()),
+            Some("My Server")
+        );
         assert_eq!(modal.password, "saved_pass");
         assert!(modal.auto_focus_requested);
 
@@ -4579,7 +5060,10 @@ mod tests {
         };
         modal.open_for_host(&host);
         assert!(modal.open);
-        assert_eq!(modal.host.as_ref().map(|h| h.name.as_str()), Some("My Server"));
+        assert_eq!(
+            modal.host.as_ref().map(|h| h.name.as_str()),
+            Some("My Server")
+        );
         assert_eq!(modal.password, "saved_pass");
         assert!(modal.auto_focus_requested);
 
@@ -4616,9 +5100,21 @@ mod tests {
         );
 
         for (idx, tpl) in SERVER_TEMPLATES.iter().enumerate() {
-            assert!(!tpl.name.trim().is_empty(), "Template name cannot be empty at {}", idx);
-            assert!(!tpl.command.trim().is_empty(), "Template command cannot be empty for {}", tpl.name);
-            assert!(!tpl.group.trim().is_empty(), "Template group cannot be empty for {}", tpl.name);
+            assert!(
+                !tpl.name.trim().is_empty(),
+                "Template name cannot be empty at {}",
+                idx
+            );
+            assert!(
+                !tpl.command.trim().is_empty(),
+                "Template command cannot be empty for {}",
+                tpl.name
+            );
+            assert!(
+                !tpl.group.trim().is_empty(),
+                "Template group cannot be empty for {}",
+                tpl.name
+            );
 
             let mut modal = AddEditModalState::default();
             modal.open_new();
@@ -4629,7 +5125,11 @@ mod tests {
             assert_eq!(modal.stop_command, tpl.stop_command);
             assert_eq!(modal.port_str, tpl.port.to_string());
             assert_eq!(modal.group, tpl.group);
-            assert!(!modal.key.is_empty(), "Key must not be empty after template apply: {}", tpl.name);
+            assert!(
+                !modal.key.is_empty(),
+                "Key must not be empty after template apply: {}",
+                tpl.name
+            );
 
             let config_res = modal.to_server_config();
             assert!(
@@ -4643,7 +5143,10 @@ mod tests {
 
     #[test]
     fn test_server_dialog_render_preserves_configuration() {
-        for mode in [crate::theme::ThemeMode::Dark, crate::theme::ThemeMode::Light] {
+        for mode in [
+            crate::theme::ThemeMode::Dark,
+            crate::theme::ThemeMode::Light,
+        ] {
             for size in [egui::vec2(800.0, 700.0), egui::vec2(360.0, 480.0)] {
                 let ctx = egui::Context::default();
                 let palette = mode.palette();
@@ -4656,16 +5159,27 @@ mod tests {
                 state.port_str = "8080".into();
                 state.env_text = "EXAMPLE=value".into();
                 state.actions.push(("Build".into(), "npm run build".into()));
-                state.links.push(("Local".into(), "http://localhost:8080".into()));
+                state
+                    .links
+                    .push(("Local".into(), "http://localhost:8080".into()));
                 state.autostart = true;
                 state.auto_restart = true;
                 state.own_console = true;
                 let expected = serde_json::to_value(state.to_server_config().unwrap()).unwrap();
-                let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)), ..Default::default() };
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    ..Default::default()
+                };
                 let _ = ctx.run(input, |ctx| {
-                    assert!(matches!(render_add_edit_modal(ctx, &mut state, &palette), ModalAction::None));
+                    assert!(matches!(
+                        render_add_edit_modal(ctx, &mut state, &palette),
+                        ModalAction::None
+                    ));
                 });
-                assert_eq!(serde_json::to_value(state.to_server_config().unwrap()).unwrap(), expected);
+                assert_eq!(
+                    serde_json::to_value(state.to_server_config().unwrap()).unwrap(),
+                    expected
+                );
                 assert!(state.open);
             }
         }
@@ -4681,14 +5195,22 @@ mod tests {
                 let visuals = ui.visuals();
 
                 // Input typed text must render in light grey
-                let text_color = visuals.override_text_color.expect("override_text_color must be set");
-                assert!(text_color.r() >= 200 && text_color.g() >= 200 && text_color.b() >= 200,
-                    "Input text color must be light grey, got {:?}", text_color);
+                let text_color = visuals
+                    .override_text_color
+                    .expect("override_text_color must be set");
+                assert!(
+                    text_color.r() >= 200 && text_color.g() >= 200 && text_color.b() >= 200,
+                    "Input text color must be light grey, got {:?}",
+                    text_color
+                );
 
                 // Placeholders (weak_text_color) must also render in light grey
                 let weak_color = visuals.weak_text_color();
-                assert!(weak_color.r() >= 180 && weak_color.g() >= 180 && weak_color.b() >= 180,
-                    "Placeholder text color must be light grey, got {:?}", weak_color);
+                assert!(
+                    weak_color.r() >= 180 && weak_color.g() >= 180 && weak_color.b() >= 180,
+                    "Placeholder text color must be light grey, got {:?}",
+                    weak_color
+                );
 
                 // Inactive and noninteractive strokes must be light grey
                 assert!(visuals.widgets.inactive.fg_stroke.color.r() >= 190);
@@ -4697,5 +5219,3 @@ mod tests {
         });
     }
 }
-
-

@@ -1,10 +1,12 @@
-use super::{credentials::DesktopProtocol, profile::RdpSecurity, setup::plan::Intent, ui_kit as kit};
+use super::{
+    credentials::DesktopProtocol, profile::RdpSecurity, setup::plan::Intent, ui_kit as kit,
+};
+use egui::{Align2, Color32, Order, Rounding, Stroke};
 use std::{
     io::{self, Read, Write},
     net::{TcpStream, ToSocketAddrs},
     time::{Duration, Instant},
 };
-use egui::{Align2, Color32, Order, Rounding, Stroke};
 
 type DetectionResult = Result<super::setup::model::ServiceInventoryReport, String>;
 type ActionResult = Result<usize, String>;
@@ -55,7 +57,12 @@ fn card_frame(p: &crate::theme::ThemePalette, tier: u8, radius: f32) -> egui::Fr
 }
 
 /// Ghost icon button: no fill, hover = one tier up, size 34x34.
-fn icon_button(ui: &mut egui::Ui, icon: &str, hover_tip: &str, p: &crate::theme::ThemePalette) -> egui::Response {
+fn icon_button(
+    ui: &mut egui::Ui,
+    icon: &str,
+    hover_tip: &str,
+    p: &crate::theme::ThemePalette,
+) -> egui::Response {
     let btn = egui::Button::new(egui::RichText::new(icon).size(13.0))
         .fill(Color32::TRANSPARENT)
         .stroke(Stroke::NONE)
@@ -65,7 +72,11 @@ fn icon_button(ui: &mut egui::Ui, icon: &str, hover_tip: &str, p: &crate::theme:
     if resp.hovered() {
         ui.ctx().request_repaint();
         let rect = resp.rect;
-        ui.painter().rect_filled(rect, Rounding::same(10.0), mix_tint(tier_fill(p, 5), Color32::WHITE, 0.08));
+        ui.painter().rect_filled(
+            rect,
+            Rounding::same(10.0),
+            mix_tint(tier_fill(p, 5), Color32::WHITE, 0.08),
+        );
     }
     resp
 }
@@ -129,8 +140,11 @@ fn subdialog_backdrop(
         .show(ctx, |ui| {
             let size = ctx.screen_rect().size();
             let response = ui.allocate_response(size, egui::Sense::click());
-            ui.painter()
-                .rect_filled(response.rect, Rounding::ZERO, Color32::from_black_alpha(130));
+            ui.painter().rect_filled(
+                response.rect,
+                Rounding::ZERO,
+                Color32::from_black_alpha(130),
+            );
             if allow_cancel && response.clicked() {
                 *cancel = true;
             }
@@ -237,11 +251,7 @@ fn modal_code_block(
                 );
             });
             if copied.is_some_and(|at| at.elapsed() < Duration::from_secs(2)) {
-                ui.label(
-                    egui::RichText::new("Copied")
-                        .small()
-                        .color(palette.success),
-                );
+                ui.label(egui::RichText::new("Copied").small().color(palette.success));
             } else {
                 *copied = None;
             }
@@ -263,7 +273,11 @@ fn vnc_session_command(dialog: &VncSessionDialog) -> String {
     let depth = VNC_DEPTHS
         .get(dialog.depth_idx)
         .map_or("24", |(_, value)| *value);
-    let localhost = if dialog.localhost_disabled { "no" } else { "yes" };
+    let localhost = if dialog.localhost_disabled {
+        "no"
+    } else {
+        "yes"
+    };
     format!(
         "vncserver :{} -localhost {} -geometry {} -depth {}",
         dialog.display, localhost, geometry, depth
@@ -279,11 +293,16 @@ fn report_owner_from_host(host: &crate::config::SshRemoteHost) -> String {
 }
 
 fn compact_tonal_button<'a>(text: &'a str, fill: Color32, text_color: Color32) -> egui::Button<'a> {
-    egui::Button::new(egui::RichText::new(text).size(11.0).strong().color(text_color))
-        .fill(fill)
-        .stroke(Stroke::NONE)
-        .rounding(Rounding::same(8.0))
-        .min_size(egui::vec2(84.0, 28.0))
+    egui::Button::new(
+        egui::RichText::new(text)
+            .size(11.0)
+            .strong()
+            .color(text_color),
+    )
+    .fill(fill)
+    .stroke(Stroke::NONE)
+    .rounding(Rounding::same(8.0))
+    .min_size(egui::vec2(84.0, 28.0))
 }
 
 fn protocol_label(protocol: DesktopProtocol) -> &'static str {
@@ -295,7 +314,10 @@ fn protocol_label(protocol: DesktopProtocol) -> &'static str {
 
 fn with_auth_notice_once(info: &str) -> String {
     let trimmed = info.trim_end().trim_end_matches('.').trim_end();
-    if trimmed.to_ascii_lowercase().ends_with("authentication was not tested") {
+    if trimmed
+        .to_ascii_lowercase()
+        .ends_with("authentication was not tested")
+    {
         format!("{trimmed}.")
     } else {
         format!("{trimmed}. Authentication was not tested.")
@@ -351,10 +373,8 @@ fn host_detail_row(
                 |ui| {
                     ui.set_width(ui.available_width());
                     ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(value).color(palette.text_primary),
-                        )
-                        .wrap(),
+                        egui::Label::new(egui::RichText::new(value).color(palette.text_primary))
+                            .wrap(),
                     );
                 },
             )
@@ -372,21 +392,36 @@ fn footer_actions(
 ) -> Vec<(&'static str, Intent, bool)> {
     use super::setup::model::ServiceState::*;
     let Some(report) = report else {
-        return vec![("Restart", Intent::Restart, false), ("Start", Intent::Start, false)];
+        return vec![
+            ("Restart", Intent::Restart, false),
+            ("Start", Intent::Start, false),
+        ];
     };
     let service = report.service(protocol);
     let state = service.state();
     let mut actions = match state {
         RunningSystemd | RunningManual => {
-            vec![("Restart", Intent::Restart, true), ("Stop", Intent::Stop, true)]
+            vec![
+                ("Restart", Intent::Restart, true),
+                ("Stop", Intent::Stop, true),
+            ]
         }
         InstalledStopped => vec![("Start", Intent::Start, true)],
-        Failed => vec![("Start", Intent::Start, true), ("Restart", Intent::Restart, true)],
+        Failed => vec![
+            ("Start", Intent::Start, true),
+            ("Restart", Intent::Restart, true),
+        ],
         NotInstalled => vec![("Install", Intent::InstallAndStart, true)],
-        Unknown => vec![("Restart", Intent::Restart, false), ("Start", Intent::Start, false)],
+        Unknown => vec![
+            ("Restart", Intent::Restart, false),
+            ("Start", Intent::Start, false),
+        ],
     };
     if checking && state != NotInstalled {
-        actions = vec![("Restart", Intent::Restart, false), ("Start", Intent::Start, false)];
+        actions = vec![
+            ("Restart", Intent::Restart, false),
+            ("Start", Intent::Start, false),
+        ];
     }
     actions
 }
@@ -445,14 +480,9 @@ fn show_service_footer(
         ui.set_width(ui.available_width());
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
         for (label, intent, allowed) in actions {
-            let plan_error = report.and_then(|report| {
-                super::setup::plan::build_plan(report, protocol, intent).err()
-            });
-            if protocol == DesktopProtocol::Vnc
-                && plan_error.is_some()
-                && allowed
-                && !checking
-            {
+            let plan_error = report
+                .and_then(|report| super::setup::plan::build_plan(report, protocol, intent).err());
+            if protocol == DesktopProtocol::Vnc && plan_error.is_some() && allowed && !checking {
                 continue;
             }
             let enabled = allowed && !busy && plan_error.is_none();
@@ -580,11 +610,7 @@ fn show_vnc_footer(
         }
         let test = ui.add_enabled(
             enabled,
-            compact_tonal_button(
-                "Test login",
-                tier_fill(palette, 4),
-                palette.text_primary,
-            ),
+            compact_tonal_button("Test login", tier_fill(palette, 4), palette.text_primary),
         );
         if test.clicked() {
             *requested_vnc_action = Some(VncFooterAction::TestLogin);
@@ -622,14 +648,21 @@ fn show_vnc_footer(
     });
 }
 
-fn switch(ui: &mut egui::Ui, on: &mut bool, label: &str, helper: &str, p: &crate::theme::ThemePalette) -> bool {
+fn switch(
+    ui: &mut egui::Ui,
+    on: &mut bool,
+    label: &str,
+    helper: &str,
+    p: &crate::theme::ThemePalette,
+) -> bool {
     let track_w = 44.0;
     let track_h = 22.0;
     let knob_r = 9.0;
     let mut toggled = false;
 
     ui.horizontal(|ui| {
-        let (track_rect, track_resp) = ui.allocate_exact_size(egui::vec2(track_w, track_h), egui::Sense::click());
+        let (track_rect, track_resp) =
+            ui.allocate_exact_size(egui::vec2(track_w, track_h), egui::Sense::click());
         if track_resp.clicked() {
             *on = !*on;
             toggled = true;
@@ -637,15 +670,31 @@ fn switch(ui: &mut egui::Ui, on: &mut bool, label: &str, helper: &str, p: &crate
         }
         let hovered = track_resp.hovered();
         let track_fill = if *on { p.accent } else { tier_fill(p, 4) };
-        let knob_fill = if *on { Color32::WHITE } else { mix_tint(tier_fill(p, 4), Color32::WHITE, 0.55) };
-        let knob_x = if *on { track_rect.max.x - knob_r - 4.0 } else { track_rect.min.x + knob_r + 4.0 };
-        let track_color = if hovered { mix_tint(track_fill, Color32::WHITE, 0.12) } else { track_fill };
+        let knob_fill = if *on {
+            Color32::WHITE
+        } else {
+            mix_tint(tier_fill(p, 4), Color32::WHITE, 0.55)
+        };
+        let knob_x = if *on {
+            track_rect.max.x - knob_r - 4.0
+        } else {
+            track_rect.min.x + knob_r + 4.0
+        };
+        let track_color = if hovered {
+            mix_tint(track_fill, Color32::WHITE, 0.12)
+        } else {
+            track_fill
+        };
         ui.painter()
             .rect_filled(track_rect, Rounding::same(track_h / 2.0), track_color);
         let knob_center = egui::pos2(knob_x, track_rect.center().y);
         ui.painter().circle_filled(knob_center, knob_r, knob_fill);
         if hovered {
-            ui.painter().circle_filled(knob_center, knob_r * 1.2, mix_tint(track_fill, Color32::WHITE, 0.22));
+            ui.painter().circle_filled(
+                knob_center,
+                knob_r * 1.2,
+                mix_tint(track_fill, Color32::WHITE, 0.22),
+            );
         }
         ui.add_space(10.0);
         ui.vertical(|ui| {
@@ -831,11 +880,21 @@ impl ServerDetection {
         };
         ui.add_sized(
             [112.0, 29.0],
-            egui::Label::new(egui::RichText::new(name).size(12.0).strong().color(kit::TEXT)),
+            egui::Label::new(
+                egui::RichText::new(name)
+                    .size(12.0)
+                    .strong()
+                    .color(kit::TEXT),
+            ),
         );
         ui.add_space(8.0);
+        let action_width = if has_current_result && !self.scan_window_open {
+            192.0
+        } else {
+            88.0
+        };
         ui.allocate_ui_with_layout(
-            egui::vec2(88.0, 29.0),
+            egui::vec2(action_width, 29.0),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 if has_current_result && !self.scan_window_open {
@@ -843,14 +902,17 @@ impl ServerDetection {
                         self.scan_window_open = true;
                     }
                 }
-                let scan_enabled = can_scan && !checking;
+                let scan_enabled = can_scan && !checking && ui.is_enabled();
                 let scan_response = ui.add_enabled(
                     scan_enabled,
-                    egui::Button::new(if has_current_result { "Scan again" } else { "Scan" })
-                        .fill(kit::CONTROL)
-                        .stroke(egui::Stroke::NONE)
-                        .rounding(egui::Rounding::same(10.0))
-                        .min_size(egui::vec2(72.0, 28.0)),
+                    kit::compact_button_widget_enabled(
+                        if has_current_result {
+                            "Scan again"
+                        } else {
+                            "Scan"
+                        },
+                        scan_enabled,
+                    ),
                 );
                 kit::focus_ring(ui, &scan_response, scan_response.rect, 10.0);
                 if scan_response.clicked() {
@@ -858,9 +920,11 @@ impl ServerDetection {
                     self.show_manual_instructions = false;
                     self.start(host.clone(), key.clone(), timeout, ui.ctx().clone());
                 }
-            }
+            },
         );
-        if checking { ui.spinner(); }
+        if checking {
+            ui.spinner();
+        }
     }
 
     pub(crate) fn show(
@@ -878,10 +942,7 @@ impl ServerDetection {
             .as_ref()
             .is_some_and(|(cached_key, _)| cached_key == &key)
         {
-            self.history_cache = Some((
-                key.clone(),
-                super::setup::history::recent_for_host(host),
-            ));
+            self.history_cache = Some((key.clone(), super::setup::history::recent_for_host(host)));
         }
         let events = self
             .action_pending
@@ -890,27 +951,37 @@ impl ServerDetection {
             .unwrap_or_default();
         for event in events {
             match event {
-                super::setup::exec::ActionEvent::StepStarted { index, total, title } => {
+                super::setup::exec::ActionEvent::StepStarted {
+                    index,
+                    total,
+                    title,
+                } => {
                     self.action_status = format!("Step {index}/{total}: {title}");
                 }
-                super::setup::exec::ActionEvent::StepFinished { index, total, title, output } => {
+                super::setup::exec::ActionEvent::StepFinished {
+                    index,
+                    total,
+                    title,
+                    output,
+                } => {
                     self.action_status = format!("Completed {index}/{total}: {title}");
                     if !output.trim().is_empty() {
                         self.action_logs.push_str(&format!("\n{title}\n{output}"));
                         let excess = self.action_logs.len().saturating_sub(24 * 1024);
                         if excess > 0 {
-                            let boundary = self.action_logs.char_indices().find(|(i, _)| *i >= excess).map_or(self.action_logs.len(), |(i, _)| i);
+                            let boundary = self
+                                .action_logs
+                                .char_indices()
+                                .find(|(i, _)| *i >= excess)
+                                .map_or(self.action_logs.len(), |(i, _)| i);
                             self.action_logs.drain(..boundary);
                         }
                     }
                 }
                 super::setup::exec::ActionEvent::HistoryWarning(warning) => {
                     if let Some(action) = &self.action_review {
-                        self.action_history_warning = Some((
-                            action.key.clone(),
-                            action.protocol,
-                            warning,
-                        ));
+                        self.action_history_warning =
+                            Some((action.key.clone(), action.protocol, warning));
                     }
                 }
                 super::setup::exec::ActionEvent::Finished {
@@ -986,16 +1057,13 @@ impl ServerDetection {
                         .map(|(key, _)| (key, result, Instant::now()));
                 }
                 Err(TryRecvError::Disconnected) => {
-                    self.last = self
-                        .pending
-                        .take()
-                        .map(|(key, _)| {
-                            (
-                                key,
-                                Err("The server scan stopped unexpectedly.".into()),
-                                Instant::now(),
-                            )
-                        });
+                    self.last = self.pending.take().map(|(key, _)| {
+                        (
+                            key,
+                            Err("The server scan stopped unexpectedly.".into()),
+                            Instant::now(),
+                        )
+                    });
                 }
                 Err(TryRecvError::Empty) => {}
             }
@@ -1014,8 +1082,14 @@ impl ServerDetection {
             .cloned();
         let busy = self.action_review.is_some()
             || self.action_pending.is_some()
-            || self.vnc_session_dialog.as_ref().is_some_and(|dialog| dialog.pending.is_some())
-            || self.vnc_login_dialog.as_ref().is_some_and(|dialog| dialog.pending.is_some())
+            || self
+                .vnc_session_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.pending.is_some())
+            || self
+                .vnc_login_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.pending.is_some())
             || self.vnc_stop_pending.is_some();
         let pending_intent = self.action_review.as_ref().map(|action| action.intent);
         let checking = self.pending.is_some();
@@ -1345,7 +1419,9 @@ ManualSteps,
         }
 
         if let Some(intent) = requested_intent {
-            if let Some((_, Ok(report), _)) = self.last.as_ref().filter(|(tested, _, _)| tested == &key) {
+            if let Some((_, Ok(report), _)) =
+                self.last.as_ref().filter(|(tested, _, _)| tested == &key)
+            {
                 if let Ok(plan) = super::setup::plan::build_plan(report, protocol, intent) {
                     self.action_password.clear();
                     self.action_review = Some(PendingAction {
@@ -1354,8 +1430,10 @@ ManualSteps,
                         protocol,
                         plan,
                         intent,
-                        needs_password: report.uid != Some(0) && report.passwordless_sudo != Some(true),
-                        sudo_available: report.uid == Some(0) || report.sudo_available != Some(false),
+                        needs_password: report.uid != Some(0)
+                            && report.passwordless_sudo != Some(true),
+                        sudo_available: report.uid == Some(0)
+                            || report.sudo_available != Some(false),
                         password_attempts: 0,
                         focus_requested: false,
                         review_copied: None,
@@ -1414,7 +1492,12 @@ ManualSteps,
             if result_key == &key && *result_protocol == protocol {
                 match result {
                     Ok(count) => {
-                        ui.colored_label(ui.visuals().hyperlink_color, format!("Action completed ({count} step(s)); checking the service again…"));
+                        ui.colored_label(
+                            ui.visuals().hyperlink_color,
+                            format!(
+                                "Action completed ({count} step(s)); checking the service again…"
+                            ),
+                        );
                     }
                     Err(error) => {
                         let cancelled = error.starts_with("Cancelled");
@@ -1483,7 +1566,9 @@ ManualSteps,
                 let dialog = self.vnc_session_dialog.as_mut().unwrap();
                 for event in events {
                     match event {
-                        VncSessionEvent::StepStarted { title } => dialog.status = format!("{title}…"),
+                        VncSessionEvent::StepStarted { title } => {
+                            dialog.status = format!("{title}…")
+                        }
                         VncSessionEvent::StepFinished { title } => {
                             dialog.status = format!("{title} complete");
                         }
@@ -1687,7 +1772,10 @@ ManualSteps,
         let display = dialog.display;
         let steps: Vec<(&'static str, String)> = if dialog.restart {
             vec![
-                ("Stopping old session", format!("vncserver -kill :{display} || true")),
+                (
+                    "Stopping old session",
+                    format!("vncserver -kill :{display} || true"),
+                ),
                 ("Starting new session", command),
             ]
         } else {
@@ -1700,12 +1788,16 @@ ManualSteps,
             let dialog = self.vnc_session_dialog.as_mut().unwrap();
             dialog.pending = Some(rx);
             dialog.error = None;
-            dialog.status = steps.first().map_or(String::new(), |(title, _)| format!("{title}…"));
+            dialog.status = steps
+                .first()
+                .map_or(String::new(), |(title, _)| format!("{title}…"));
         }
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             for (title, command) in steps {
-                let _ = tx.send(VncSessionEvent::StepStarted { title: title.to_owned() });
+                let _ = tx.send(VncSessionEvent::StepStarted {
+                    title: title.to_owned(),
+                });
                 let command = crate::remote::build_ssh_command(&host, &command);
                 let result = crate::remote::ssh_probe_output(command, timeout)
                     .and_then(|out| {
@@ -1713,7 +1805,11 @@ ManualSteps,
                             Ok(String::new())
                         } else {
                             let detail = String::from_utf8_lossy(&out.stderr).trim().to_owned();
-                            Err(std::io::Error::other(if detail.is_empty() { "Command failed".into() } else { detail }))
+                            Err(std::io::Error::other(if detail.is_empty() {
+                                "Command failed".into()
+                            } else {
+                                detail
+                            }))
                         }
                     })
                     .map_err(|error| error.to_string());
@@ -1722,9 +1818,13 @@ ManualSteps,
                     ctx.request_repaint();
                     return;
                 }
-                let _ = tx.send(VncSessionEvent::StepFinished { title: title.to_owned() });
+                let _ = tx.send(VncSessionEvent::StepFinished {
+                    title: title.to_owned(),
+                });
             }
-            let _ = tx.send(VncSessionEvent::Finished { result: Ok(String::new()) });
+            let _ = tx.send(VncSessionEvent::Finished {
+                result: Ok(String::new()),
+            });
             ctx.request_repaint();
         });
     }
@@ -1753,12 +1853,7 @@ ManualSteps,
             .map(|receiver| receiver.try_iter().collect::<Vec<_>>())
             .unwrap_or_default();
         if let Some(result) = results.into_iter().last() {
-            let key = self
-                .vnc_login_dialog
-                .as_ref()
-                .unwrap()
-                .key
-                .clone();
+            let key = self.vnc_login_dialog.as_ref().unwrap().key.clone();
             if let Some(dialog) = self.vnc_login_dialog.as_mut() {
                 dialog.status = Some(result.clone());
                 dialog.pending = None;
@@ -1913,7 +2008,8 @@ ManualSteps,
         }
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let result = super::vnc::authenticate_session(&host, Some(&config_path), port, &password);
+            let result =
+                super::vnc::authenticate_session(&host, Some(&config_path), port, &password);
             let _ = tx.send(result);
             ctx.request_repaint();
         });
@@ -1958,65 +2054,84 @@ ManualSteps,
         }
         subdialog_backdrop(&ctx, id, palette, &mut cancel, !running);
 
-        dialog_window("Stop VNC session", id.with("window"), palette, ctx.screen_rect())
-            .show(&ctx, |ui| {
-                apply_dialog_style(ui, palette);
-                let Some(confirm) = self.vnc_stop_confirm.as_mut() else {
-                    return;
-                };
-                ui.horizontal(|ui| {
-                    ui.strong("Stop VNC session");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let close = dialog_button(ui, crate::lucide::X, "Close", palette);
-                        focus_lock(&ctx, &close, id.with("close_focus"), false);
-                        if !running && close.clicked() {
-                            cancel = true;
-                        }
-                    });
-                });
-                ui.add_space(10.0);
-                ui.add(
-                    egui::Label::new(egui::RichText::new(format!(
-                        "Stopping display :{} will disconnect everyone currently using it.",
-                        confirm.display
-                    )))
-                    .wrap(),
-                );
-                ui.add_space(8.0);
-                let detail = match confirm.pid {
-                    Some(pid) => format!("PID {pid} · owned by {}", confirm.owner),
-                    None => format!("Owner {}", confirm.owner),
-                };
-                ui.label(egui::RichText::new(detail).small().color(palette.text_muted));
-                ui.add_space(8.0);
-                let command = format!("$ vncserver -kill :{}", confirm.display);
-                modal_code_block(ui, &command, id.with("command"), palette, &mut confirm.copied);
-                if let Some(error) = &self.vnc_stop_error {
-                    ui.add_space(6.0);
-                    ui.colored_label(palette.danger, error);
-                }
-                ui.separator();
-                ui.add_space(8.0);
+        dialog_window(
+            "Stop VNC session",
+            id.with("window"),
+            palette,
+            ctx.screen_rect(),
+        )
+        .show(&ctx, |ui| {
+            apply_dialog_style(ui, palette);
+            let Some(confirm) = self.vnc_stop_confirm.as_mut() else {
+                return;
+            };
+            ui.horizontal(|ui| {
+                ui.strong("Stop VNC session");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let cancel_btn = dialog_button(ui, "Cancel", "Cancel", palette);
-                    if !running && cancel_btn.clicked() {
+                    let close = dialog_button(ui, crate::lucide::X, "Close", palette);
+                    focus_lock(&ctx, &close, id.with("close_focus"), false);
+                    if !running && close.clicked() {
                         cancel = true;
-                    }
-                    ui.add_space(8.0);
-                    let stop_btn = ui.add_enabled(
-                        !running,
-                        egui::Button::new(egui::RichText::new("Stop session").strong().color(Color32::WHITE))
-                            .fill(palette.danger)
-                            .stroke(Stroke::NONE)
-                            .rounding(Rounding::same(8.0))
-                            .min_size(egui::vec2(110.0, 34.0)),
-                    );
-                    focus_lock(&ctx, &stop_btn, id.with("stop_focus"), true);
-                    if stop_btn.clicked() {
-                        stop = true;
                     }
                 });
             });
+            ui.add_space(10.0);
+            ui.add(
+                egui::Label::new(egui::RichText::new(format!(
+                    "Stopping display :{} will disconnect everyone currently using it.",
+                    confirm.display
+                )))
+                .wrap(),
+            );
+            ui.add_space(8.0);
+            let detail = match confirm.pid {
+                Some(pid) => format!("PID {pid} · owned by {}", confirm.owner),
+                None => format!("Owner {}", confirm.owner),
+            };
+            ui.label(
+                egui::RichText::new(detail)
+                    .small()
+                    .color(palette.text_muted),
+            );
+            ui.add_space(8.0);
+            let command = format!("$ vncserver -kill :{}", confirm.display);
+            modal_code_block(
+                ui,
+                &command,
+                id.with("command"),
+                palette,
+                &mut confirm.copied,
+            );
+            if let Some(error) = &self.vnc_stop_error {
+                ui.add_space(6.0);
+                ui.colored_label(palette.danger, error);
+            }
+            ui.separator();
+            ui.add_space(8.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let cancel_btn = dialog_button(ui, "Cancel", "Cancel", palette);
+                if !running && cancel_btn.clicked() {
+                    cancel = true;
+                }
+                ui.add_space(8.0);
+                let stop_btn = ui.add_enabled(
+                    !running,
+                    egui::Button::new(
+                        egui::RichText::new("Stop session")
+                            .strong()
+                            .color(Color32::WHITE),
+                    )
+                    .fill(palette.danger)
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding::same(8.0))
+                    .min_size(egui::vec2(110.0, 34.0)),
+                );
+                focus_lock(&ctx, &stop_btn, id.with("stop_focus"), true);
+                if stop_btn.clicked() {
+                    stop = true;
+                }
+            });
+        });
         if cancel && !running {
             self.vnc_stop_confirm = None;
             self.vnc_stop_error = None;
@@ -2066,133 +2181,144 @@ ManualSteps,
         (6..=8).contains(&len)
     }
 
-fn report_owner(report: &super::setup::model::ServiceInventoryReport) -> String {
-    report
-        .vnc
-        .displays
-        .first()
-        .and_then(|d| d.user.as_deref())
-        .or(report.user.as_deref())
-        .unwrap_or("unknown")
-        .to_owned()
-}
+    fn report_owner(report: &super::setup::model::ServiceInventoryReport) -> String {
+        report
+            .vnc
+            .displays
+            .first()
+            .and_then(|d| d.user.as_deref())
+            .or(report.user.as_deref())
+            .unwrap_or("unknown")
+            .to_owned()
+    }
 
-fn report_pid(report: &super::setup::model::ServiceInventoryReport) -> Option<u32> {
-    report.vnc.listeners.first().and_then(|l| l.pid)
-}
+    fn report_pid(report: &super::setup::model::ServiceInventoryReport) -> Option<u32> {
+        report.vnc.listeners.first().and_then(|l| l.pid)
+    }
 
-fn report_vnc_display(report: &super::setup::model::ServiceInventoryReport) -> Option<u8> {
-    report
-        .vnc
-        .displays
-        .first()
-        .and_then(|d| d.display.strip_prefix(':'))
-        .and_then(|n| n.parse::<u8>().ok())
-}
+    fn report_vnc_display(report: &super::setup::model::ServiceInventoryReport) -> Option<u8> {
+        report
+            .vnc
+            .displays
+            .first()
+            .and_then(|d| d.display.strip_prefix(':'))
+            .and_then(|n| n.parse::<u8>().ok())
+    }
 
-/// Expanded accordion panels appear in the scrollable body below the status card
-/// (one open at a time, scrolled into view).
-fn show_accordion_panel(
-    ui: &mut egui::Ui,
-    report: &super::setup::model::ServiceInventoryReport,
-    protocol: DesktopProtocol,
-    configured_port: u16,
-    request_manual_scan: &mut bool,
-    manual_copied: &mut Option<Instant>,
-    palette: &crate::theme::ThemePalette,
-    tab: ServiceTab,
-) {
-    use super::setup::model::InitSystem;
-    match tab {
-        ServiceTab::HostDetails => {
-            egui::Frame::none()
-                .fill(tier_fill(palette, 2))
-                .rounding(Rounding::same(12.0))
-                .stroke(Stroke::NONE)
-                .inner_margin(egui::Margin::same(16.0))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.label(egui::RichText::new("Host details").size(14.0).strong().color(palette.text_primary));
-                    ui.add_space(8.0);
-                    let os_name = report
-                        .os_pretty_name
-                        .as_deref()
-                        .or(report.os_id.as_deref())
-                        .unwrap_or("Operating system unknown");
-                    let os_value = match report.os_version.as_deref() {
-                        Some(version) if !version.trim().is_empty() => {
-                            format!("{os_name} {version}")
-                        }
-                        _ => os_name.to_owned(),
-                    };
-                    host_detail_row(ui, "OS", &os_value, palette, None);
-                    host_detail_row(
-                        ui,
-                        "Init system",
-                        match report.init_system {
-                            Some(InitSystem::Systemd) => "systemd",
-                            Some(InitSystem::Other) => "non-systemd init",
-                            Some(InitSystem::Unknown) | None => "init system unknown",
-                        },
-                        palette,
-                        None,
-                    );
-                    if let Some(package_manager) = &report.package_manager {
-                        host_detail_row(ui, "Packages", package_manager, palette, None);
-                    }
-                    match report.sudo_available {
-                        Some(false) => {
-                            host_detail_row(ui, "sudo", "unavailable", palette, None);
-                        }
-                        Some(true) => {
-                            let value = if report.passwordless_sudo == Some(true) {
-                                "available without a password"
-                            } else {
-                                "available; may require a password"
-                            };
-                            host_detail_row(ui, "sudo", value, palette, None);
-                        }
-                        None => host_detail_row(ui, "sudo", "unknown", palette, None),
-                    }
-                    if !report.desktop_sessions.is_empty() {
-                        host_detail_row(
-                            ui,
-                            "Desktop",
-                            &report.desktop_sessions.join(", "),
-                            palette,
-                            None,
+    /// Expanded accordion panels appear in the scrollable body below the status card
+    /// (one open at a time, scrolled into view).
+    fn show_accordion_panel(
+        ui: &mut egui::Ui,
+        report: &super::setup::model::ServiceInventoryReport,
+        protocol: DesktopProtocol,
+        configured_port: u16,
+        request_manual_scan: &mut bool,
+        manual_copied: &mut Option<Instant>,
+        palette: &crate::theme::ThemePalette,
+        tab: ServiceTab,
+    ) {
+        use super::setup::model::InitSystem;
+        match tab {
+            ServiceTab::HostDetails => {
+                egui::Frame::none()
+                    .fill(tier_fill(palette, 2))
+                    .rounding(Rounding::same(12.0))
+                    .stroke(Stroke::NONE)
+                    .inner_margin(egui::Margin::same(16.0))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(
+                            egui::RichText::new("Host details")
+                                .size(14.0)
+                                .strong()
+                                .color(palette.text_primary),
                         );
-                    }
-                    for hint in &report.firewall_hints {
-                        let (label, tooltip) = friendly_firewall_hint(hint);
-                        host_detail_row(ui, "Firewall", label, palette, tooltip);
-                    }
-                    if let Some(memory) = report.available_memory_mb {
-                        host_detail_row(ui, "Memory", &format!("{memory} MiB available"), palette, None);
-                    }
-                    if let Some(disk) = report.free_disk_mb {
-                        host_detail_row(
-                            ui,
-                            "Disk",
-                            &format!("{disk} MiB free in home"),
-                            palette,
-                            None,
-                        );
-                    }
-                    if let Some(Ok(info)) = report.handshake(protocol) {
                         ui.add_space(8.0);
+                        let os_name = report
+                            .os_pretty_name
+                            .as_deref()
+                            .or(report.os_id.as_deref())
+                            .unwrap_or("Operating system unknown");
+                        let os_value = match report.os_version.as_deref() {
+                            Some(version) if !version.trim().is_empty() => {
+                                format!("{os_name} {version}")
+                            }
+                            _ => os_name.to_owned(),
+                        };
+                        host_detail_row(ui, "OS", &os_value, palette, None);
                         host_detail_row(
                             ui,
-                            "Last check",
-                            &with_auth_notice_once(info),
+                            "Init system",
+                            match report.init_system {
+                                Some(InitSystem::Systemd) => "systemd",
+                                Some(InitSystem::Other) => "non-systemd init",
+                                Some(InitSystem::Unknown) | None => "init system unknown",
+                            },
                             palette,
                             None,
                         );
-                    }
-                });
-        }
-        ServiceTab::ManualSteps => {
-            egui::Frame::none()
+                        if let Some(package_manager) = &report.package_manager {
+                            host_detail_row(ui, "Packages", package_manager, palette, None);
+                        }
+                        match report.sudo_available {
+                            Some(false) => {
+                                host_detail_row(ui, "sudo", "unavailable", palette, None);
+                            }
+                            Some(true) => {
+                                let value = if report.passwordless_sudo == Some(true) {
+                                    "available without a password"
+                                } else {
+                                    "available; may require a password"
+                                };
+                                host_detail_row(ui, "sudo", value, palette, None);
+                            }
+                            None => host_detail_row(ui, "sudo", "unknown", palette, None),
+                        }
+                        if !report.desktop_sessions.is_empty() {
+                            host_detail_row(
+                                ui,
+                                "Desktop",
+                                &report.desktop_sessions.join(", "),
+                                palette,
+                                None,
+                            );
+                        }
+                        for hint in &report.firewall_hints {
+                            let (label, tooltip) = friendly_firewall_hint(hint);
+                            host_detail_row(ui, "Firewall", label, palette, tooltip);
+                        }
+                        if let Some(memory) = report.available_memory_mb {
+                            host_detail_row(
+                                ui,
+                                "Memory",
+                                &format!("{memory} MiB available"),
+                                palette,
+                                None,
+                            );
+                        }
+                        if let Some(disk) = report.free_disk_mb {
+                            host_detail_row(
+                                ui,
+                                "Disk",
+                                &format!("{disk} MiB free in home"),
+                                palette,
+                                None,
+                            );
+                        }
+                        if let Some(Ok(info)) = report.handshake(protocol) {
+                            ui.add_space(8.0);
+                            host_detail_row(
+                                ui,
+                                "Last check",
+                                &with_auth_notice_once(info),
+                                palette,
+                                None,
+                            );
+                        }
+                    });
+            }
+            ServiceTab::ManualSteps => {
+                egui::Frame::none()
                 .fill(tier_fill(palette, 2))
                 .rounding(Rounding::same(12.0))
                 .stroke(Stroke::NONE)
@@ -2217,10 +2343,10 @@ fn show_accordion_panel(
                         *request_manual_scan = true;
                     }
                 });
+            }
+            ServiceTab::Status | ServiceTab::RecentChanges => {}
         }
-        ServiceTab::Status | ServiceTab::RecentChanges => {}
     }
-}
 
     fn show_action_review(
         &mut self,
@@ -2228,7 +2354,11 @@ fn show_accordion_panel(
         key: &str,
         palette: &crate::theme::ThemePalette,
     ) {
-        let Some(action) = self.action_review.as_ref().filter(|action| action.key == key) else {
+        let Some(action) = self
+            .action_review
+            .as_ref()
+            .filter(|action| action.key == key)
+        else {
             return;
         };
         let running = self.action_pending.is_some();
@@ -2471,7 +2601,8 @@ fn show_accordion_panel(
         if cancel_after_step {
             if let Some(cancel) = &self.action_cancel {
                 cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-                self.action_status = "Cancellation requested; the current step will finish first.".into();
+                self.action_status =
+                    "Cancellation requested; the current step will finish first.".into();
             }
         }
         if cancel {
@@ -2508,7 +2639,9 @@ fn show_accordion_panel(
                         password,
                         &cancel,
                         |event| {
-                            if let super::setup::exec::ActionEvent::StepFinished { index, .. } = &event {
+                            if let super::setup::exec::ActionEvent::StepFinished { index, .. } =
+                                &event
+                            {
                                 if let Some(step) = plan.steps.get(index.saturating_sub(1)) {
                                     completed_steps.push(step.id.to_owned());
                                     completed_step_titles.push(step.title.to_owned());
@@ -2519,7 +2652,8 @@ fn show_accordion_panel(
                         },
                     );
                     if !completed_steps.is_empty() {
-                        let action_completed = result.is_ok() || completed_steps.len() == plan.steps.len();
+                        let action_completed =
+                            result.is_ok() || completed_steps.len() == plan.steps.len();
                         if let Err(warning) = super::setup::history::record_action(
                             &host,
                             protocol.label(),
@@ -2530,9 +2664,8 @@ fn show_accordion_panel(
                             completed_steps,
                             action_completed,
                         ) {
-                            let _ = sender.send(
-                                super::setup::exec::ActionEvent::HistoryWarning(warning),
-                            );
+                            let _ = sender
+                                .send(super::setup::exec::ActionEvent::HistoryWarning(warning));
                         }
                     }
                     let _ = sender.send(super::setup::exec::ActionEvent::Finished {
@@ -2598,8 +2731,7 @@ fn show_accordion_panel(
         host: &crate::config::SshRemoteHost,
         protocol: DesktopProtocol,
     ) -> Option<u16> {
-        let (action_host_id, key, action_protocol, started) =
-            self.action_port_update.as_ref()?;
+        let (action_host_id, key, action_protocol, started) = self.action_port_update.as_ref()?;
         if action_host_id != &host.id || *action_protocol != protocol {
             return None;
         }
@@ -2670,7 +2802,11 @@ fn show_accordion_panel(
 }
 
 fn action_error_hint(error: &str) -> Option<&'static str> {
-    let message = error.chars().take(8192).collect::<String>().to_ascii_lowercase();
+    let message = error
+        .chars()
+        .take(8192)
+        .collect::<String>()
+        .to_ascii_lowercase();
     if message.contains("could not get lock")
         || message.contains("unable to acquire")
         || message.contains("lock-frontend")
@@ -2687,9 +2823,13 @@ fn action_error_hint(error: &str) -> Option<&'static str> {
         Some("This SSH account does not have permission to run the approved administrator command.")
     } else if message.contains("no space left on device") {
         Some("The remote system is out of disk space. Free space before retrying.")
-    } else if message.contains("address already in use") || message.contains("port is already allocated") {
+    } else if message.contains("address already in use")
+        || message.contains("port is already allocated")
+    {
         Some("The requested port is already in use. Rescan the host and choose an available port.")
-    } else if message.contains("selinux") && (message.contains("denied") || message.contains("avc:")) {
+    } else if message.contains("selinux")
+        && (message.contains("denied") || message.contains("avc:"))
+    {
         Some("SELinux blocked the service operation. Review the audit log and use the distribution's documented policy; do not disable SELinux.")
     } else if message.contains("no desktop environment")
         || message.contains("unable to start the session")
@@ -2712,7 +2852,11 @@ fn action_error_hint(error: &str) -> Option<&'static str> {
 }
 
 fn scan_error_hint(error: &str) -> Option<&'static str> {
-    let message = error.chars().take(8192).collect::<String>().to_ascii_lowercase();
+    let message = error
+        .chars()
+        .take(8192)
+        .collect::<String>()
+        .to_ascii_lowercase();
     if message.contains("permission denied") || message.contains("authentication failed") {
         Some("SSH authentication failed. Check the username, password, key path, and key permissions.")
     } else if message.contains("could not resolve hostname")
@@ -2732,7 +2876,11 @@ fn scan_error_hint(error: &str) -> Option<&'static str> {
 }
 
 fn probe_error_summary(error: &str) -> &'static str {
-    let message = error.chars().take(8192).collect::<String>().to_ascii_lowercase();
+    let message = error
+        .chars()
+        .take(8192)
+        .collect::<String>()
+        .to_ascii_lowercase();
     if message.contains("connection refused") {
         "No service accepted the connection. Check the remote service and port."
     } else if message.contains("timed out") || message.contains("timeout") {
@@ -2758,7 +2906,10 @@ fn detection_key(host: &crate::config::SshRemoteHost) -> String {
     let password_fingerprint = format!("{:x}", Sha256::digest(host.password.as_bytes()));
     let rdp = host.rdp.as_ref();
     let vnc = host.vnc.as_ref();
-    let rdp_security = rdp.map_or_else(|| "none".into(), |profile| format!("{:?}", profile.security));
+    let rdp_security = rdp.map_or_else(
+        || "none".into(),
+        |profile| format!("{:?}", profile.security),
+    );
     format!(
         "{}:{}@{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
         host.id,
@@ -2782,10 +2933,7 @@ fn detection_key(host: &crate::config::SshRemoteHost) -> String {
     )
 }
 
-fn detect_servers(
-    host: &crate::config::SshRemoteHost,
-    timeout: Duration,
-) -> DetectionResult {
+fn detect_servers(host: &crate::config::SshRemoteHost, timeout: Duration) -> DetectionResult {
     let mut report = super::setup::detect::scan(host, timeout)?;
     if let Some(profile) = host.rdp.as_ref().filter(|profile| profile.enabled) {
         if let Some(port) = detected_port(&report.rdp, DesktopProtocol::Rdp, profile.port) {
@@ -2849,11 +2997,16 @@ fn detected_port(
         .flatten();
     detected_display.or_else(|| {
         service
-        .listeners
-        .iter()
-        .find(|listener| listener.port == configured_port)
-        .or_else(|| service.listeners.iter().min_by_key(|listener| listener.port))
-        .map(|listener| listener.port)
+            .listeners
+            .iter()
+            .find(|listener| listener.port == configured_port)
+            .or_else(|| {
+                service
+                    .listeners
+                    .iter()
+                    .min_by_key(|listener| listener.port)
+            })
+            .map(|listener| listener.port)
     })
 }
 
@@ -2963,9 +3116,15 @@ fn status_line(
     }
 }
 
-fn p_warn() -> Color32 { Color32::from_rgb(245, 158, 11) }
-fn p_danger() -> Color32 { Color32::from_rgb(235, 87, 87) }
-fn p_muted() -> Color32 { Color32::from_rgb(123, 131, 148) }
+fn p_warn() -> Color32 {
+    Color32::from_rgb(245, 158, 11)
+}
+fn p_danger() -> Color32 {
+    Color32::from_rgb(235, 87, 87)
+}
+fn p_muted() -> Color32 {
+    Color32::from_rgb(123, 131, 148)
+}
 
 fn is_destructive_intent(intent: Intent) -> bool {
     matches!(
@@ -2986,10 +3145,7 @@ fn show_status_hero(
     let host = report.user.as_deref().unwrap_or("the host");
 
     let subtitle = match readiness {
-        Readiness::Ready => format!(
-            "{} handshake succeeded on {host}",
-            protocol_label(protocol)
-        ),
+        Readiness::Ready => format!("{} handshake succeeded on {host}", protocol_label(protocol)),
         _ => headline.to_owned(),
     };
 
@@ -3030,10 +3186,8 @@ fn show_status_hero(
                     .wrap(),
                 );
                 ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(subtitle).small().color(p.text_muted),
-                    )
-                    .wrap(),
+                    egui::Label::new(egui::RichText::new(subtitle).small().color(p.text_muted))
+                        .wrap(),
                 );
             });
         });
@@ -3041,11 +3195,19 @@ fn show_status_hero(
 }
 
 fn service_display_pill(report: &super::setup::model::ServiceInventoryReport) -> Option<String> {
-    report.vnc.displays.first().map(|d| format!("Display {} → :{}", d.display, d.port))
+    report
+        .vnc
+        .displays
+        .first()
+        .map(|d| format!("Display {} → :{}", d.display, d.port))
 }
 
 fn service_listener_pill(report: &super::setup::model::ServiceInventoryReport) -> Option<String> {
-    report.rdp.listeners.first().map(|l| format!("Port {}", l.port))
+    report
+        .rdp
+        .listeners
+        .first()
+        .map(|l| format!("Port {}", l.port))
 }
 
 fn show_check_strip(
@@ -3075,7 +3237,11 @@ fn show_check_strip(
     let hs_ok = matches!(handshake, Some(Ok(_)));
     let hs_val = match handshake {
         Some(Ok(_)) => {
-            if protocol == DesktopProtocol::Vnc { "VNC 3.8" } else { "RDP OK" }
+            if protocol == DesktopProtocol::Vnc {
+                "VNC 3.8"
+            } else {
+                "RDP OK"
+            }
         }
         Some(Err(_)) => "Failed",
         None => "Not tested",
@@ -3109,7 +3275,8 @@ fn show_check_strip(
 fn check_item(ui: &mut egui::Ui, title: &str, ok: bool, val: &str, p: &crate::theme::ThemePalette) {
     let glyph = if ok { "✓" } else { "✗" };
     let badge_fill = if ok { p.success } else { p.danger };
-    let (badge_rect, _badge_resp) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
+    let (badge_rect, _badge_resp) =
+        ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
     let center = badge_rect.center();
     ui.painter().circle_filled(center, 9.0, badge_fill);
     ui.painter().text(
@@ -3125,7 +3292,10 @@ fn check_item(ui: &mut egui::Ui, title: &str, ok: bool, val: &str, p: &crate::th
         ui.add(egui::Label::new(egui::RichText::new(title).small().color(p.text_muted)).wrap());
         let val_resp = ui.add(
             egui::Label::new(
-                egui::RichText::new(val).small().strong().color(p.text_primary),
+                egui::RichText::new(val)
+                    .small()
+                    .strong()
+                    .color(p.text_primary),
             )
             .wrap(),
         );
@@ -3422,7 +3592,6 @@ fn show_service_scan_placeholder(ui: &mut egui::Ui, protocol: DesktopProtocol) {
         });
 }
 
-
 fn show_manual_commands(
     ui: &mut egui::Ui,
     title: &str,
@@ -3544,7 +3713,7 @@ fn run_with_target(
             timeout,
             request.config_path.as_deref(),
         )
-            .map_err(|error| format!("SSH tunnel: {error}"))?;
+        .map_err(|error| format!("SSH tunnel: {error}"))?;
         return check_handshake(request, &mut *stream)
             .map(|info| format!("{info} through the SSH tunnel. Authentication was not tested."));
     }
@@ -3891,26 +4060,26 @@ impl ProbeControl {
 
         ui.horizontal(|ui| {
             kit::test_status(
-            ui,
-            palette,
-            egui::RichText::new(format!("{} Test Connection", crate::lucide::ZAP))
-                .size(11.5)
-                .color(kit::TEXT)
-                .into(),
-            enabled,
-            status,
-            move || {
-                if let Some(request) = request {
-                    let (sender, receiver) = std::sync::mpsc::channel();
-                    let target = request.clone();
-                    self.pending = Some((request, receiver));
-                    let ctx = ctx.clone();
-                    std::thread::spawn(move || {
-                        let _ = sender.send(run(&target, timeout));
-                        ctx.request_repaint();
-                    });
-                }
-            },
+                ui,
+                palette,
+                egui::RichText::new(format!("{} Test Connection", crate::lucide::ZAP))
+                    .size(11.5)
+                    .color(kit::TEXT)
+                    .into(),
+                enabled,
+                status,
+                move || {
+                    if let Some(request) = request {
+                        let (sender, receiver) = std::sync::mpsc::channel();
+                        let target = request.clone();
+                        self.pending = Some((request, receiver));
+                        let ctx = ctx.clone();
+                        std::thread::spawn(move || {
+                            let _ = sender.send(run(&target, timeout));
+                            ctx.request_repaint();
+                        });
+                    }
+                },
             );
         });
     }
@@ -3923,12 +4092,8 @@ mod tests {
     #[test]
     fn failed_actions_name_completed_steps_and_keep_cancellation_classifiable() {
         let completed = vec!["Update package index".to_owned()];
-        let error = with_partial_progress(
-            Err("Install xrdp failed".into()),
-            &completed,
-            4,
-        )
-        .unwrap_err();
+        let error =
+            with_partial_progress(Err("Install xrdp failed".into()), &completed, 4).unwrap_err();
         assert!(error.starts_with("Partial completion (1/4"));
         assert!(error.contains("Update package index"));
         assert!(error.contains("Install xrdp failed"));
@@ -3947,8 +4112,10 @@ mod tests {
     fn connection_failures_get_safe_actionable_summaries() {
         assert!(probe_error_summary("TCP: connection refused on port 3389")
             .contains("No service accepted"));
-        assert!(probe_error_summary("TCP: connection timed out on port 5901")
-            .contains("may be blocking"));
+        assert!(
+            probe_error_summary("TCP: connection timed out on port 5901")
+                .contains("may be blocking")
+        );
         assert!(probe_error_summary("Handshake: unsupported security type")
             .contains("does not support"));
         assert!(probe_error_summary("DNS: could not resolve host").contains("resolved"));
@@ -4026,10 +4193,19 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(detection.take_action_port_update(&host, DesktopProtocol::Rdp), None);
+        assert_eq!(
+            detection.take_action_port_update(&host, DesktopProtocol::Rdp),
+            None
+        );
         detection.last = Some((key, Ok(report), started + Duration::from_secs(2)));
-        assert_eq!(detection.take_action_port_update(&host, DesktopProtocol::Rdp), Some(3390));
-        assert_eq!(detection.take_action_port_update(&host, DesktopProtocol::Rdp), None);
+        assert_eq!(
+            detection.take_action_port_update(&host, DesktopProtocol::Rdp),
+            Some(3390)
+        );
+        assert_eq!(
+            detection.take_action_port_update(&host, DesktopProtocol::Rdp),
+            None
+        );
     }
 
     #[test]
@@ -4056,12 +4232,7 @@ mod tests {
             };
             let mut detection = ServerDetection {
                 last: Some((key.clone(), Ok(report), started + Duration::from_secs(2))),
-                action_port_update: Some((
-                    host.id.clone(),
-                    key,
-                    DesktopProtocol::Rdp,
-                    started,
-                )),
+                action_port_update: Some((host.id.clone(), key, DesktopProtocol::Rdp, started)),
                 ..Default::default()
             };
             assert_eq!(
@@ -4074,9 +4245,11 @@ mod tests {
 
     #[test]
     fn action_failures_get_specific_hints_without_treating_unknown_text_as_known() {
-        assert!(action_error_hint("Could not get lock /var/lib/dpkg/lock-frontend")
-            .unwrap()
-            .contains("package manager is busy"));
+        assert!(
+            action_error_hint("Could not get lock /var/lib/dpkg/lock-frontend")
+                .unwrap()
+                .contains("package manager is busy")
+        );
         assert!(action_error_hint("Unable to locate package xrdp")
             .unwrap()
             .contains("unavailable"));
@@ -4095,9 +4268,11 @@ mod tests {
 
     #[test]
     fn scan_failures_distinguish_ssh_auth_dns_refusal_and_timeout() {
-        assert!(scan_error_hint("SSH scan failed: Permission denied (publickey)")
-            .unwrap()
-            .contains("authentication failed"));
+        assert!(
+            scan_error_hint("SSH scan failed: Permission denied (publickey)")
+                .unwrap()
+                .contains("authentication failed")
+        );
         assert!(scan_error_hint("Could not resolve hostname example")
             .unwrap()
             .contains("resolved"));
@@ -4145,7 +4320,10 @@ mod tests {
             }],
             ..Default::default()
         };
-        assert_eq!(detected_port(&process_only, DesktopProtocol::Vnc, 5900), Some(5901));
+        assert_eq!(
+            detected_port(&process_only, DesktopProtocol::Vnc, 5900),
+            Some(5901)
+        );
 
         let display_is_more_specific_than_an_unrelated_listener = ServiceInventory {
             listeners: vec![Listener {
@@ -4305,11 +4483,21 @@ mod tests {
     #[test]
     fn classic_vnc_password_enforces_six_to_eight_characters() {
         use zeroize::Zeroizing;
-        assert!(!ServerDetection::valid_vnc_password(&Zeroizing::new("abc".to_owned())));
-        assert!(!ServerDetection::valid_vnc_password(&Zeroizing::new("".to_owned())));
-        assert!(ServerDetection::valid_vnc_password(&Zeroizing::new("abcdef".to_owned())));
-        assert!(ServerDetection::valid_vnc_password(&Zeroizing::new("12345678".to_owned())));
-        assert!(!ServerDetection::valid_vnc_password(&Zeroizing::new("123456789".to_owned())));
+        assert!(!ServerDetection::valid_vnc_password(&Zeroizing::new(
+            "abc".to_owned()
+        )));
+        assert!(!ServerDetection::valid_vnc_password(&Zeroizing::new(
+            "".to_owned()
+        )));
+        assert!(ServerDetection::valid_vnc_password(&Zeroizing::new(
+            "abcdef".to_owned()
+        )));
+        assert!(ServerDetection::valid_vnc_password(&Zeroizing::new(
+            "12345678".to_owned()
+        )));
+        assert!(!ServerDetection::valid_vnc_password(&Zeroizing::new(
+            "123456789".to_owned()
+        )));
     }
 
     #[test]
@@ -4328,13 +4516,16 @@ mod tests {
         assert_eq!(ServerDetection::report_owner(&report), "dispuser");
         assert_eq!(ServerDetection::report_vnc_display(&report), Some(1));
         assert_eq!(ServerDetection::report_pid(&report), None);
-        report.vnc.listeners.push(super::super::setup::model::Listener {
-            address: "127.0.0.1".into(),
-            port: 5901,
-            process: Some("Xtigervnc".into()),
-            pid: Some(42),
-            owner: None,
-        });
+        report
+            .vnc
+            .listeners
+            .push(super::super::setup::model::Listener {
+                address: "127.0.0.1".into(),
+                port: 5901,
+                process: Some("Xtigervnc".into()),
+                pid: Some(42),
+                owner: None,
+            });
         assert_eq!(ServerDetection::report_pid(&report), Some(42));
     }
 
@@ -4412,9 +4603,7 @@ mod tests {
 
     #[test]
     fn footer_actions_follow_service_state_and_report_unknown() {
-        use super::super::setup::model::{
-            ServiceInventory, ServiceInventoryReport, ServiceState,
-        };
+        use super::super::setup::model::{ServiceInventory, ServiceInventoryReport, ServiceState};
 
         fn report_for(state: ServiceState) -> ServiceInventoryReport {
             let service = match state {
@@ -4462,7 +4651,10 @@ mod tests {
             labels(ServiceState::RunningSystemd),
             vec![("Restart", true), ("Stop", true)]
         );
-        assert_eq!(labels(ServiceState::InstalledStopped), vec![("Start", true)]);
+        assert_eq!(
+            labels(ServiceState::InstalledStopped),
+            vec![("Start", true)]
+        );
         assert_eq!(
             labels(ServiceState::Failed),
             vec![("Start", true), ("Restart", true)]
@@ -4473,10 +4665,14 @@ mod tests {
             vec![("Restart", false), ("Start", false)]
         );
         assert_eq!(
-            footer_actions(Some(&report_for(ServiceState::RunningSystemd)), DesktopProtocol::Rdp, true)
-                .into_iter()
-                .map(|(label, _, enabled)| (label, enabled))
-                .collect::<Vec<_>>(),
+            footer_actions(
+                Some(&report_for(ServiceState::RunningSystemd)),
+                DesktopProtocol::Rdp,
+                true
+            )
+            .into_iter()
+            .map(|(label, _, enabled)| (label, enabled))
+            .collect::<Vec<_>>(),
             vec![("Restart", false), ("Start", false)]
         );
     }
@@ -4497,7 +4693,10 @@ mod tests {
         let (label, tooltip) = friendly_firewall_hint("ufw: Status: active");
         assert_eq!(label, "ufw: Status: active");
         assert_eq!(tooltip, None);
-        assert_eq!(format_history_timestamp("not a timestamp"), "not a timestamp");
+        assert_eq!(
+            format_history_timestamp("not a timestamp"),
+            "not a timestamp"
+        );
         let formatted = format_history_timestamp("2026-11-27T16:25:00+00:00");
         assert!(!formatted.contains('T'));
         assert!(formatted.contains("2026"));

@@ -742,18 +742,12 @@ pub(crate) fn vnc_display(
     }
 }
 
-pub(crate) fn vnc_behavior(
-    ui: &mut Ui,
-    draft: &mut Option<VncProfile>,
-    palette: &ThemePalette,
-) {
+pub(crate) fn vnc_behavior(ui: &mut Ui, draft: &mut Option<VncProfile>, palette: &ThemePalette) {
     let mut profile = draft.clone().unwrap_or_default();
     ui.add_enabled_ui(profile.enabled, |ui| {
         kit::two_fields(
             ui,
-            |ui| {
-                kit::switch(ui, &mut profile.view_only, "View only", None, palette)
-            },
+            |ui| kit::switch(ui, &mut profile.view_only, "View only", None, palette),
             |ui| {
                 kit::switch(
                     ui,
@@ -767,9 +761,7 @@ pub(crate) fn vnc_behavior(
         ui.add_space(10.0);
         kit::two_fields(
             ui,
-            |ui| {
-                kit::switch(ui, &mut profile.shared, "Shared session", None, palette)
-            },
+            |ui| kit::switch(ui, &mut profile.shared, "Shared session", None, palette),
             |ui| {
                 kit::switch(
                     ui,
@@ -794,14 +786,13 @@ pub(crate) fn vnc_behavior(
     }
 }
 
-pub(crate) fn vnc_advanced(
-    ui: &mut Ui,
-    draft: &mut Option<VncProfile>,
-    palette: &ThemePalette,
-) {
+pub(crate) fn vnc_advanced(ui: &mut Ui, draft: &mut Option<VncProfile>, palette: &ThemePalette) {
     let mut profile = draft.clone().unwrap_or_default();
     ui.add_enabled_ui(profile.enabled, |ui| {
-        kit::hint(ui, "Encoding priority (first supported encoding is preferred)");
+        kit::hint(
+            ui,
+            "Encoding priority (first supported encoding is preferred)",
+        );
         for index in 0..profile.encodings.len() {
             let encoding = profile.encodings[index];
             let label = match encoding {
@@ -810,18 +801,40 @@ pub(crate) fn vnc_advanced(
                 Encoding::CopyRect => "CopyRect",
                 Encoding::Raw => "Raw",
             };
+            let enabled = index > 0 && ui.is_enabled();
+            let row_fill = if ui.is_enabled() {
+                kit::WINDOW
+            } else {
+                kit::WINDOW.linear_multiply(0.5)
+            };
             let move_up = ui
                 .push_id(index, |ui| {
-                    egui::Frame::none().fill(kit::WINDOW).rounding(egui::Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(12.0, 3.0)).show(ui, |ui| {
-                            ui.set_width(ui.available_width() - 24.0);
+                    egui::Frame::none()
+                        .fill(row_fill)
+                        .rounding(egui::Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(12.0, 3.0))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
-                                ui.add_sized([ui.available_width() - 100.0, 30.0], egui::Label::new(format!("{}. {}", index + 1, label)));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.add_enabled(index > 0, kit::compact_button_widget_enabled("Move up", index > 0)).clicked()
-                                }).inner
-                            }).inner
-                        }).inner
+                                ui.add_sized(
+                                    [ui.available_width() - 100.0, 30.0],
+                                    egui::Label::new(format!("{}. {}", index + 1, label)),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.add_enabled(
+                                            index > 0,
+                                            kit::compact_button_widget_enabled("Move up", enabled),
+                                        )
+                                        .clicked()
+                                    },
+                                )
+                                .inner
+                            })
+                            .inner
+                        })
+                        .inner
                 })
                 .inner;
             if move_up {
@@ -866,9 +879,15 @@ pub(crate) fn vnc_advanced(
             },
         );
         #[cfg(target_os = "linux")]
-        kit::hint(ui, "0 uses the operating system default; this is not an idle timeout.");
+        kit::hint(
+            ui,
+            "0 uses the operating system default; this is not an idle timeout.",
+        );
         #[cfg(target_os = "linux")]
-        kit::status_line(ui, "TCP user timeout only applies to direct connections, not SSH tunnels.");
+        kit::status_line(
+            ui,
+            "TCP user timeout only applies to direct connections, not SSH tunnels.",
+        );
     });
     if draft.is_some() || profile.enabled {
         *draft = Some(profile);
@@ -904,16 +923,16 @@ impl PasswordDraft {
         let compact = ui.available_width() < 440.0;
         let has_reference = reference.is_some();
         let mut show_buttons = |ui: &mut Ui| {
-                if has_reference {
-                    if kit::destructive_button(ui, "Forget saved password", palette).clicked() {
-                        *reference = None;
-                        self.value = Default::default();
-                    }
+            if has_reference {
+                if kit::destructive_button(ui, "Forget saved password", palette).clicked() {
+                    *reference = None;
+                    self.value = Default::default();
                 }
-                let toggle = if self.reveal { "Hide" } else { "Show" };
-                if kit::compact_button(ui, toggle, palette).clicked() {
-                    self.reveal = !self.reveal;
-                }
+            }
+            let toggle = if self.reveal { "Hide" } else { "Show" };
+            if kit::compact_button(ui, toggle, palette).clicked() {
+                self.reveal = !self.reveal;
+            }
         };
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
@@ -924,17 +943,20 @@ impl PasswordDraft {
                             .size(12.0)
                             .color(kit::SUCCESS),
                     );
-                    let status_width = (ui.available_width() - 210.0).max(40.0);
+                    let status_width = (ui.available_width() - 240.0).max(40.0);
                     ui.allocate_ui_with_layout(
                         egui::vec2(status_width, 29.0),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
                             ui.set_width(status_width);
-                            ui.add(egui::Label::new(
-                                egui::RichText::new("Saved in system credential store")
-                                    .size(11.0)
-                                    .color(kit::TEXT),
-                            ).wrap());
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new("Saved in system credential store")
+                                        .size(11.0)
+                                        .color(kit::TEXT),
+                                )
+                                .wrap(),
+                            );
                         },
                     );
                 }

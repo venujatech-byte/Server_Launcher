@@ -538,6 +538,7 @@ pub(crate) fn two_fields<A, B>(
     let mut a_result = None;
     let mut b_result = None;
     ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
         ui.allocate_ui_with_layout(
             Vec2::new(column, 0.0),
             egui::Layout::top_down(egui::Align::Min),

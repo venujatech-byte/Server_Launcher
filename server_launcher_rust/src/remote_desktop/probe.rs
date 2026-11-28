@@ -3194,4 +3194,96 @@ mod tests {
         reply[3] = 255;
         assert!(rdp(&mut Peer::new(&reply), RdpSecurity::Auto).is_err());
     }
+
+    // --- Service Manager UI polish tests ---
+
+    #[test]
+    fn classic_vnc_password_enforces_six_to_eight_characters() {
+        use zeroize::Zeroizing;
+        assert!(!ServerDetection::valid_vnc_password(&Zeroizing::new("abc".to_owned())));
+        assert!(!ServerDetection::valid_vnc_password(&Zeroizing::new("".to_owned())));
+        assert!(ServerDetection::valid_vnc_password(&Zeroizing::new("abcdef".to_owned())));
+        assert!(ServerDetection::valid_vnc_password(&Zeroizing::new("12345678".to_owned())));
+        assert!(!ServerDetection::valid_vnc_password(&Zeroizing::new("123456789".to_owned())));
+    }
+
+    #[test]
+    fn report_owner_derives_from_display_user_then_ssh_user() {
+        use super::super::setup::model::{ServiceInventory, ServiceInventoryReport, VncDisplay};
+        let mut report = ServiceInventoryReport {
+            user: Some("sshuser".into()),
+            ..Default::default()
+        };
+        assert_eq!(ServerDetection::report_owner(&report), "sshuser");
+        report.vnc.displays.push(VncDisplay {
+            display: ":1".into(),
+            port: 5901,
+            user: Some("dispuser".into()),
+        });
+        assert_eq!(ServerDetection::report_owner(&report), "dispuser");
+        assert_eq!(ServerDetection::report_vnc_display(&report), Some(1));
+        assert_eq!(ServerDetection::report_pid(&report), None);
+        report.vnc.listeners.push(super::super::setup::model::Listener {
+            address: "127.0.0.1".into(),
+            port: 5901,
+            process: Some("Xtigervnc".into()),
+            pid: Some(42),
+            owner: None,
+        });
+        assert_eq!(ServerDetection::report_pid(&report), Some(42));
+    }
+
+    #[test]
+    fn mix_tint_and_tier_fill_produce_deterministic_tonal_colors() {
+        use crate::theme::ThemePalette;
+        let p = crate::theme::ThemeMode::NocturnalCommand.palette();
+        let base = p.bg_card;
+        let accent = p.accent;
+        let light = mix_tint(base, accent, 0.16);
+        let dark = mix_tint(base, accent, 0.0);
+        assert_ne!(light, dark);
+        assert_eq!(dark, base);
+        assert_eq!(tier_fill(&p, 1), p.bg_card);
+        assert_ne!(tier_fill(&p, 2), tier_fill(&p, 4));
+        let tint = tonal_fill(p.bg_card, p.accent, 16.0);
+        assert_eq!(tint, mix_tint(p.bg_card, p.accent, 0.16));
+    }
+
+    #[test]
+    fn all_themes_generate_borderless_service_manager_styling() {
+        use crate::theme::ThemeMode;
+        for theme in ThemeMode::all() {
+            let palette = theme.palette();
+            let visuals = palette.egui_visuals();
+            assert_eq!(visuals.window_stroke, egui::Stroke::NONE);
+            assert_eq!(visuals.widgets.noninteractive.bg_stroke, egui::Stroke::NONE);
+            assert_eq!(visuals.widgets.inactive.bg_stroke, egui::Stroke::NONE);
+            assert_eq!(visuals.widgets.hovered.bg_stroke, egui::Stroke::NONE);
+            assert_eq!(visuals.widgets.active.bg_stroke, egui::Stroke::NONE);
+        }
+    }
+
+    #[test]
+    fn vnc_display_pill_math_matches_port_offset() {
+        use super::super::setup::model::{ServiceInventory, ServiceInventoryReport, VncDisplay};
+        let mut report = ServiceInventoryReport {
+            vnc: ServiceInventory {
+                displays: vec![VncDisplay {
+                    display: ":1".into(),
+                    port: 5901,
+                    user: Some("ubuntu".into()),
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let pill = service_display_pill(&report).unwrap();
+        assert_eq!(pill, "Display :1 → :5901");
+        report.vnc.displays.push(VncDisplay {
+            display: ":3".into(),
+            port: 5903,
+            user: None,
+        });
+        assert_eq!(service_display_pill(&report).unwrap(), "Display :1 → :5901");
+    }
 }

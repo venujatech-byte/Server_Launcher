@@ -3,6 +3,7 @@ use crate::commands::CommandModalState;
 use crate::config::{CustomAction, CustomLink, CustomScript, SavedCommand, ServerConfig, SshRemoteHost};
 use crate::scripts::ScriptModalState;
 use crate::systemd::NewServiceDefinition;
+use crate::remote_desktop::ui_kit as kit;
 use crate::theme::ThemePalette;
 use egui::{Color32, Context, Key, RichText, Rounding, Stroke, Window};
 use std::collections::HashMap;
@@ -1264,7 +1265,8 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     ui.add_space(10.0);
                     egui::Frame::none().fill(palette.bg_subtle).rounding(Rounding::same(10.0))
                         .inner_margin(egui::Margin::same(10.0)).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
+            ui.set_min_width(modal_w - 36.0);
+            ui.set_max_width(modal_w - 36.0);
                         egui::CollapsingHeader::new(RichText::new("Launch options").size(11.5)).id_salt("server_launch_options").show(ui, |ui| {
                             ui.checkbox(&mut state.own_console, "Use an external terminal")
                                 .hover_tip("Launch the server in a separate system terminal window.");
@@ -1525,6 +1527,12 @@ enum RemotePcTab {
 #[derive(Default)]
 pub struct SshHostModalState {
     tab: RemotePcTab,
+    scroll_to_top: bool,
+    rdp_input_options_open: bool,
+    rdp_drive_open: bool,
+    rdp_experience_open: bool,
+    vnc_advanced_open: bool,
+    vnc_notes_open: bool,
     vnc_port_text: String,
     rdp_probe: crate::remote_desktop::probe::ProbeControl,
     vnc_probe: crate::remote_desktop::probe::ProbeControl,
@@ -1613,6 +1621,12 @@ impl SshHostModalState {
     pub fn open_add(&mut self) {
         self.tab = RemotePcTab::General;
         self.rdp_probe = Default::default();
+        self.scroll_to_top = true;
+        self.rdp_input_options_open = false;
+        self.rdp_drive_open = false;
+        self.rdp_experience_open = false;
+        self.vnc_advanced_open = true;
+        self.vnc_notes_open = true;
         self.vnc_probe = Default::default();
         self.server_detection = Default::default();
         self.clear_desktop_passwords();
@@ -1648,11 +1662,18 @@ impl SshHostModalState {
             DesktopProtocol::Rdp => RemotePcTab::Rdp,
             DesktopProtocol::Vnc => RemotePcTab::Vnc,
         };
+        self.scroll_to_top = true;
     }
 
     pub fn open_edit(&mut self, h: &crate::config::SshRemoteHost) {
         self.tab = RemotePcTab::General;
         self.rdp_probe = Default::default();
+        self.scroll_to_top = true;
+        self.rdp_input_options_open = false;
+        self.rdp_drive_open = false;
+        self.rdp_experience_open = false;
+        self.vnc_advanced_open = true;
+        self.vnc_notes_open = true;
         self.vnc_probe = Default::default();
         self.server_detection = Default::default();
         self.clear_desktop_passwords();
@@ -1711,7 +1732,9 @@ pub fn render_ssh_host_modal(
         use std::sync::mpsc::TryRecvError;
         state.test_result = match receiver.try_recv() {
             Ok(result) => Some(result),
-            Err(TryRecvError::Disconnected) => Some(Err("SSH connection test ended unexpectedly.".into())),
+            Err(TryRecvError::Disconnected) => {
+                Some(Err("SSH connection test ended unexpectedly.".into()))
+            }
             Err(TryRecvError::Empty) => None,
         };
         if state.test_result.is_some() {
@@ -1746,583 +1769,1142 @@ pub fn render_ssh_host_modal(
     }
 
     let saving = state.pending_save.is_some();
-
     let testing = state.pending_test.is_some();
     let parent_locked =
         state.server_detection.action_running() || state.server_detection.dialog_open();
 
     let mut action = ModalAction::None;
-    let title = if state.is_edit { "Edit Remote PC" } else { "Add Remote PC" };
+    let mut validation_error = None;
+    let title = if state.is_edit {
+        "Edit Remote PC"
+    } else {
+        "Add Remote PC"
+    };
 
     let screen = ctx.screen_rect();
-    let modal_w = 480.0_f32.min((screen.width() - 48.0).max(200.0));
+    let modal_w = 600.0_f32.min((screen.width() - 32.0).max(200.0));
     let max_h = 500.0_f32.min((screen.height() - 60.0).max(200.0));
     let mut window_open = state.open;
     let mut is_open = state.open;
+
     Window::new(RichText::new(title).size(17.0).strong())
         .id(egui::Id::new("add_edit_ssh_host_modal_window"))
         .open(&mut window_open)
-        .collapsible(false).resizable(false).movable(true)
-        .default_pos(screen.center()).pivot(egui::Align2::CENTER_CENTER)
+        .collapsible(false)
+        .resizable(false)
+        .movable(true)
+        .min_width(modal_w)
+        .max_width(modal_w)
+        .min_height(max_h)
+        .max_height(max_h)
+        .default_pos(screen.center())
+        .pivot(egui::Align2::CENTER_CENTER)
         .fixed_size(egui::vec2(modal_w, max_h))
-        .frame(egui::Frame::none().fill(palette.bg_card)
-            .stroke(Stroke::NONE).rounding(Rounding::same(14.0))
-            .shadow(egui::epaint::Shadow { offset: egui::vec2(0.0, 4.0), blur: 16.0, spread: 0.0, color: Color32::from_black_alpha(120) })
-            .inner_margin(egui::Margin::same(18.0)))
+        .frame(
+            egui::Frame::none()
+                .fill(kit::WINDOW)
+                .stroke(Stroke::NONE)
+                .rounding(Rounding::same(14.0))
+                .shadow(egui::epaint::Shadow {
+                    offset: egui::vec2(0.0, 4.0),
+                    blur: 16.0,
+                    spread: 0.0,
+                    color: Color32::from_black_alpha(120),
+                })
+                .inner_margin(egui::Margin::same(20.0)),
+        )
         .show(ctx, |ui| {
             *ui.visuals_mut() = palette.egui_visuals();
-            ui.spacing_mut().interact_size.y = 24.0;
-            ui.spacing_mut().item_spacing = egui::vec2(8.0, 4.0);
-            ui.spacing_mut().button_padding = egui::vec2(8.0, 3.0);
-            ui.style_mut().text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
-            ui.style_mut().text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(11.5));
-            ui.style_mut().text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(11.5));
-            ui.visuals_mut().widgets.inactive.weak_bg_fill = palette.bg_button;
-            ui.visuals_mut().widgets.inactive.bg_fill = palette.bg_button;
-            ui.visuals_mut().widgets.hovered.weak_bg_fill = palette.bg_card_active;
-            ui.visuals_mut().widgets.active.weak_bg_fill = palette.accent_subtle;
-            ui.add_space(4.0);
-            ui.set_max_width(ui.available_width());
+            kit::apply_text_styles(ui);
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 5.0);
+            ui.spacing_mut().interact_size.y = 29.0;
+            ui.spacing_mut().button_padding = egui::vec2(9.0, 4.0);
+            ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::NONE;
+            ui.visuals_mut().widgets.hovered.bg_stroke = Stroke::NONE;
+            ui.visuals_mut().widgets.active.bg_stroke = Stroke::NONE;
+            ui.visuals_mut().widgets.inactive.rounding = Rounding::same(9.0);
+            ui.visuals_mut().widgets.hovered.rounding = Rounding::same(9.0);
+            ui.visuals_mut().widgets.active.rounding = Rounding::same(9.0);
+            let column_width = modal_w - 40.0;
+            ui.set_width(column_width);
+            ui.set_min_width(column_width);
+            ui.set_max_width(column_width);
 
-            let detection_host = state.remote_detection_host();
-            ui.horizontal_wrapped(|ui| {
-                for (tab, label) in [
-                    (RemotePcTab::General, "General"),
-                    (RemotePcTab::Ssh, "SSH"),
-                    (RemotePcTab::Rdp, "RDP"),
-                    (RemotePcTab::Vnc, "VNC"),
-                ] {
-                    let protocol = match tab {
-                        RemotePcTab::Rdp => {
-                            Some(crate::remote_desktop::credentials::DesktopProtocol::Rdp)
-                        }
-                        RemotePcTab::Vnc => {
-                            Some(crate::remote_desktop::credentials::DesktopProtocol::Vnc)
-                        }
-                        _ => None,
-                    };
-                    let indicator = protocol.and_then(|protocol| {
-                        state.server_detection.indicator(&detection_host, protocol)
-                    });
-                    ui.horizontal(|ui| {
-                        if ui.selectable_label(state.tab == tab, label).clicked() {
-                            state.tab = tab;
-                        }
-                        if let Some(indicator) = indicator {
-                            let color = match indicator {
-                                "●" => palette.success,
-                                "◐" => palette.warning,
-                                "!" => palette.danger,
-                                _ => palette.text_muted,
-                            };
-                            ui.label(RichText::new(indicator).color(color));
-                        }
-                    });
-                }
-            });
+            let total_height = ui.available_height();
+            let tab_height = 36.0;
+            let footer_height = 58.0;
+            let content_height = (total_height - tab_height - footer_height).max(80.0);
 
-            egui::ScrollArea::vertical()
-                .id_salt(("ssh_host_form", state.tab as u8))
-                .max_width(ui.available_width())
-                .min_scrolled_height((max_h - 145.0).max(80.0))
-                .max_height((max_h - 145.0).max(80.0))
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    if testing || saving || parent_locked {
-                        ui.disable();
-                    }
-                    match state.tab {
-                        RemotePcTab::General => {
-                            // ── SSH Config Import strip ──
-                            egui::Frame::none()
-                                .fill(palette.bg_subtle)
-                                .stroke(Stroke::NONE)
-                                .rounding(Rounding::same(6.0))
-                                .inner_margin(egui::Margin::symmetric(10.0, 5.0))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.label(RichText::new("⚡ Auto-detect from ~/.ssh/config").size(11.0).color(palette.text_muted));
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            let scan_btn = egui::Button::new(RichText::new("Scan Hosts").size(11.0))
-                                                .fill(palette.bg_button)
-                                                .stroke(Stroke::NONE)
-                                                .rounding(Rounding::same(6.0));
-                                            if ui.add(scan_btn).clicked() {
-                                                let imported = crate::remote::import_from_ssh_config();
-                                                if let Some(first) = imported.first() {
-                                                    state.name = first.name.clone();
-                                                    state.host = first.host.clone();
-                                                    state.port_str = first.port.to_string();
-                                                    state.user = first.user.clone();
-                                                    state.key_path = first.key_path.clone();
-                                                    state.test_result = Some(Ok(format!("Detected '{}' ({} hosts in ~/.ssh/config)", first.name, imported.len())));
-                                                } else {
-                                                    state.test_result = Some(Err("No hosts found in ~/.ssh/config".to_string()));
-                                                }
-                                            }
+            ui.vertical(|ui| {
+                ui.add_space(4.0);
+
+                // Pinned segmented tab row.
+                egui::Frame::none()
+                    .fill(kit::CARD)
+                    .rounding(Rounding::same(12.0))
+                    .stroke(Stroke::NONE)
+                    .inner_margin(egui::Margin::symmetric(4.0, 3.0))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+                        ui.set_width(column_width - 8.0);
+                        ui.horizontal(|ui| {
+                            let tab_width = ui.available_width() / 4.0;
+                            let detection_host = state.remote_detection_host();
+                            for (tab, label) in [
+                                (RemotePcTab::General, "General"),
+                                (RemotePcTab::Ssh, "SSH"),
+                                (RemotePcTab::Rdp, "RDP"),
+                                (RemotePcTab::Vnc, "VNC"),
+                            ] {
+                                let active = state.tab == tab;
+                                let label = if active {
+                                    RichText::new(label).size(12.0).strong().color(Color32::WHITE)
+                                } else {
+                                    RichText::new(label).size(12.0).color(kit::LABEL)
+                                };
+                                let response = ui.add(
+                                    egui::Button::new(label)
+                                    .fill(if active {
+                                        kit::ACCENT
+                                    } else {
+                                        Color32::TRANSPARENT
+                                    })
+                                    .stroke(Stroke::NONE)
+                                    .rounding(Rounding::same(9.0))
+                                    .min_size(egui::vec2(tab_width, 32.0)),
+                                );
+                                if response.clicked() {
+                                    state.tab = tab;
+                                    state.scroll_to_top = true;
+                                    ctx.request_repaint();
+                                }
+                                let protocol = match tab {
+                                    RemotePcTab::Rdp => Some(
+                                        crate::remote_desktop::credentials::DesktopProtocol::Rdp,
+                                    ),
+                                    RemotePcTab::Vnc => Some(
+                                        crate::remote_desktop::credentials::DesktopProtocol::Vnc,
+                                    ),
+                                    _ => None,
+                                };
+                                if let Some(indicator) = protocol.and_then(|protocol| {
+                                    state.server_detection.indicator(&detection_host, protocol)
+                                }) {
+                                    let color = match indicator {
+                                        "●" => kit::SUCCESS,
+                                        "◐" => kit::WARNING,
+                                        "!" => kit::DANGER,
+                                        _ => kit::MUTED,
+                                    };
+                                    ui.painter().circle_filled(
+                                        response.rect.right_top()
+                                            + egui::vec2(-8.0, 6.0),
+                                        3.0,
+                                        color,
+                                    );
+                                }
+                                kit::focus_ring(ui, &response, response.rect, 9.0);
+                            }
+                        });
+                    });
+
+                ui.add_space(8.0);
+
+                // Pinned content viewport: the only scrolling region.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(column_width + 16.0, content_height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        let content_width = column_width;
+                        ui.set_clip_rect(ui.clip_rect().expand2(egui::vec2(16.0, 0.0)));
+                        ui.set_width(column_width + 16.0);
+                        ui.set_min_width(column_width + 16.0);
+                        ui.set_max_width(column_width + 16.0);
+                        let reset_scroll = state.scroll_to_top;
+                        state.scroll_to_top = false;
+                        let mut scroll = egui::ScrollArea::vertical()
+                            .id_salt("edit_remote_pc_content")
+                            .scroll(egui::Vec2b::new(false, true))
+                            .scroll_bar_visibility(
+                                egui::containers::scroll_area::ScrollBarVisibility::AlwaysHidden,
+                            )
+                            .auto_shrink([false, false])
+                            .max_height(content_height)
+                            .min_scrolled_height(content_height);
+                        if reset_scroll {
+                            scroll = scroll.vertical_scroll_offset(0.0);
+                        }
+                        let output = scroll.show(ui, |ui| {
+                            ui.set_width(content_width);
+                            ui.set_min_width(content_width);
+                            ui.set_max_width(content_width);
+                            ui.add_space(4.0);
+                            if testing || saving || parent_locked {
+                                ui.disable();
+                            }
+
+                            match state.tab {
+                                RemotePcTab::General => {
+                                    kit::strip_card(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                RichText::new("Auto-detect from ~/.ssh/config")
+                                                    .size(11.0)
+                                                    .color(kit::TEXT),
+                                            );
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    if kit::compact_button(
+                                                        ui,
+                                                        RichText::new("Scan Hosts").size(11.0),
+                                                        palette,
+                                                    )
+                                                    .clicked()
+                                                    {
+                                                        let imported =
+                                                            crate::remote::import_from_ssh_config();
+                                                        if let Some(first) = imported.first() {
+                                                            state.name = first.name.clone();
+                                                            state.host = first.host.clone();
+                                                            state.port_str = first.port.to_string();
+                                                            state.user = first.user.clone();
+                                                            state.key_path = first.key_path.clone();
+                                                            state.test_result = Some(Ok(format!(
+                                                                "Detected '{}' ({} hosts in ~/.ssh/config)",
+                                                                first.name,
+                                                                imported.len()
+                                                            )));
+                                                        } else {
+                                                            state.test_result = Some(Err(
+                                                                "No hosts found in ~/.ssh/config"
+                                                                    .to_string(),
+                                                            ));
+                                                        }
+                                                    }
+                                                },
+                                            );
                                         });
                                     });
-                                });
 
-                            ui.add_space(2.0);
-
-                            // Display Name *
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new("Display Name").size(12.0).strong().color(palette.text_primary));
-                                ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
-                            });
-                            ui.add(
-                                egui::TextEdit::singleline(&mut state.name)
-                                    .hint_text(RichText::new("e.g. Dev Cloud Server, Staging VPS").color(palette.text_muted))
-                                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 4.0)).clip_text(true)
-                                    .desired_width(ui.available_width()),
-                            );
-                            ui.add_space(2.0);
-
-                            ui.horizontal(|ui| {
-                                ui.vertical(|ui| {
-                                    ui.set_width(ui.available_width() * 0.65 - 4.0);
-                                    ui.label("Host / IP Address *");
-                                    ui.add(egui::TextEdit::singleline(&mut state.host)
-                                        .hint_text("192.168.1.100 or vps.example.com")
-                                        .desired_width(ui.available_width()));
-                                });
-                                ui.vertical(|ui| {
-                                    ui.label("Port");
-                                    ui.add(egui::TextEdit::singleline(&mut state.port_str)
-                                        .hint_text("22")
-                                        .desired_width(ui.available_width()));
-                                });
-                            });
-                            ui.add_space(2.0);
-
-                            // Default Remote Directory (optional)
-                            ui.label(RichText::new("Default Remote Directory (optional)").size(11.5).color(palette.text_muted));
-                            ui.add(
-                                egui::TextEdit::singleline(&mut state.remote_cwd)
-                                    .hint_text(RichText::new("/var/www or /home/ubuntu/app").color(palette.text_muted))
-                                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 4.0)).clip_text(true)
-                                    .desired_width(ui.available_width()),
-                            );
-                            ui.add_space(2.0);
-
-                        }
-                        RemotePcTab::Ssh => {
-                            ui.horizontal(|ui| {
-                                ui.vertical(|ui| {
-                                    ui.label("SSH Port *");
-                                    ui.add(egui::TextEdit::singleline(&mut state.port_str)
-                                        .hint_text("22")
-                                        .desired_width(75.0));
-                                });
-                            });
-                            ui.add_space(2.0);
-
-                            // SSH Username *
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new("SSH Username").size(12.0).strong().color(palette.text_primary));
-                                ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
-                            });
-                            ui.add(
-                                egui::TextEdit::singleline(&mut state.user)
-                                    .hint_text(RichText::new("ubuntu").color(palette.text_muted))
-                                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true)
-                                    .desired_width(ui.available_width()),
-                            );
-                            ui.add_space(4.0);
-
-                            // SSH Private Key Path (optional)
-                            ui.label(RichText::new("SSH Private Key Path (optional if using agent/default)").size(12.0).strong().color(palette.text_primary));
-                            ui.horizontal(|ui| {
-                                let browse_w = 85.0;
-                                let input_w = (ui.available_width() - browse_w - ui.spacing().item_spacing.x).max(80.0);
-                                ui.add_sized(
-                                    [input_w, 20.0],
-                                    egui::TextEdit::singleline(&mut state.key_path)
-                                        .hint_text(RichText::new("e.g. ~/.ssh/id_ed25519 or /home/user/.ssh/id_rsa").color(palette.text_muted))
-                                        .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true),
-                                );
-                                let browse_btn = egui::Button::new(RichText::new(format!("{} Browse...", crate::lucide::FOLDER)).size(11.0).color(palette.text_secondary))
-                                    .fill(palette.bg_button)
-                                    .stroke(Stroke::NONE)
-                                    .rounding(Rounding::same(8.0));
-                                if ui.add(browse_btn).clicked() {
-                                    if let Some(path) = rfd::FileDialog::new().pick_file() {
-                                        state.key_path = path.to_string_lossy().to_string();
-                                    }
+                                    ui.add_space(12.0);
+                                    kit::card(
+                                        ui,
+                                        palette,
+                                        crate::lucide::SERVER,
+                                        "Host details",
+                                        |ui| {
+                                            kit::field_label(ui, "Display Name", true, palette);
+                                            kit::text_field(
+                                                ui,
+                                                &mut state.name,
+                                                "e.g. Dev Cloud Server, Staging VPS",
+                                                false,
+                                                palette,
+                                            );
+                                            ui.add_space(12.0);
+                                            kit::two_fields(
+                                                ui,
+                                                |ui| {
+                                                    kit::field_label(
+                                                        ui,
+                                                        "Host / IP Address",
+                                                        true,
+                                                        palette,
+                                                    );
+                                                    kit::text_field(
+                                                        ui,
+                                                        &mut state.host,
+                                                        "192.168.1.100 or vps.example.com",
+                                                        false,
+                                                        palette,
+                                                    )
+                                                },
+                                                |ui| {
+                                                    kit::field_label(ui, "Port", false, palette);
+                                                    kit::text_field(
+                                                        ui,
+                                                        &mut state.port_str,
+                                                        "22",
+                                                        false,
+                                                        palette,
+                                                    )
+                                                },
+                                            );
+                                            ui.add_space(12.0);
+                                            // Non-obvious: this optional label was 11.5
+                                            // before the restyle, unlike the 12px field labels.
+                                            ui.label(
+                                                RichText::new("Default Remote Directory (optional)")
+                                                    .size(11.5)
+                                                    .color(kit::LABEL),
+                                            );
+                                            kit::text_field(
+                                                ui,
+                                                &mut state.remote_cwd,
+                                                "/var/www or /home/ubuntu/app",
+                                                false,
+                                                palette,
+                                            );
+                                        },
+                                    );
                                 }
-                            });
-                            ui.add_space(4.0);
+                                RemotePcTab::Ssh => {
+                                    kit::card(
+                                        ui,
+                                        palette,
+                                        crate::lucide::PLUG,
+                                        "Connection",
+                                        |ui| {
+                                            kit::two_fields(
+                                                ui,
+                                                |ui| {
+                                                    kit::field_label(
+                                                        ui,
+                                                        "SSH Port",
+                                                        true,
+                                                        palette,
+                                                    );
+                                                    kit::text_field(
+                                                        ui,
+                                                        &mut state.port_str,
+                                                        "22",
+                                                        false,
+                                                        palette,
+                                                    )
+                                                },
+                                                |ui| {
+                                                    kit::field_label(
+                                                        ui,
+                                                        "SSH Username",
+                                                        true,
+                                                        palette,
+                                                    );
+                                                    kit::text_field(
+                                                        ui,
+                                                        &mut state.user,
+                                                        "ubuntu",
+                                                        false,
+                                                        palette,
+                                                    )
+                                                },
+                                            );
+                                        },
+                                    );
 
-                            // SSH Password (optional)
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("SSH Password (optional if using key/agent)").size(12.0).strong().color(palette.text_primary));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let eye_label = if state.show_password {
-                                        format!("{} Hide", crate::lucide::EYE_OFF)
-                                    } else {
-                                        format!("{} Show", crate::lucide::EYE)
-                                    };
-                                    if ui.small_button(eye_label).clicked() {
-                                        state.show_password = !state.show_password;
-                                    }
-                                });
-                            });
-                            ui.add(
-                                egui::TextEdit::singleline(&mut state.password)
-                                    .password(!state.show_password)
-                                    .hint_text(RichText::new("Enter SSH password (for password-based authentication)").color(palette.text_muted))
-                                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true)
-                                    .desired_width(ui.available_width()),
-                            );
-                            ui.add_space(4.0);
+                                    ui.add_space(12.0);
+                                    kit::card(
+                                        ui,
+                                        palette,
+                                        crate::lucide::LOCK,
+                                        "Authentication",
+                                        |ui| {
+                                            kit::field_label(
+                                                ui,
+                                                "SSH Private Key Path (optional if using agent/default)",
+                                                false,
+                                                palette,
+                                            );
+                                            ui.horizontal(|ui| {
+                                                let browse_width = 108.0;
+                                                let input_width =
+                                                    (ui.available_width() - browse_width - 8.0)
+                                                        .max(80.0);
+                                                ui.allocate_ui_with_layout(
+                                                    egui::vec2(input_width, 0.0),
+                                                    egui::Layout::top_down(egui::Align::Min),
+                                                    |ui| {
+                                                        ui.set_width(input_width);
+                                                        kit::text_field(
+                                                            ui,
+                                                            &mut state.key_path,
+                                                            "e.g. ~/.ssh/id_ed25519 or /home/user/.ssh/id_rsa",
+                                                            false,
+                                                            palette,
+                                                        );
+                                                    },
+                                                );
+                                                ui.add_space(8.0);
+                                                if kit::secondary_button(
+                                                    ui,
+                                                    RichText::new(format!(
+                                                        "{} Browse...",
+                                                        crate::lucide::FOLDER
+                                                    ))
+                                                    .size(11.0),
+                                                    palette,
+                                                )
+                                                .clicked()
+                                                {
+                                                    if let Some(path) =
+                                                        rfd::FileDialog::new().pick_file()
+                                                    {
+                                                        state.key_path =
+                                                            path.to_string_lossy().to_string();
+                                                    }
+                                                }
+                                            });
 
-                            // Checkboxes: Use local SSH agent authentication & Strict host key check
-                            ui.horizontal_wrapped(|ui| {
-                                ui.checkbox(&mut state.use_agent, RichText::new("Use local SSH agent authentication").size(11.5).color(palette.text_secondary));
-                                ui.add_space(12.0);
-                                ui.checkbox(&mut state.strict_host_key, RichText::new("Strict host key check").size(11.5).color(palette.text_secondary));
-                            });
-                        }
-                        RemotePcTab::Rdp => {
-                            let protocol = crate::remote_desktop::credentials::DesktopProtocol::Rdp;
-                            let detection_host = state.remote_detection_host();
-                            state.server_detection.show(
-                                ui,
-                                &detection_host,
-                                protocol,
-                                std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))),
-                                config_path,
-                                palette,
-                            );
-                            let assigned_port = state
-                                .server_detection
-                                .take_action_port_update(&detection_host, protocol);
-                            if let Some(port) = assigned_port {
-                                let profile = state.rdp.get_or_insert_with(Default::default);
-                                profile.port = port;
-                                profile.port_auto = true;
-                                profile.port_manual = Some(false);
-                                ui.label(format!("Port {port} applied from the post-action scan."));
-                            }
-                            let configured_port = state.rdp.as_ref().map_or(3389, |profile| profile.port);
-                            if let Some(port) = state.server_detection.suggested_port(
-                                &detection_host,
-                                protocol,
-                                configured_port,
-                            ) {
-                                ui.horizontal(|ui| {
-                                    ui.label(format!("Detected RDP listener on port {port}."));
-                                    if ui.button(format!("Use {port}")).clicked() {
+                                            ui.add_space(12.0);
+                                            ui.horizontal(|ui| {
+                                                ui.label(
+                                                    RichText::new(
+                                                        "SSH Password (optional if using key/agent)",
+                                                    )
+                                                    .size(12.0)
+                                                    .strong()
+                                                    .color(kit::LABEL),
+                                                );
+                                                ui.with_layout(
+                                                    egui::Layout::right_to_left(egui::Align::Center),
+                                                    |ui| {
+                                                        let toggle = if state.show_password {
+                                                            format!(
+                                                                "{} Hide",
+                                                                crate::lucide::EYE_OFF
+                                                            )
+                                                        } else {
+                                                            format!("{} Show", crate::lucide::EYE)
+                                                        };
+                                                        if kit::compact_button(
+                                                            ui,
+                                                            toggle,
+                                                            palette,
+                                                        )
+                                                        .clicked()
+                                                        {
+                                                            state.show_password =
+                                                                !state.show_password;
+                                                        }
+                                                    },
+                                                );
+                                            });
+                                            kit::text_field(
+                                                ui,
+                                                &mut state.password,
+                                                "Enter SSH password (for password-based authentication)",
+                                                !state.show_password,
+                                                palette,
+                                            );
+
+                                            ui.add_space(12.0);
+                                            kit::two_fields(
+                                                ui,
+                                                |ui| {
+                                                    kit::switch(
+                                                        ui,
+                                                        &mut state.use_agent,
+                                                        "Use local SSH agent authentication",
+                                                        None,
+                                                        palette,
+                                                    )
+                                                },
+                                                |ui| {
+                                                    kit::switch(
+                                                        ui,
+                                                        &mut state.strict_host_key,
+                                                        "Strict host key check",
+                                                        None,
+                                                        palette,
+                                                    )
+                                                },
+                                            );
+                                        },
+                                    );
+
+                                    ui.add_space(12.0);
+                                    kit::card(
+                                        ui,
+                                        palette,
+                                        crate::lucide::ZAP,
+                                        "Test connection",
+                                        |ui| {
+                                            let test_enabled = !testing
+                                                && !saving
+                                                && !state.host.trim().is_empty();
+                                            let ssh_status = if testing {
+                                                kit::TestStatus::Checking
+                                            } else {
+                                                match state.test_result.clone() {
+                                                    Some(Ok(message)) => {
+                                                        kit::TestStatus::Success(message)
+                                                    }
+                                                    Some(Err(error)) => {
+                                                        kit::TestStatus::Failure {
+                                                        text: error.clone(),
+                                                        tooltip: error,
+                                                    }
+                                                    }
+                                                    None => kit::TestStatus::Untested,
+                                                }
+                                            };
+                                            kit::test_status(
+                                                ui,
+                                                palette,
+                                                RichText::new(format!(
+                                                    "{} Test SSH Connection",
+                                                    crate::lucide::ZAP
+                                                ))
+                                                .color(palette.accent)
+                                                .into(),
+                                                test_enabled,
+                                                ssh_status,
+                                                || {
+                                                    let port = state
+                                                        .port_str
+                                                        .trim()
+                                                        .parse::<u16>()
+                                                        .unwrap_or(22);
+                                                    let host_obj = crate::config::SshRemoteHost {
+                                                        id: "test".to_string(),
+                                                        name: state.name.clone(),
+                                                        host: state.host.clone(),
+                                                        port,
+                                                        user: state.user.clone(),
+                                                        key_path: state.key_path.clone(),
+                                                        password: state.password.clone(),
+                                                        credential_ref: None,
+                                                        remote_cwd: state.remote_cwd.clone(),
+                                                        use_agent: state.use_agent,
+                                                        strict_host_key: state.strict_host_key,
+                                                        rdp: state.rdp.clone(),
+                                                        vnc: state.vnc.clone(),
+                                                    };
+                                                    let (sender, receiver) =
+                                                        std::sync::mpsc::channel();
+                                                    state.test_result = None;
+                                                    state.pending_test = Some(receiver);
+                                                    let ctx = ctx.clone();
+                                                    std::thread::spawn(move || {
+                                                        let _ = sender.send(
+                                                            crate::remote::test_ssh_connection(
+                                                                &host_obj,
+                                                                timeout_seconds,
+                                                            ),
+                                                        );
+                                                        ctx.request_repaint();
+                                                    });
+                                                },
+                                            );
+                                        },
+                                    );
+                                }
+                                RemotePcTab::Rdp => {
+                                    use crate::remote_desktop::credentials::DesktopProtocol;
+                                    let protocol = DesktopProtocol::Rdp;
+                                    let detection_host = state.remote_detection_host();
+                                    let timeout = std::time::Duration::from_secs(u64::from(
+                                        timeout_seconds.clamp(5, 120),
+                                    ));
+                                    state.server_detection.show(
+                                        ui,
+                                        &detection_host,
+                                        protocol,
+                                        timeout,
+                                        config_path,
+                                        palette,
+                                    );
+                                    let mut notices = Vec::new();
+                                    if let Some(port) = state
+                                        .server_detection
+                                        .take_action_port_update(&detection_host, protocol)
+                                    {
                                         let profile = state.rdp.get_or_insert_with(Default::default);
                                         profile.port = port;
                                         profile.port_auto = true;
                                         profile.port_manual = Some(false);
+                                        notices.push(format!(
+                                            "Port {port} applied from the post-action scan."
+                                        ));
                                     }
-                                });
-                            }
-                            crate::remote_desktop::editor::rdp(
-                                ui,
-                                &mut state.rdp,
-                                desktop_defaults,
-                            );
-                            let request = if state.rdp.as_ref().is_some_and(|profile| profile.enabled) {
-                                let (port, security, tunnel_via_ssh, gateway) = {
-                                    let profile = state.rdp.as_mut().unwrap();
-                                    state.rdp_password.show(ui, &mut profile.credential_ref);
-                                    (
-                                        profile.port,
-                                        profile.security,
-                                        profile.tunnel_via_ssh,
-                                        (!profile.gateway.trim().is_empty()).then(|| profile.gateway.clone()),
-                                    )
-                                };
-                                if state.host.trim().is_empty() || port == 0 {
-                                    None
-                                } else {
-                                    let mut ssh_host = state.remote_detection_host();
-                                    ssh_host.password.clear();
-                                    Some(crate::remote_desktop::probe::ProbeRequest {
-                                        host: state.host.trim().trim_matches(['[', ']']).into(),
-                                        port,
-                                        protocol: crate::remote_desktop::credentials::DesktopProtocol::Rdp,
-                                        rdp_security: security,
-                                        ssh_host: Some(ssh_host),
-                                        tunnel_via_ssh,
-                                        gateway,
-                                        config_path: Some(config_path.to_owned()),
-                                    })
-                                }
-                            } else {
-                                None
-                            };
-                            state.rdp_probe.show(ui, request, "Enter the host and port first.", std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))));
-                        }
-                        RemotePcTab::Vnc => {
-                            let protocol = crate::remote_desktop::credentials::DesktopProtocol::Vnc;
-                            let detection_host = state.remote_detection_host();
-                            state.server_detection.show(
-                                ui,
-                                &detection_host,
-                                protocol,
-                                std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))),
-                                config_path,
-                                palette,
-                            );
-                            let assigned_port = state
-                                .server_detection
-                                .take_action_port_update(&detection_host, protocol);
-                            if let Some(port) = assigned_port {
-                                state.vnc_port_text = port.to_string();
-                                let profile = state.vnc.get_or_insert_with(Default::default);
-                                profile.port = port;
-                                profile.port_auto = true;
-                                profile.port_manual = Some(false);
-                                ui.label(format!("Port {port} applied from the post-action scan."));
-                            }
-                            let configured_port = state.vnc.as_ref().map_or(5900, |profile| profile.port);
-                            let displays = state.server_detection.vnc_displays(&detection_host);
-                            if displays.len() > 1 {
-                                ui.horizontal(|ui| {
-                                    ui.label("Detected displays:");
-                                    for display in &displays {
-                                        let owner = display
-                                            .user
-                                            .as_deref()
-                                            .map_or(String::new(), |user| format!(" · {user}"));
-                                        let label = format!(
-                                            "{} → {}{}",
-                                            display.display, display.port, owner
+                                    let configured_port =
+                                        state.rdp.as_ref().map_or(3389, |profile| profile.port);
+                                    if let Some(port) = state.server_detection.suggested_port(
+                                        &detection_host,
+                                        protocol,
+                                        configured_port,
+                                    ) {
+                                        notices
+                                            .push(format!("Detected RDP listener on port {port}."));
+                                        let use_response = ui.button(format!("Use {port}"));
+                                        kit::focus_ring(
+                                            ui,
+                                            &use_response,
+                                            use_response.rect,
+                                            10.0,
                                         );
-                                        if ui
-                                            .selectable_label(configured_port == display.port, label)
-                                            .clicked()
-                                        {
-                                            state.vnc_port_text = display.port.to_string();
-                                            let profile = state.vnc.get_or_insert_with(Default::default);
-                                            profile.port = display.port;
+                                        if use_response.clicked() {
+                                            let profile =
+                                                state.rdp.get_or_insert_with(Default::default);
+                                            profile.port = port;
                                             profile.port_auto = true;
                                             profile.port_manual = Some(false);
                                         }
                                     }
-                                });
-                            } else if let Some(port) = state.server_detection.suggested_port(
-                                &detection_host,
-                                protocol,
-                                configured_port,
-                            ) {
-                                ui.horizontal(|ui| {
-                                    ui.label(format!("Detected VNC listener on port {port}."));
-                                    if ui.button(format!("Use {port}")).clicked() {
+
+                                    kit::strip_card(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            state.server_detection.show_strip(
+                                                ui,
+                                                &detection_host,
+                                                protocol,
+                                                timeout,
+                                                palette,
+                                            );
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.add_space(8.0);
+                                                crate::remote_desktop::editor::rdp_enable_switch(ui, &mut state.rdp, desktop_defaults, palette);
+                                            });
+                                        });
+                                        if detection_host.host.trim().is_empty()
+                                            || detection_host.user.trim().is_empty()
+                                        {
+                                            kit::hint(ui, "Enter the SSH host and username to scan.");
+                                        }
+                                        for notice in &notices { kit::status_line(ui, notice); }
+                                    });
+
+                                    ui.add_space(12.0);
+                                    kit::card(
+                                        ui,
+                                        palette,
+                                        crate::lucide::SHIELD,
+                                        "Connection & security",
+                                        |ui| {
+                                            crate::remote_desktop::editor::rdp_connection(
+                                                ui,
+                                                &mut state.rdp,
+                                                desktop_defaults,
+                                                palette,
+                                            );
+                                        },
+                                    );
+
+                                    ui.add_space(12.0);
+                                    kit::card(
+                                        ui,
+                                        palette,
+                                        crate::lucide::LOCK,
+                                        "Credentials",
+                                        |ui| {
+                                            crate::remote_desktop::editor::rdp_credentials(
+                                                ui,
+                                                &mut state.rdp,
+                                                &mut state.rdp_password,
+                                                palette,
+                                            );
+                                            ui.add_space(12.0);
+                                            let request = if state
+                                                .rdp
+                                                .as_ref()
+                                                .is_some_and(|profile| profile.enabled)
+                                            {
+                                                let (port, security, tunnel_via_ssh, gateway) = {
+                                                    let profile = state.rdp.as_ref().unwrap();
+                                                    (
+                                                        profile.port,
+                                                        profile.security,
+                                                        profile.tunnel_via_ssh,
+                                                        (!profile.gateway.trim().is_empty())
+                                                            .then(|| profile.gateway.clone()),
+                                                    )
+                                                };
+                                                if state.host.trim().is_empty() || port == 0 {
+                                                    None
+                                                } else {
+                                                    let mut ssh_host = state.remote_detection_host();
+                                                    ssh_host.password.clear();
+                                                    Some(crate::remote_desktop::probe::ProbeRequest {
+                                                        host: state
+                                                            .host
+                                                            .trim()
+                                                            .trim_matches(['[', ']'])
+                                                            .into(),
+                                                        port,
+                                                        protocol,
+                                                        rdp_security: security,
+                                                        ssh_host: Some(ssh_host),
+                                                        tunnel_via_ssh,
+                                                        gateway,
+                                                        config_path: Some(config_path.to_owned()),
+                                                    })
+                                                }
+                                            } else {
+                                                None
+                                            };
+                                            state.rdp_probe.show(
+                                                ui,
+                                                request,
+                                                "Enter the host and port first.",
+                                                timeout,
+                                                palette,
+                                            );
+                                        },
+                                    );
+
+                                    ui.add_space(12.0);
+                                    kit::card(
+                                        ui,
+                                        palette,
+                                        crate::lucide::MONITOR,
+                                        "Display & performance",
+                                        |ui| {
+                                            crate::remote_desktop::editor::rdp_display(
+                                                ui,
+                                                &mut state.rdp,
+                                                desktop_defaults,
+                                                palette,
+                                            );
+                                        },
+                                    );
+
+                                    ui.add_space(12.0);
+                                    kit::card(
+                                        ui,
+                                        palette,
+                                        crate::lucide::KEYBOARD,
+                                        "Input & sharing",
+                                        |ui| {
+                                            crate::remote_desktop::editor::rdp_input(
+                                                ui,
+                                                &mut state.rdp,
+                                                &mut state.rdp_input_options_open,
+                                                palette,
+                                            );
+                                        },
+                                    );
+
+                                    ui.add_space(12.0);
+                                    kit::card(
+                                        ui,
+                                        palette,
+                                        crate::lucide::FOLDER,
+                                        "Devices & session",
+                                        |ui| {
+                                            crate::remote_desktop::editor::rdp_devices(
+                                                ui,
+                                                &mut state.rdp,
+                                                &mut state.rdp_drive_open,
+                                                &mut state.rdp_experience_open,
+                                                palette,
+                                            );
+                                        },
+                                    );
+                                }
+                                RemotePcTab::Vnc => {
+                                    use crate::remote_desktop::credentials::DesktopProtocol;
+                                    let protocol = DesktopProtocol::Vnc;
+                                    let detection_host = state.remote_detection_host();
+                                    let timeout = std::time::Duration::from_secs(u64::from(
+                                        timeout_seconds.clamp(5, 120),
+                                    ));
+                                    state.server_detection.show(
+                                        ui,
+                                        &detection_host,
+                                        protocol,
+                                        timeout,
+                                        config_path,
+                                        palette,
+                                    );
+                                    let mut notices = Vec::new();
+                                    if let Some(port) = state
+                                        .server_detection
+                                        .take_action_port_update(&detection_host, protocol)
+                                    {
                                         state.vnc_port_text = port.to_string();
-                                        let profile = state.vnc.get_or_insert_with(Default::default);
+                                        let profile =
+                                            state.vnc.get_or_insert_with(Default::default);
                                         profile.port = port;
                                         profile.port_auto = true;
                                         profile.port_manual = Some(false);
+                                        notices.push(format!(
+                                            "Port {port} applied from the post-action scan."
+                                        ));
                                     }
-                                });
-                            }
-                            crate::remote_desktop::editor::vnc(
-                                ui,
-                                &mut state.vnc,
-                                &mut state.vnc_port_text,
-                                &state.host,
-                                desktop_defaults,
-                            );
-                            let tunnel_via_ssh = if let Some(profile) = state.vnc.as_mut().filter(|profile| profile.enabled) {
-                                state.vnc_password.show(ui, &mut profile.credential_ref);
-                                if profile.username.trim().is_empty() {
-                                    ui.label("Classic VNC passwords are limited to eight bytes.");
-                                } else if !profile.tunnel_via_ssh {
-                                    let error_color = ui.visuals().error_fg_color;
-                                    ui.colored_label(
-                                        error_color,
-                                        "Enable Tunnel via SSH before using username/password authentication.",
+                                    let configured_port =
+                                        state.vnc.as_ref().map_or(5900, |profile| profile.port);
+                                    let displays =
+                                        state.server_detection.vnc_displays(&detection_host);
+                                    if displays.len() > 1 {
+                                        notices.push("Detected displays:".to_owned());
+                                        for display in &displays {
+                                            let label = format!(
+                                                "{} → {}{}",
+                                                display.display,
+                                                display.port,
+                                                display.user.as_deref().map_or(
+                                                    String::new(),
+                                                    |user| format!(" · {user}")
+                                                )
+                                            );
+                                            let display_response = ui.selectable_label(
+                                                configured_port == display.port,
+                                                label,
+                                            );
+                                            kit::focus_ring(
+                                                ui,
+                                                &display_response,
+                                                display_response.rect,
+                                                10.0,
+                                            );
+                                            if display_response.clicked() {
+                                                state.vnc_port_text = display.port.to_string();
+                                                let profile =
+                                                    state.vnc.get_or_insert_with(Default::default);
+                                                profile.port = display.port;
+                                                profile.port_auto = true;
+                                                profile.port_manual = Some(false);
+                                            }
+                                        }
+                                    } else if let Some(port) = state.server_detection.suggested_port(
+                                        &detection_host,
+                                        protocol,
+                                        configured_port,
+                                    ) {
+                                        notices
+                                            .push(format!("Detected VNC listener on port {port}."));
+                                        let use_response = ui.button(format!("Use {port}"));
+                                        kit::focus_ring(
+                                            ui,
+                                            &use_response,
+                                            use_response.rect,
+                                            10.0,
+                                        );
+                                        if use_response.clicked() {
+                                            state.vnc_port_text = port.to_string();
+                                            let profile =
+                                                state.vnc.get_or_insert_with(Default::default);
+                                            profile.port = port;
+                                            profile.port_auto = true;
+                                            profile.port_manual = Some(false);
+                                        }
+                                    }
+
+                                    kit::strip_card(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            state.server_detection.show_strip(ui, &detection_host, protocol, timeout, palette);
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.add_space(8.0);
+                                                crate::remote_desktop::editor::vnc_enable_switch(ui, &mut state.vnc, &state.host, desktop_defaults, palette);
+                                            });
+                                        });
+                                        if detection_host.host.trim().is_empty()
+                                            || detection_host.user.trim().is_empty()
+                                        {
+                                            kit::hint(ui, "Enter the SSH host and username to scan.");
+                                        }
+                                        for notice in &notices { kit::status_line(ui, notice); }
+                                    });
+
+                                    ui.add_space(12.0);
+                                    kit::card(
+                                        ui,
+                                        palette,
+                                        crate::lucide::PLUG,
+                                        "Connection",
+                                        |ui| {
+                                            crate::remote_desktop::editor::vnc_connection(
+                                                ui,
+                                                &mut state.vnc,
+                                                &mut state.vnc_port_text,
+                                                &state.host,
+                                                desktop_defaults,
+                                                palette,
+                                            );
+                                        },
+                                    );
+
+                                    ui.add_space(12.0);
+                                    kit::card(
+                                        ui,
+                                        palette,
+                                        crate::lucide::LOCK,
+                                        "Credentials",
+                                        |ui| {
+                                            crate::remote_desktop::editor::vnc_credentials(
+                                                ui,
+                                                &mut state.vnc,
+                                                &mut state.vnc_password,
+                                                palette,
+                                            );
+                                            ui.add_space(12.0);
+                                            let tunnel_via_ssh = if let Some(profile) = state
+                                                .vnc
+                                                .as_ref()
+                                                .filter(|profile| profile.enabled)
+                                            {
+                                                Some(profile.tunnel_via_ssh)
+                                            } else {
+                                                None
+                                            };
+                                            let request = tunnel_via_ssh.and_then(|tunnel_via_ssh| {
+                                                crate::remote_desktop::editor::vnc_port(
+                                                    &state.vnc_port_text,
+                                                    &state.host,
+                                                )
+                                                .filter(|_| !state.host.trim().is_empty())
+                                                .map(|port| {
+                                                    let mut ssh_host =
+                                                        state.remote_detection_host();
+                                                    ssh_host.password.clear();
+                                                    crate::remote_desktop::probe::ProbeRequest {
+                                                        host: state
+                                                            .host
+                                                            .trim()
+                                                            .trim_matches(['[', ']'])
+                                                            .into(),
+                                                        port,
+                                                        protocol,
+                                                        rdp_security: Default::default(),
+                                                        ssh_host: Some(ssh_host),
+                                                        tunnel_via_ssh,
+                                                        gateway: None,
+                                                        config_path: Some(config_path.to_owned()),
+                                                    }
+                                                })
+                                            });
+                                            state.vnc_probe.show(
+                                                ui,
+                                                request,
+                                                "Enter the host and a valid port or display first.",
+                                                timeout,
+                                                palette,
+                                            );
+                                        },
+                                    );
+
+                                    ui.add_space(12.0);
+                                    kit::card(
+                                        ui,
+                                        palette,
+                                        crate::lucide::ACTIVITY,
+                                        "Display & clipboard",
+                                        |ui| {
+                                            crate::remote_desktop::editor::vnc_display(
+                                                ui,
+                                                &mut state.vnc,
+                                                desktop_defaults,
+                                                palette,
+                                            );
+                                        },
+                                    );
+
+                                    ui.add_space(12.0);
+                                    kit::card(
+                                        ui,
+                                        palette,
+                                        crate::lucide::SPARKLES,
+                                        "Behavior",
+                                        |ui| {
+                                            crate::remote_desktop::editor::vnc_behavior(
+                                                ui,
+                                                &mut state.vnc,
+                                                palette,
+                                            );
+                                        },
+                                    );
+
+                                    ui.add_space(12.0);
+                                    kit::collapsible_card(
+                                        ui,
+                                        palette,
+                                        crate::lucide::SLIDERS,
+                                        "Advanced",
+                                        &mut state.vnc_advanced_open,
+                                        |ui| {
+                                            crate::remote_desktop::editor::vnc_advanced(
+                                                ui,
+                                                &mut state.vnc,
+                                                palette,
+                                            );
+                                        },
+                                    );
+
+                                    ui.add_space(12.0);
+                                    kit::collapsible_card(
+                                        ui,
+                                        palette,
+                                        crate::lucide::INFO,
+                                        "Notes",
+                                        &mut state.vnc_notes_open,
+                                        |ui| {
+                                            crate::remote_desktop::editor::vnc_notes(
+                                                ui,
+                                                palette,
+                                            );
+                                        },
                                     );
                                 }
-                                Some(profile.tunnel_via_ssh)
+                            }
+
+                            validation_error = if state.name.trim().is_empty()
+                                || state.host.trim().is_empty()
+                            {
+                                Some("General: enter a display name and host address.")
+                            } else if state
+                                .port_str
+                                .trim()
+                                .parse::<u16>()
+                                .ok()
+                                .filter(|port| *port > 0)
+                                .is_none()
+                            {
+                                Some("SSH: enter a port from 1 to 65535.")
+                            } else if state.user.trim().is_empty() {
+                                Some("SSH: enter a username.")
+                            } else if state.rdp.as_ref().is_some_and(|profile| {
+                                profile.enabled
+                                    && (profile.port == 0
+                                        || (!profile.same_username_as_ssh
+                                            && profile.username.trim().is_empty())
+                                        || (profile.resolution
+                                            == crate::remote_desktop::profile::Resolution::Fixed
+                                            && (!(1..=8192).contains(&profile.width)
+                                                || !(1..=8192).contains(&profile.height))))
+                            }) {
+                                Some("RDP: check the port, username, and fixed resolution.")
+                            } else if state.vnc.as_ref().is_some_and(|profile| {
+                                profile.enabled
+                                    && crate::remote_desktop::editor::vnc_port(
+                                        &state.vnc_port_text,
+                                        &state.host,
+                                    )
+                                    .is_none()
+                            }) {
+                                Some("VNC: enter a valid port or display for this host.")
                             } else {
                                 None
                             };
-                            let request = tunnel_via_ssh.and_then(|tunnel_via_ssh| {
-                                crate::remote_desktop::editor::vnc_port(&state.vnc_port_text, &state.host)
-                                    .filter(|_| !state.host.trim().is_empty())
-                                    .map(|port| {
-                                        let mut ssh_host = state.remote_detection_host();
-                                        ssh_host.password.clear();
-                                        crate::remote_desktop::probe::ProbeRequest {
-                                            host: state.host.trim().trim_matches(['[', ']']).into(),
-                                            port,
-                                            protocol: crate::remote_desktop::credentials::DesktopProtocol::Vnc,
-                                            rdp_security: Default::default(),
-                                            ssh_host: Some(ssh_host),
-                                            tunnel_via_ssh,
-                                            gateway: None,
-                                            config_path: Some(config_path.to_owned()),
-                                        }
-                                    })
-                            });
-                            state.vnc_probe.show(ui, request, "Enter the host and a valid port or display first.", std::time::Duration::from_secs(u64::from(timeout_seconds.clamp(5, 120))));
-                        }
+
+                            if saving {
+                                ui.add_space(10.0);
+                                ui.label(
+                                    RichText::new("Saving credentials…")
+                                        .size(12.0)
+                                        .color(kit::MUTED),
+                                );
+                            }
+                        ui.add_space(20.0);
+                        });
+                        kit::paint_overlay_scrollbar(ui, &output);
+                    },
+                );
+
+                ui.add_space(2.0);
+
+                // Pinned footer: unchanged button styles, minus the SSH test controls.
+                ui.vertical(|ui| {
+                    if let Some(error) = validation_error {
+                        ui.label(RichText::new(error).size(12.0).color(kit::DANGER));
                     }
-                });
-            ui.add_space(4.0);
-            ui.separator();
-            ui.add_space(6.0);
-
-            let validation_error = if state.name.trim().is_empty() || state.host.trim().is_empty() {
-                Some("General: enter a display name and host address.")
-            } else if state.port_str.trim().parse::<u16>().ok().filter(|port| *port > 0).is_none() {
-                Some("SSH: enter a port from 1 to 65535.")
-            } else if state.user.trim().is_empty() {
-                Some("SSH: enter a username.")
-            } else if state.rdp.as_ref().is_some_and(|profile| profile.enabled
-                && (profile.port == 0
-                    || (!profile.same_username_as_ssh && profile.username.trim().is_empty())
-                    || (profile.resolution == crate::remote_desktop::profile::Resolution::Fixed
-                        && (!(1..=8192).contains(&profile.width) || !(1..=8192).contains(&profile.height))))) {
-                Some("RDP: check the port, username, and fixed resolution.")
-            } else if state.vnc.as_ref().is_some_and(|profile| profile.enabled
-                && crate::remote_desktop::editor::vnc_port(&state.vnc_port_text, &state.host).is_none()) {
-                Some("VNC: enter a valid port or display for this host.")
-            } else {
-                None
-            };
-            if saving {
-                ui.label("Saving credentials…");
-            }
-            if let Some(error) = validation_error {
-                ui.label(RichText::new(error).color(palette.danger));
-            }
-
-            // Connection feedback stays separate from the final actions.
-            // Footer
-            ui.horizontal(|ui| {
-                // Test Connection button
-                let test_btn = egui::Button::new(RichText::new(format!("{} Test SSH Connection", crate::lucide::ZAP)).size(11.5).color(palette.accent))
-                    .fill(palette.bg_button)
-                    .stroke(Stroke::NONE)
-                    .rounding(Rounding::same(8.0));
-                if ui.add_enabled(!testing && !saving && !state.host.trim().is_empty(), test_btn).clicked() {
-                    let port = state.port_str.trim().parse::<u16>().unwrap_or(22);
-                    let host_obj = crate::config::SshRemoteHost {
-                        id: "test".to_string(),
-                        name: state.name.clone(),
-                        host: state.host.clone(),
-                        port,
-                        user: state.user.clone(),
-                        key_path: state.key_path.clone(),
-                        password: state.password.clone(),
-                        credential_ref: None,
-                        remote_cwd: state.remote_cwd.clone(),
-                        use_agent: state.use_agent,
-                        strict_host_key: state.strict_host_key,
-                        rdp: state.rdp.clone(),
-                        vnc: state.vnc.clone(),
-                    };
-                    let (sender, receiver) = std::sync::mpsc::channel();
-                    state.test_result = None;
-                    state.pending_test = Some(receiver);
-                    let ctx = ctx.clone();
-                    std::thread::spawn(move || {
-                        let _ = sender.send(crate::remote::test_ssh_connection(&host_obj, timeout_seconds));
-                        ctx.request_repaint();
-                    });
-                }
-
-                ui.add_space(6.0);
-                if state.pending_test.is_some() {
-                    ui.spinner();
-                    ui.label(RichText::new("Testing connection…").size(11.0).color(palette.text_muted));
-                } else if let Some(res) = &state.test_result {
-                    match res {
-                        Ok(msg) => {
-                            ui.label(RichText::new("●").size(9.0).color(palette.success));
-                            ui.add(egui::Label::new(RichText::new(msg).size(11.0).color(palette.success)).truncate()).hover_tip(msg);
-                        }
-                        Err(err) => {
-                            ui.label(RichText::new("●").size(9.0).color(palette.danger));
-                            ui.add(egui::Label::new(RichText::new(err).size(11.0).color(palette.danger)).truncate()).hover_tip(err);
-                        }
-                    }
-                } else {
-                    ui.label(RichText::new("●").size(9.0).color(Color32::from_rgb(0, 210, 160)));
-                    ui.label(RichText::new("Ready to register").size(11.0).monospace().color(Color32::from_rgb(120, 126, 142)));
-                }
-
-            });
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                if state.is_edit {
-                    if let Some(id_to_del) = state.editing_id.clone() {
-                        let del_btn = egui::Button::new(RichText::new("Delete Host").size(11.5).color(palette.danger))
+                    ui.horizontal(|ui| {
+                    if state.is_edit {
+                        if let Some(id_to_del) = state.editing_id.clone() {
+                            let del_btn = egui::Button::new(
+                                RichText::new("Delete Host").size(11.5).color(palette.danger),
+                            )
                             .fill(palette.danger_subtle);
-                        if ui.add_enabled(!saving && !parent_locked, del_btn).clicked() {
-                            action = ModalAction::DeleteSshHost(id_to_del);
-                            state.open = false;
+                            let delete_response =
+                                ui.add_enabled(!saving && !parent_locked, del_btn);
+                            kit::focus_ring(ui, &delete_response, delete_response.rect, 10.0);
+                            if delete_response.clicked() {
+                                action = ModalAction::DeleteSshHost(id_to_del);
+                                state.open = false;
+                            }
                         }
                     }
-                }
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let save_btn = egui::Button::new(RichText::new("Save Host").size(12.0).strong().color(palette.accent_text))
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let save_btn = egui::Button::new(
+                            RichText::new("Save Host")
+                                .size(12.0)
+                                .strong()
+                                .color(palette.accent_text),
+                        )
                         .fill(palette.accent)
                         .rounding(Rounding::same(8.0))
                         .min_size(egui::vec2(95.0, 28.0));
 
-                    if ui.add_enabled(!testing && !saving && !parent_locked && validation_error.is_none(), save_btn).clicked() {
-                        let port = state.port_str.trim().parse::<u16>().unwrap_or(22);
-                        let name = if state.name.trim().is_empty() {
-                            state.host.trim().to_string()
-                        } else {
-                            state.name.trim().to_string()
-                        };
-                        let id = state.editing_id.clone().unwrap_or_else(|| {
-                            format!("ssh_{}", uuid_short())
-                        });
+                        let save_response = ui.add_enabled(
+                            !testing && !saving && !parent_locked && validation_error.is_none(),
+                            save_btn,
+                        );
+                        kit::focus_ring(ui, &save_response, save_response.rect, 8.0);
+                        if save_response.clicked() {
+                            let port = state.port_str.trim().parse::<u16>().unwrap_or(22);
+                            let name = if state.name.trim().is_empty() {
+                                state.host.trim().to_string()
+                            } else {
+                                state.name.trim().to_string()
+                            };
+                            let id = state
+                                .editing_id
+                                .clone()
+                                .unwrap_or_else(|| format!("ssh_{}", uuid_short()));
 
-                        let host_obj = crate::config::SshRemoteHost {
-                            id,
-                            name,
-                            host: state.host.trim().to_string(),
-                            port,
-                            user: if state.user.trim().is_empty() { "ubuntu".to_string() } else { state.user.trim().to_string() },
-                            key_path: state.key_path.trim().to_string(),
-                            password: state.password.trim().to_string(),
-                            credential_ref: None,
-                            remote_cwd: state.remote_cwd.trim().to_string(),
-                            use_agent: state.use_agent,
-                            strict_host_key: state.strict_host_key,
-                            rdp: state.rdp.clone(),
-                            vnc: state.vnc.clone().map(|mut profile| {
-                                if let Some(port) = crate::remote_desktop::editor::vnc_port(&state.vnc_port_text, &state.host) {
-                                    profile.port = port;
-                                }
-                                profile
-                            }),
-                        };
+                            let host_obj = crate::config::SshRemoteHost {
+                                id,
+                                name,
+                                host: state.host.trim().to_string(),
+                                port,
+                                user: if state.user.trim().is_empty() {
+                                    "ubuntu".to_string()
+                                } else {
+                                    state.user.trim().to_string()
+                                },
+                                key_path: state.key_path.trim().to_string(),
+                                password: state.password.trim().to_string(),
+                                credential_ref: None,
+                                remote_cwd: state.remote_cwd.trim().to_string(),
+                                use_agent: state.use_agent,
+                                strict_host_key: state.strict_host_key,
+                                rdp: state.rdp.clone(),
+                                vnc: state.vnc.clone().map(|mut profile| {
+                                    if let Some(port) = crate::remote_desktop::editor::vnc_port(
+                                        &state.vnc_port_text,
+                                        &state.host,
+                                    ) {
+                                        profile.port = port;
+                                    }
+                                    profile
+                                }),
+                            };
 
-                        if state.rdp_password.value.is_empty() && state.vnc_password.value.is_empty() {
-                            action = ModalAction::SaveSshHost(host_obj, state.editing_id.clone(), Default::default());
-                            state.open = false;
-                            is_open = false;
-                        } else {
-                            state.save_desktop_passwords(host_obj, ctx);
+                            if state.rdp_password.value.is_empty()
+                                && state.vnc_password.value.is_empty()
+                            {
+                                action = ModalAction::SaveSshHost(
+                                    host_obj,
+                                    state.editing_id.clone(),
+                                    Default::default(),
+                                );
+                                state.open = false;
+                                is_open = false;
+                            } else {
+                                state.save_desktop_passwords(host_obj, ctx);
+                            }
                         }
-                    }
 
-                    let cancel_btn = egui::Button::new(RichText::new("Cancel").size(12.0).color(palette.text_secondary))
+                        let cancel_btn = egui::Button::new(
+                            RichText::new("Cancel")
+                                .size(12.0)
+                                .color(palette.text_secondary),
+                        )
                         .fill(palette.bg_button)
                         .stroke(Stroke::NONE)
                         .rounding(Rounding::same(8.0))
                         .min_size(egui::vec2(75.0, 28.0));
-                    if ui.add_enabled(!parent_locked, cancel_btn).clicked() {
-                        state.open = false;
-                        is_open = false;
-                    }
+                        let cancel_response = ui.add_enabled(!parent_locked, cancel_btn);
+                        kit::focus_ring(ui, &cancel_response, cancel_response.rect, 8.0);
+                        if cancel_response.clicked() {
+                            state.open = false;
+                            is_open = false;
+                        }
+                    });
+                    });
                 });
+
+                ui.add_space(4.0);
             });
         });
 

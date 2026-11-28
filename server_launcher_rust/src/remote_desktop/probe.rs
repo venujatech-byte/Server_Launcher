@@ -1,4 +1,4 @@
-use super::{credentials::DesktopProtocol, profile::RdpSecurity, setup::plan::Intent};
+use super::{credentials::DesktopProtocol, profile::RdpSecurity, setup::plan::Intent, ui_kit as kit};
 use std::{
     io::{self, Read, Write},
     net::{TcpStream, ToSocketAddrs},
@@ -807,6 +807,62 @@ impl ServerDetection {
             || self.vnc_stop_pending.is_some()
     }
 
+    /// Render only the compact service row: name, scan state and actions.
+    /// The enable switch is rendered by the caller at the right of this strip.
+    pub(crate) fn show_strip(
+        &mut self,
+        ui: &mut egui::Ui,
+        host: &crate::config::SshRemoteHost,
+        protocol: DesktopProtocol,
+        timeout: Duration,
+        palette: &crate::theme::ThemePalette,
+    ) {
+        let key = detection_key(host);
+        let can_scan = !host.host.trim().is_empty() && !host.user.trim().is_empty();
+        let has_current_result = self
+            .last
+            .as_ref()
+            .is_some_and(|(tested, _, _)| tested == &key);
+        let checking = self.pending.is_some();
+
+        let name = match protocol {
+            DesktopProtocol::Rdp => "xrdp service",
+            DesktopProtocol::Vnc => "TigerVNC service",
+        };
+        ui.add_sized(
+            [112.0, 29.0],
+            egui::Label::new(egui::RichText::new(name).size(12.0).strong().color(kit::TEXT)),
+        );
+        ui.add_space(8.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(88.0, 29.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                if has_current_result && !self.scan_window_open {
+                    if kit::compact_button(ui, "Open status", palette).clicked() {
+                        self.scan_window_open = true;
+                    }
+                }
+                let scan_enabled = can_scan && !checking;
+                let scan_response = ui.add_enabled(
+                    scan_enabled,
+                    egui::Button::new(if has_current_result { "Scan again" } else { "Scan" })
+                        .fill(kit::CONTROL)
+                        .stroke(egui::Stroke::NONE)
+                        .rounding(egui::Rounding::same(10.0))
+                        .min_size(egui::vec2(72.0, 28.0)),
+                );
+                kit::focus_ring(ui, &scan_response, scan_response.rect, 10.0);
+                if scan_response.clicked() {
+                    self.scan_window_open = true;
+                    self.show_manual_instructions = false;
+                    self.start(host.clone(), key.clone(), timeout, ui.ctx().clone());
+                }
+            }
+        );
+        if checking { ui.spinner(); }
+    }
+
     pub(crate) fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -971,31 +1027,6 @@ impl ServerDetection {
         } else {
             None
         };
-
-        ui.horizontal(|ui| {
-            ui.strong(match protocol {
-                DesktopProtocol::Rdp => "xrdp service",
-                DesktopProtocol::Vnc => "TigerVNC service",
-            });
-            if self.pending.is_some() {
-                ui.spinner();
-                ui.label("Checking over SSH…");
-            }
-            if ui
-                .add_enabled(
-                    can_scan && self.pending.is_none(),
-                    egui::Button::new(if has_current_result { "Scan again" } else { "Scan" }),
-                )
-                .clicked()
-            {
-                self.scan_window_open = true;
-                self.show_manual_instructions = false;
-                self.start(host.clone(), key.clone(), timeout, ui.ctx().clone());
-            }
-            if has_current_result && !self.scan_window_open && ui.button("Open status").clicked() {
-                self.scan_window_open = true;
-            }
-        });
 
         let mut requested_intent = None;
         let mut requested_undo = None;
@@ -1248,8 +1279,6 @@ ManualSteps,
                     }
                 });
             self.scan_window_open = open;
-        } else if !can_scan {
-            ui.label("Enter the SSH host and username to scan.");
         }
         if request_manual_scan && self.pending.is_none() {
             self.start(host.clone(), key.clone(), timeout, ui.ctx().clone());
@@ -3809,6 +3838,7 @@ impl ProbeControl {
         request: Option<ProbeRequest>,
         unavailable: &str,
         timeout: Duration,
+        palette: &crate::theme::ThemePalette,
     ) {
         if let Some((tested, receiver)) = &self.pending {
             use std::sync::mpsc::TryRecvError;
@@ -3837,48 +3867,51 @@ impl ProbeControl {
             }
         }
 
-        ui.horizontal_wrapped(|ui| {
-            let button = ui.add_enabled(
-                self.pending.is_none() && request.is_some(),
-                egui::Button::new("Test Connection"),
-            );
-            if button.clicked() {
-                if let Some(request) = request.as_ref() {
+        let enabled = self.pending.is_none() && request.is_some();
+        let ctx = ui.ctx().clone();
+        let status = if self.pending.is_some() {
+            kit::TestStatus::Checking
+        } else if request.is_none() {
+            kit::TestStatus::Unavailable(unavailable)
+        } else if let Some((_, result)) = self
+            .last
+            .as_ref()
+            .filter(|(tested, _)| request.as_ref() == Some(tested))
+        {
+            match result {
+                Ok(info) => kit::TestStatus::Success(format!("Protocol reachable · {info}")),
+                Err(error) => kit::TestStatus::Failure {
+                    text: probe_error_summary(error).to_owned(),
+                    tooltip: error.clone(),
+                },
+            }
+        } else {
+            kit::TestStatus::None
+        };
+
+        ui.horizontal(|ui| {
+            kit::test_status(
+            ui,
+            palette,
+            egui::RichText::new(format!("{} Test Connection", crate::lucide::ZAP))
+                .size(11.5)
+                .color(kit::TEXT)
+                .into(),
+            enabled,
+            status,
+            move || {
+                if let Some(request) = request {
                     let (sender, receiver) = std::sync::mpsc::channel();
                     let target = request.clone();
-                    self.pending = Some((request.clone(), receiver));
-                    let ctx = ui.ctx().clone();
+                    self.pending = Some((request, receiver));
+                    let ctx = ctx.clone();
                     std::thread::spawn(move || {
                         let _ = sender.send(run(&target, timeout));
                         ctx.request_repaint();
                     });
                 }
-            }
-
-            if self.pending.is_some() {
-                ui.spinner();
-                ui.label("Testing…");
-            } else if request.is_none() {
-                ui.label(unavailable);
-            } else if let Some((_, result)) = self
-                .last
-                .as_ref()
-                .filter(|(tested, _)| request.as_ref() == Some(tested))
-            {
-                match result {
-                    Ok(info) => {
-                        ui.label("● Protocol reachable").on_hover_text(info);
-                    }
-                    Err(error) => {
-                        ui.colored_label(ui.visuals().warn_fg_color, probe_error_summary(error));
-                        egui::CollapsingHeader::new("Connection check details")
-                            .id_salt(("protocol_probe_error", request.as_ref().map(|r| r.protocol as u8)))
-                            .show(ui, |ui| {
-                                ui.add(egui::Label::new(error.chars().take(4096).collect::<String>()).wrap());
-                            });
-                    }
-                }
-            }
+            },
+            );
         });
     }
 }

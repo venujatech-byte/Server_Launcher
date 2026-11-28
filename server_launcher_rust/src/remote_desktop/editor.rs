@@ -1,362 +1,9 @@
 use super::profile::*;
-use egui::{ComboBox, DragValue, TextEdit, Ui};
+use super::ui_kit as kit;
+use crate::theme::ThemePalette;
+use egui::{Response, RichText, Ui};
 
-fn choice<T: Copy + PartialEq>(ui: &mut Ui, label: &str, value: &mut T, items: &[(T, &str)]) {
-    let selected = items.iter().find(|(option, _)| option == value);
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            [112.0, ui.spacing().interact_size.y],
-            egui::Label::new(label),
-        );
-        let width = (ui.available_width() - 8.0).clamp(80.0, 250.0);
-        ComboBox::from_id_salt(label)
-            .selected_text(selected.map_or("Custom", |(_, title)| *title))
-            .width(width)
-            .show_ui(ui, |ui| {
-                for &(option, title) in items {
-                    ui.selectable_value(value, option, title);
-                }
-            });
-    });
-}
-
-fn inline_text(ui: &mut Ui, label: &str, value: &mut String) {
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            [112.0, ui.spacing().interact_size.y],
-            egui::Label::new(label),
-        );
-        ui.add(TextEdit::singleline(value).desired_width(f32::INFINITY));
-    });
-}
-
-fn section_header(ui: &mut Ui, icon: &str, title: &str) {
-    ui.add_space(8.0);
-    egui::Frame::none()
-        .fill(ui.visuals().faint_bg_color)
-        .rounding(egui::Rounding::same(6.0))
-        .inner_margin(egui::Margin::symmetric(8.0, 5.0))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(icon).color(ui.visuals().hyperlink_color));
-                ui.label(egui::RichText::new(title).strong());
-            });
-        });
-    ui.add_space(3.0);
-}
-
-fn help_text(ui: &mut Ui, text: impl Into<String>) {
-    ui.label(
-        egui::RichText::new(text)
-            .small()
-            .color(ui.visuals().weak_text_color()),
-    );
-}
-
-fn clipboard(ui: &mut Ui, value: &mut Clipboard) {
-    choice(
-        ui,
-        "Clipboard",
-        value,
-        &[
-            (Clipboard::Both, "Both directions"),
-            (Clipboard::RemoteToLocal, "Remote to local"),
-            (Clipboard::LocalToRemote, "Local to remote"),
-            (Clipboard::Off, "Off"),
-        ],
-    );
-}
-
-fn color_depth(ui: &mut Ui, value: &mut u8) {
-    choice(
-        ui,
-        "Color depth",
-        value,
-        &[(16, "16 bit"), (24, "24 bit"), (32, "32 bit")],
-    );
-}
-
-fn confirm_drive_access(path: &std::path::Path, writable: bool) -> bool {
-    let access = if writable {
-        "The remote PC will be able to read and change files in this folder."
-    } else {
-        "The remote PC will be able to read files in this folder."
-    };
-    rfd::MessageDialog::new()
-        .set_level(rfd::MessageLevel::Warning)
-        .set_title("Share a local folder with the remote PC?")
-        .set_description(format!("{}\n\n{}", path.display(), access))
-        .set_buttons(rfd::MessageButtons::YesNo)
-        .show()
-        == rfd::MessageDialogResult::Yes
-}
-
-fn rdp_color_profile(ui: &mut Ui, value: &mut Option<RdpColorProfile>) {
-    const SUPPORTED: &[(RdpColorProfile, &str)] = &[
-        (RdpColorProfile::Automatic, "Automatic (32 bpp)"),
-        (RdpColorProfile::GfxRfx, "GFX RFX (32 bpp)"),
-        (
-            RdpColorProfile::GfxRfxProgressive,
-            "GFX RFX Progressive (32 bpp)",
-        ),
-        (RdpColorProfile::GfxAvc444, "GFX AVC444 (32 bpp)"),
-        (RdpColorProfile::GfxAvc420, "GFX AVC420 (32 bpp)"),
-        (RdpColorProfile::RemoteFx, "RemoteFX (32 bpp)"),
-        (RdpColorProfile::TrueColor32, "True color (32 bpp)"),
-        (RdpColorProfile::TrueColor24, "True color (24 bpp)"),
-        (RdpColorProfile::HighColor16, "High color (16 bpp)"),
-        (RdpColorProfile::HighColor15, "High color (15 bpp)"),
-        (RdpColorProfile::Color256, "256 colors (8 bpp)"),
-    ];
-    let selected = value.unwrap_or(RdpColorProfile::Automatic);
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            [112.0, ui.spacing().interact_size.y],
-            egui::Label::new("Color profile"),
-        );
-        let width = (ui.available_width() - 8.0).clamp(80.0, 250.0);
-        ComboBox::from_id_salt("RDP color profile")
-            .width(width)
-            .selected_text(
-                SUPPORTED
-                    .iter()
-                    .find(|(profile, _)| *profile == selected)
-                    .map_or("Automatic (32 bpp)", |(_, label)| *label),
-            )
-            .show_ui(ui, |ui| {
-                for &(profile, label) in SUPPORTED {
-                    ui.selectable_value(value, Some(profile), label);
-                }
-            });
-    });
-    help_text(
-        ui,
-        "AVC profiles require a Cisco OpenH264 library selected in Settings → Remote Desktop.",
-    );
-}
-
-pub(crate) fn rdp(
-    ui: &mut Ui,
-    draft: &mut Option<RdpProfile>,
-    defaults: &crate::config::RemoteDesktopSettings,
-) {
-    let mut profile = draft.clone().unwrap_or_else(|| new_rdp_profile(defaults));
-    ui.checkbox(&mut profile.enabled, "Enable RDP");
-    ui.add_enabled_ui(profile.enabled, |ui| {
-        section_header(ui, crate::lucide::SERVER, "Connection & security");
-        ui.horizontal(|ui| {
-            ui.add_sized(
-                [112.0, ui.spacing().interact_size.y],
-                egui::Label::new("Port *"),
-            );
-            if ui
-                .add(DragValue::new(&mut profile.port).range(1..=u16::MAX))
-                .changed()
-            {
-                profile.port_auto = false;
-                profile.port_manual = Some(true);
-            }
-            if profile.port_auto {
-                ui.label(egui::RichText::new("auto").small().color(ui.visuals().weak_text_color()));
-            }
-        });
-        ui.checkbox(&mut profile.same_username_as_ssh, "Same username as SSH");
-        ui.add_enabled_ui(!profile.same_username_as_ssh, |ui| {
-            inline_text(ui, "Username *", &mut profile.username);
-        });
-        inline_text(ui, "Domain", &mut profile.domain);
-        choice(
-            ui,
-            "Security",
-            &mut profile.security,
-            &[
-                (RdpSecurity::Auto, "Auto (NLA or TLS)"),
-                (RdpSecurity::Nla, "NLA"),
-                (RdpSecurity::Tls, "TLS"),
-            ],
-        );
-        help_text(ui, "Auto negotiates NLA or TLS. Unencrypted legacy RDP is disabled.");
-        section_header(ui, crate::lucide::MONITOR, "Display & performance");
-        choice(
-            ui,
-            "Display painting",
-            &mut profile.painting,
-            &[
-                (RdpPainting::Smooth, "Smooth"),
-                (RdpPainting::Fast, "Fast / crisp"),
-            ],
-        );
-        help_text(
-            ui,
-            "Smooth filtering blends scaled pixels; Fast uses sharper nearest-neighbor sampling.",
-        );
-        choice(
-            ui,
-            "Texture upload",
-            &mut profile.frame_painting,
-            &[
-                (RdpFramePainting::Incremental, "Changed regions (recommended)"),
-                (RdpFramePainting::FullFrame, "Full-frame compatibility mode"),
-            ],
-        );
-        help_text(
-            ui,
-            "Full-frame mode uploads the complete local image after each update. It can use more CPU and memory; it does not change remote rendering, codec, or network behavior.",
-        );
-        rdp_color_profile(ui, &mut profile.color_profile);
-        help_text(ui, "RemoteFX is advertised to the server; the server still chooses the negotiated codec.");
-        choice(
-            ui,
-            "Initial scaling",
-            &mut profile.scaling,
-            &[
-                (Scaling::Fit, "Fit"),
-                (Scaling::Native, "100%"),
-                (Scaling::Fill, "Fill"),
-            ],
-        );
-        choice(
-            ui,
-            "Resolution",
-            &mut profile.resolution,
-            &[
-                (Resolution::FitWindow, "Fit window (dynamic)"),
-                (Resolution::Fixed, "Fixed size"),
-                (Resolution::MatchLocalScreen, "Match local screen"),
-            ],
-        );
-        if profile.resolution == Resolution::Fixed {
-            ui.horizontal(|ui| {
-                ui.add(
-                    DragValue::new(&mut profile.width)
-                        .range(1..=8192)
-                        .prefix("Width "),
-                );
-                ui.add(
-                    DragValue::new(&mut profile.height)
-                        .range(1..=8192)
-                        .prefix("Height "),
-                );
-            });
-        }
-        ui.checkbox(&mut profile.multi_monitor, "Two side-by-side remote monitors");
-        help_text(ui, "Uses the selected resolution as a combined display; server support is required.");
-        section_header(ui, crate::lucide::KEYBOARD, "Input & sharing");
-        ui.collapsing("Input", |ui| {
-            ui.checkbox(&mut profile.view_only, "Start in view-only mode");
-            ui.checkbox(&mut profile.left_handed_mouse, "Left-handed mouse support");
-            ui.checkbox(&mut profile.disable_smooth_scrolling, "Disable smooth scrolling");
-        });
-        let mut layout = profile.keyboard_layout;
-        choice(
-            ui,
-            "Keyboard layout",
-            &mut layout,
-            &[
-                (None, "Auto"),
-                (Some(0x0409), "English (US)"),
-                (Some(0x0809), "English (UK)"),
-                (Some(0x0407), "German"),
-                (Some(0x040c), "French"),
-            ],
-        );
-        profile.keyboard_layout = layout;
-        choice(
-            ui,
-            "Audio output",
-            &mut profile.audio,
-            &[(Audio::Local, "Play locally"), (Audio::Off, "Off")],
-        );
-        ui.checkbox(&mut profile.mic, "Share microphone");
-        if profile.mic {
-            ui.label("The remote PC can receive audio from your selected microphone while connected.");
-        }
-        clipboard(ui, &mut profile.clipboard);
-        section_header(ui, crate::lucide::FOLDER, "Devices & session");
-        ui.collapsing("Drive redirection", |ui| {
-            ui.label("Shared folders are visible to the remote PC for this session.");
-            if ui.button("Add folder…").clicked() {
-                if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                    if confirm_drive_access(&path, false) {
-                        profile.drives.push(DriveShare {
-                            path,
-                            writable: false,
-                        });
-                    }
-                }
-            }
-            if profile.drives.is_empty() {
-                ui.label("No folders configured.");
-            }
-            let mut remove = None;
-            for (index, drive) in profile.drives.iter_mut().enumerate() {
-                ui.horizontal(|ui| {
-                    ui.label(drive.path.display().to_string());
-                    let mut writable = drive.writable;
-                    if ui.checkbox(&mut writable, "Allow remote changes").changed() {
-                        drive.writable = if writable {
-                            confirm_drive_access(&drive.path, true)
-                        } else {
-                            false
-                        };
-                    }
-                    if ui.small_button("Remove").clicked() {
-                        remove = Some(index);
-                    }
-                });
-            }
-            if let Some(index) = remove {
-                profile.drives.remove(index);
-            }
-        });
-        ui.collapsing("Experience", |ui| {
-            ui.checkbox(&mut profile.wallpaper, "Wallpaper");
-            ui.checkbox(&mut profile.font_smoothing, "Font smoothing");
-            ui.checkbox(&mut profile.animations, "Animations");
-            ui.checkbox(&mut profile.themes, "Themes");
-        });
-        ui.checkbox(&mut profile.admin_session, "Administrative session");
-        help_text(ui, "Requests the server's administrative session; server policy and permissions apply.");
-        inline_text(ui, "RD Gateway host", &mut profile.gateway);
-        help_text(ui, "Uses the RDP username and password for gateway sign-in. Gateway TLS certificates must be system-trusted.");
-        ui.add_enabled_ui(profile.gateway.trim().is_empty(), |ui| {
-            ui.checkbox(&mut profile.tunnel_via_ssh, "Tunnel via SSH");
-        });
-        if !profile.gateway.trim().is_empty() {
-            if profile.tunnel_via_ssh {
-                ui.label("RD Gateway and SSH tunneling cannot be combined. Disable the saved SSH tunnel to connect.");
-                if ui.button("Disable SSH tunnel").clicked() {
-                    profile.tunnel_via_ssh = false;
-                }
-            } else {
-                ui.label("RD Gateway provides the network tunnel; SSH tunneling is not needed.");
-            }
-        }
-        ui.checkbox(&mut profile.auto_reconnect, "Auto-reconnect");
-    });
-    if draft.is_some() || profile.enabled {
-        *draft = Some(profile);
-    }
-}
-
-/// An optional display host must match the General tab. The profile stores only the port.
-pub(crate) fn vnc_port(value: &str, host: &str) -> Option<u16> {
-    let value = value.trim();
-    if let Ok(port) = value.parse::<u16>() {
-        return (port != 0).then_some(port);
-    }
-    let (prefix, display) = value.rsplit_once(':')?;
-    let unbracket = |s: &str| s.trim_matches(['[', ']']).to_ascii_lowercase();
-    if !prefix.is_empty() && unbracket(prefix) != unbracket(host.trim()) {
-        return None;
-    }
-    if prefix.contains(':') && !(prefix.starts_with('[') && prefix.ends_with(']')) {
-        return None;
-    }
-    5900u16.checked_add(display.parse().ok()?)
-}
-
-fn new_rdp_profile(defaults: &crate::config::RemoteDesktopSettings) -> RdpProfile {
+pub(crate) fn new_rdp_profile(defaults: &crate::config::RemoteDesktopSettings) -> RdpProfile {
     RdpProfile {
         quality: defaults.default_quality,
         clipboard: defaults.default_clipboard,
@@ -377,123 +24,944 @@ fn new_vnc_profile(host: &str, defaults: &crate::config::RemoteDesktopSettings) 
     }
 }
 
-pub(crate) fn vnc(
+/// An optional display host must match the General tab. The profile stores only the port.
+pub(crate) fn vnc_port(value: &str, host: &str) -> Option<u16> {
+    let value = value.trim();
+    if let Ok(port) = value.parse::<u16>() {
+        return (port != 0).then_some(port);
+    }
+    let (prefix, display) = value.rsplit_once(':')?;
+    let unbracket = |s: &str| s.trim_matches(['[', ']']).to_ascii_lowercase();
+    if !prefix.is_empty() && unbracket(prefix) != unbracket(host.trim()) {
+        return None;
+    }
+    if prefix.contains(':') && !(prefix.starts_with('[') && prefix.ends_with(']')) {
+        return None;
+    }
+    5900u16.checked_add(display.parse().ok()?)
+}
+
+fn clipboard_items() -> &'static [(Clipboard, &'static str)] {
+    &[
+        (Clipboard::Both, "Both directions"),
+        (Clipboard::RemoteToLocal, "Remote to local"),
+        (Clipboard::LocalToRemote, "Local to remote"),
+        (Clipboard::Off, "Off"),
+    ]
+}
+
+fn color_depth_items() -> &'static [(u8, &'static str)] {
+    &[(16, "16 bit"), (24, "24 bit"), (32, "32 bit")]
+}
+
+fn quality_items() -> &'static [(Quality, &'static str)] {
+    &[
+        (Quality::Auto, "Auto"),
+        (Quality::Best, "Best"),
+        (Quality::Good, "Good"),
+        (Quality::Fast, "Fast"),
+    ]
+}
+
+fn scaling_items() -> &'static [(Scaling, &'static str)] {
+    &[
+        (Scaling::Fit, "Fit"),
+        (Scaling::Native, "100%"),
+        (Scaling::Fill, "Fill"),
+    ]
+}
+
+fn confirm_drive_access(path: &std::path::Path, writable: bool) -> bool {
+    let access = if writable {
+        "The remote PC will be able to read and change files in this folder."
+    } else {
+        "The remote PC will be able to read files in this folder."
+    };
+    rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Warning)
+        .set_title("Share a local folder with the remote PC?")
+        .set_description(format!("{}\n\n{}", path.display(), access))
+        .set_buttons(rfd::MessageButtons::YesNo)
+        .show()
+        == rfd::MessageDialogResult::Yes
+}
+
+pub(crate) fn rdp_enable_switch(
+    ui: &mut Ui,
+    draft: &mut Option<RdpProfile>,
+    defaults: &crate::config::RemoteDesktopSettings,
+    palette: &ThemePalette,
+) -> Response {
+    let mut profile = draft.clone().unwrap_or_else(|| new_rdp_profile(defaults));
+    let response = kit::switch(ui, &mut profile.enabled, "Enable RDP", None, palette);
+    if draft.is_some() || profile.enabled {
+        *draft = Some(profile);
+    }
+    response
+}
+
+pub(crate) fn vnc_enable_switch(
+    ui: &mut Ui,
+    draft: &mut Option<VncProfile>,
+    host: &str,
+    defaults: &crate::config::RemoteDesktopSettings,
+    palette: &ThemePalette,
+) -> Response {
+    let mut profile = draft
+        .clone()
+        .unwrap_or_else(|| new_vnc_profile(host, defaults));
+    let response = kit::switch(ui, &mut profile.enabled, "Enable VNC", None, palette);
+    if draft.is_some() || profile.enabled {
+        *draft = Some(profile);
+    }
+    response
+}
+
+pub(crate) fn rdp_connection(
+    ui: &mut Ui,
+    draft: &mut Option<RdpProfile>,
+    defaults: &crate::config::RemoteDesktopSettings,
+    palette: &ThemePalette,
+) {
+    let mut profile = draft.clone().unwrap_or_else(|| new_rdp_profile(defaults));
+    ui.add_enabled_ui(profile.enabled, |ui| {
+        kit::two_fields(
+            ui,
+            |ui| {
+                let response = kit::drag_field(
+                    ui,
+                    palette,
+                    "Port",
+                    &mut profile.port,
+                    1..=u16::MAX,
+                    "",
+                    true,
+                    profile.port_auto.then_some("auto"),
+                );
+                if response.changed() {
+                    profile.port_auto = false;
+                    profile.port_manual = Some(true);
+                }
+            },
+            |ui| {
+                kit::select_field(
+                    ui,
+                    palette,
+                    "Security",
+                    &mut profile.security,
+                    &[
+                        (RdpSecurity::Auto, "Auto (NLA or TLS)"),
+                        (RdpSecurity::Nla, "NLA"),
+                        (RdpSecurity::Tls, "TLS"),
+                    ],
+                    Some("Auto negotiates NLA or TLS. Unencrypted legacy RDP is disabled."),
+                );
+            },
+        );
+
+        kit::field_label(ui, "RD Gateway host", false, palette);
+        kit::text_field(ui, &mut profile.gateway, "Optional", false, palette);
+        kit::hint(
+            ui,
+            "Uses the RDP username and password for gateway sign-in. Gateway TLS certificates must be system-trusted.",
+        );
+
+        kit::two_fields(
+            ui,
+            |ui| {
+                ui.add_enabled_ui(profile.gateway.trim().is_empty(), |ui| {
+                    kit::switch(
+                        ui,
+                        &mut profile.tunnel_via_ssh,
+                        "Tunnel via SSH",
+                        None,
+                        palette,
+                    )
+                })
+            },
+            |ui| {
+                kit::switch(
+                    ui,
+                    &mut profile.auto_reconnect,
+                    "Auto-reconnect",
+                    None,
+                    palette,
+                )
+            },
+        );
+
+        if !profile.gateway.trim().is_empty() && profile.tunnel_via_ssh {
+            ui.add_space(10.0);
+            kit::status_line(
+                ui,
+                "RD Gateway and SSH tunneling cannot be combined. Disable the saved SSH tunnel to connect.",
+            );
+            if kit::compact_button(ui, "Disable SSH tunnel", palette).clicked() {
+                profile.tunnel_via_ssh = false;
+            }
+        } else if !profile.gateway.trim().is_empty() {
+            ui.add_space(10.0);
+            kit::status_line(
+                ui,
+                "RD Gateway provides the network tunnel; SSH tunneling is not needed.",
+            );
+        }
+    });
+    if draft.is_some() || profile.enabled {
+        *draft = Some(profile);
+    }
+}
+
+pub(crate) fn rdp_credentials(
+    ui: &mut Ui,
+    draft: &mut Option<RdpProfile>,
+    password: &mut PasswordDraft,
+    palette: &ThemePalette,
+) {
+    let mut profile = draft.clone().unwrap_or_default();
+    ui.add_enabled_ui(profile.enabled, |ui| {
+        kit::switch(
+            ui,
+            &mut profile.same_username_as_ssh,
+            "Same username as SSH",
+            None,
+            palette,
+        );
+        ui.add_space(12.0);
+        kit::two_fields(
+            ui,
+            |ui| {
+                kit::field_label(ui, "Username", true, palette);
+                ui.add_enabled_ui(!profile.same_username_as_ssh, |ui| {
+                    kit::text_field_with_disabled_style(
+                        ui,
+                        &mut profile.username,
+                        "ubuntu",
+                        false,
+                        palette,
+                        kit::DISABLED,
+                        kit::DISABLED_TEXT,
+                    )
+                })
+            },
+            |ui| {
+                kit::field_label(ui, "Domain", false, palette);
+                kit::text_field(ui, &mut profile.domain, "Optional", false, palette)
+            },
+        );
+        if profile.enabled {
+            ui.add_space(12.0);
+            password.show(ui, &mut profile.credential_ref, palette);
+        }
+    });
+    if draft.is_some() || profile.enabled {
+        *draft = Some(profile);
+    }
+}
+
+pub(crate) fn rdp_display(
+    ui: &mut Ui,
+    draft: &mut Option<RdpProfile>,
+    defaults: &crate::config::RemoteDesktopSettings,
+    palette: &ThemePalette,
+) {
+    let mut profile = draft.clone().unwrap_or_else(|| new_rdp_profile(defaults));
+    ui.add_enabled_ui(profile.enabled, |ui| {
+        kit::two_fields(
+            ui,
+            |ui| {
+                kit::select_field(
+                    ui,
+                    palette,
+                    "Display painting",
+                    &mut profile.painting,
+                    &[
+                        (RdpPainting::Smooth, "Smooth"),
+                        (RdpPainting::Fast, "Fast / crisp"),
+                    ],
+                    Some("Smooth filtering blends scaled pixels; Fast uses sharper nearest-neighbor sampling."),
+                )
+            },
+            |ui| {
+                kit::select_field(
+                    ui,
+                    palette,
+                    "Texture upload",
+                    &mut profile.frame_painting,
+                    &[
+                        (RdpFramePainting::Incremental, "Changed regions (recommended)"),
+                        (RdpFramePainting::FullFrame, "Full-frame compatibility mode"),
+                    ],
+                    Some("Full-frame mode uploads the complete local image after each update. It can use more CPU and memory; it does not change remote rendering, codec, or network behavior."),
+                )
+            },
+        );
+
+        ui.add_space(12.0);
+        let selected = profile.color_profile.unwrap_or(RdpColorProfile::Automatic);
+        let supported = [
+            (RdpColorProfile::Automatic, "Automatic (32 bpp)"),
+            (RdpColorProfile::GfxRfx, "GFX RFX (32 bpp)"),
+            (RdpColorProfile::GfxRfxProgressive, "GFX RFX Progressive (32 bpp)"),
+            (RdpColorProfile::GfxAvc444, "GFX AVC444 (32 bpp)"),
+            (RdpColorProfile::GfxAvc420, "GFX AVC420 (32 bpp)"),
+            (RdpColorProfile::RemoteFx, "RemoteFX (32 bpp)"),
+            (RdpColorProfile::TrueColor32, "True color (32 bpp)"),
+            (RdpColorProfile::TrueColor24, "True color (24 bpp)"),
+            (RdpColorProfile::HighColor16, "High color (16 bpp)"),
+            (RdpColorProfile::HighColor15, "High color (15 bpp)"),
+            (RdpColorProfile::Color256, "256 colors (8 bpp)"),
+        ];
+        let items: Vec<(Option<RdpColorProfile>, &str)> = supported
+            .iter()
+            .map(|(profile, label)| (Some(*profile), *label))
+            .collect();
+        let mut value = Some(selected);
+        kit::select_field(
+            ui,
+            palette,
+            "Color profile",
+            &mut value,
+            &items,
+            Some("AVC profiles require a Cisco OpenH264 library selected in Settings → Remote Desktop."),
+        );
+        profile.color_profile = value;
+        kit::hint(
+            ui,
+            "RemoteFX is advertised to the server; the server still chooses the negotiated codec.",
+        );
+
+        ui.add_space(12.0);
+        kit::two_fields(
+            ui,
+            |ui| {
+                kit::select_field(
+                    ui,
+                    palette,
+                    "Initial scaling",
+                    &mut profile.scaling,
+                    scaling_items(),
+                    None,
+                )
+            },
+            |ui| {
+                kit::select_field(
+                    ui,
+                    palette,
+                    "Resolution",
+                    &mut profile.resolution,
+                    &[
+                        (Resolution::FitWindow, "Fit window (dynamic)"),
+                        (Resolution::Fixed, "Fixed size"),
+                        (Resolution::MatchLocalScreen, "Match local screen"),
+                    ],
+                    None,
+                )
+            },
+        );
+        if profile.resolution == Resolution::Fixed {
+            ui.add_space(10.0);
+            kit::two_fields(
+                ui,
+                |ui| {
+                    kit::drag_field(
+                        ui,
+                        palette,
+                        "Width",
+                        &mut profile.width,
+                        1..=8192,
+                        "",
+                        false,
+                        None,
+                    )
+                },
+                |ui| {
+                    kit::drag_field(
+                        ui,
+                        palette,
+                        "Height",
+                        &mut profile.height,
+                        1..=8192,
+                        "",
+                        false,
+                        None,
+                    )
+                },
+            );
+        }
+
+        ui.add_space(12.0);
+        kit::switch(
+            ui,
+            &mut profile.multi_monitor,
+            "Two side-by-side remote monitors",
+            Some("Uses the selected resolution as a combined display; server support is required."),
+            palette,
+        );
+    });
+    if draft.is_some() || profile.enabled {
+        *draft = Some(profile);
+    }
+}
+
+pub(crate) fn rdp_input(
+    ui: &mut Ui,
+    draft: &mut Option<RdpProfile>,
+    input_options_open: &mut bool,
+    palette: &ThemePalette,
+) {
+    let mut profile = draft.clone().unwrap_or_default();
+    ui.add_enabled_ui(profile.enabled, |ui| {
+        let mut layout = profile.keyboard_layout;
+        kit::two_fields(
+            ui,
+            |ui| {
+                kit::select_field(
+                    ui,
+                    palette,
+                    "Keyboard layout",
+                    &mut layout,
+                    &[
+                        (None, "Auto"),
+                        (Some(0x0409), "English (US)"),
+                        (Some(0x0809), "English (UK)"),
+                        (Some(0x0407), "German"),
+                        (Some(0x040c), "French"),
+                    ],
+                    None,
+                )
+            },
+            |ui| {
+                kit::select_field(
+                    ui,
+                    palette,
+                    "Clipboard",
+                    &mut profile.clipboard,
+                    clipboard_items(),
+                    None,
+                )
+            },
+        );
+        profile.keyboard_layout = layout;
+
+        ui.add_space(12.0);
+        kit::two_fields(
+            ui,
+            |ui| {
+                kit::select_field(
+                    ui,
+                    palette,
+                    "Audio output",
+                    &mut profile.audio,
+                    &[(Audio::Local, "Play locally"), (Audio::Off, "Off")],
+                    None,
+                )
+            },
+            |ui| {
+                let mic_hint = profile.mic.then_some(
+                    "The remote PC can receive audio from your selected microphone while connected.",
+                );
+                kit::switch(
+                    ui,
+                    &mut profile.mic,
+                    "Share microphone",
+                    mic_hint,
+                    palette,
+                )
+            },
+        );
+
+        ui.add_space(12.0);
+        kit::collapsible_row(ui, palette, input_options_open, "Input options", |ui| {
+            ui.add_space(4.0);
+            kit::switch(
+                ui,
+                &mut profile.view_only,
+                "Start in view-only mode",
+                None,
+                palette,
+            );
+            ui.add_space(10.0);
+            kit::switch(
+                ui,
+                &mut profile.left_handed_mouse,
+                "Left-handed mouse support",
+                None,
+                palette,
+            );
+            ui.add_space(10.0);
+            kit::switch(
+                ui,
+                &mut profile.disable_smooth_scrolling,
+                "Disable smooth scrolling",
+                None,
+                palette,
+            );
+        });
+    });
+    if draft.is_some() || profile.enabled {
+        *draft = Some(profile);
+    }
+}
+
+pub(crate) fn rdp_devices(
+    ui: &mut Ui,
+    draft: &mut Option<RdpProfile>,
+    drive_open: &mut bool,
+    experience_open: &mut bool,
+    palette: &ThemePalette,
+) {
+    let mut profile = draft.clone().unwrap_or_default();
+    ui.add_enabled_ui(profile.enabled, |ui| {
+        kit::collapsible_row(ui, palette, drive_open, "Drive redirection", |ui| {
+            ui.add_space(4.0);
+            kit::status_line(ui, "Shared folders are visible to the remote PC for this session.");
+            if kit::compact_button(ui, "Add folder…", palette).clicked() {
+                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                    if confirm_drive_access(&path, false) {
+                        profile.drives.push(DriveShare {
+                            path,
+                            writable: false,
+                        });
+                    }
+                }
+            }
+            if profile.drives.is_empty() {
+                kit::status_line(ui, "No folders configured.");
+            }
+            let mut remove = None;
+            for (index, drive) in profile.drives.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.label(drive.path.display().to_string());
+                    let mut writable = drive.writable;
+                    if kit::switch(
+                        ui,
+                        &mut writable,
+                        "Allow remote changes",
+                        None,
+                        palette,
+                    )
+                    .changed()
+                    {
+                        drive.writable = if writable {
+                            confirm_drive_access(&drive.path, true)
+                        } else {
+                            false
+                        };
+                    }
+                    if kit::compact_button(ui, "Remove", palette).clicked() {
+                        remove = Some(index);
+                    }
+                });
+            }
+            if let Some(index) = remove {
+                profile.drives.remove(index);
+            }
+        });
+
+        ui.add_space(10.0);
+        kit::collapsible_row(ui, palette, experience_open, "Experience", |ui| {
+            ui.add_space(4.0);
+            kit::switch(ui, &mut profile.wallpaper, "Wallpaper", None, palette);
+            ui.add_space(10.0);
+            kit::switch(
+                ui,
+                &mut profile.font_smoothing,
+                "Font smoothing",
+                None,
+                palette,
+            );
+            ui.add_space(10.0);
+            kit::switch(ui, &mut profile.animations, "Animations", None, palette);
+            ui.add_space(10.0);
+            kit::switch(ui, &mut profile.themes, "Themes", None, palette);
+        });
+
+        ui.add_space(12.0);
+        kit::switch(
+            ui,
+            &mut profile.admin_session,
+            "Administrative session",
+            Some("Requests the server's administrative session; server policy and permissions apply."),
+            palette,
+        );
+    });
+    if draft.is_some() || profile.enabled {
+        *draft = Some(profile);
+    }
+}
+
+pub(crate) fn vnc_connection(
     ui: &mut Ui,
     draft: &mut Option<VncProfile>,
     port_text: &mut String,
     host: &str,
     defaults: &crate::config::RemoteDesktopSettings,
+    palette: &ThemePalette,
 ) {
     let mut profile = draft
         .clone()
         .unwrap_or_else(|| new_vnc_profile(host, defaults));
-    ui.checkbox(&mut profile.enabled, "Enable VNC");
     ui.add_enabled_ui(profile.enabled, |ui| {
-        section_header(ui, crate::lucide::SERVER, "Connection");
-        let port_changed = ui.horizontal(|ui| {
-            ui.add_sized(
-                [112.0, ui.spacing().interact_size.y],
-                egui::Label::new("Port or display *"),
+        kit::two_fields(
+            ui,
+            |ui| {
+                kit::field_label(ui, "Port or display", true, palette);
+                if kit::text_field(ui, port_text, "5900", false, palette).changed() {
+                    profile.port_auto = false;
+                    profile.port_manual = Some(true);
+                }
+                if profile.port_auto {
+                    kit::hint(ui, "Port assigned from the detected VNC display.");
+                }
+            },
+            |ui| {
+                kit::field_label(ui, "Username", false, palette);
+                kit::text_field(ui, &mut profile.username, "Optional", false, palette);
+                kit::hint(
+                    ui,
+                    &format!(
+                        "{} Username/password auth requires VeNCrypt Plain through an SSH tunnel; direct plaintext auth is blocked.",
+                        crate::lucide::SHIELD
+                    ),
+                );
+            },
+        );
+
+        ui.add_space(12.0);
+        kit::switch(
+            ui,
+            &mut profile.tunnel_via_ssh,
+            "Tunnel via SSH",
+            Some("The VNC connection is carried through this host's SSH connection."),
+            palette,
+        );
+        if !profile.tunnel_via_ssh {
+            ui.add_space(6.0);
+            kit::status_line(
+                ui,
+                "Classic VNC is unencrypted. Use an SSH tunnel on untrusted networks.",
             );
-            ui.add(TextEdit::singleline(port_text).desired_width(f32::INFINITY))
-                .changed()
-        }).inner;
-        if port_changed {
-            profile.port_auto = false;
-            profile.port_manual = Some(true);
-        }
-        if profile.port_auto {
-            help_text(ui, "Port assigned from the detected VNC display.");
         }
         if let Some(port) = vnc_port(port_text, host) {
             profile.port = port;
         }
-        inline_text(ui, "Username", &mut profile.username);
-        help_text(ui, format!(
-            "{} Username/password auth requires VeNCrypt Plain through an SSH tunnel; direct plaintext auth is blocked.",
-            crate::lucide::SHIELD
-        ));
-        section_header(ui, crate::lucide::ACTIVITY, "Display & clipboard");
-        choice(ui, "Quality", &mut profile.quality, &[
-            (Quality::Auto, "Auto"),
-            (Quality::Best, "Best"),
-            (Quality::Good, "Good"),
-            (Quality::Fast, "Fast"),
-        ]);
-        color_depth(ui, &mut profile.color_depth);
-        clipboard(ui, &mut profile.clipboard);
-
-        ui.collapsing(format!("{} Advanced", crate::lucide::SLIDERS), |ui| {
-            ui.label("Encoding priority (first supported encoding is preferred)");
-            for i in 0..profile.encodings.len() {
-                let encoding = profile.encodings[i];
-                let label = match encoding {
-                    Encoding::Tight => "Tight",
-                    Encoding::Zrle => "ZRLE",
-                    Encoding::CopyRect => "CopyRect",
-                    Encoding::Raw => "Raw",
-                };
-                let move_up = ui
-                    .push_id(i, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(label);
-                            ui.add_enabled(i > 0, egui::Button::new("Move up"))
-                                .clicked()
-                        })
-                        .inner
-                    })
-                    .inner;
-                if move_up {
-                    profile.encodings.swap(i, i - 1);
-                    break;
-                }
-            }
-            ui.checkbox(
-                &mut profile.disable_smooth_scrolling,
-                "Disable smooth scrolling",
-            );
-        #[cfg(target_os = "linux")]
-            ui.horizontal(|ui| {
-                ui.label("TCP user timeout (seconds)");
-                ui.add(DragValue::new(&mut profile.tcp_user_timeout_secs).range(0..=2_147_483));
-            });
-        #[cfg(target_os = "linux")]
-            ui.label("0 uses the operating system default; this is not an idle timeout.");
-        #[cfg(not(target_os = "linux"))]
-            ui.label("TCP user timeout is available for direct Linux connections only.");
-        });
-
-        ui.collapsing(format!("{} Behavior", crate::lucide::SPARKLES), |ui| {
-            ui.checkbox(&mut profile.view_only, "View only");
-            ui.checkbox(&mut profile.shared, "Shared session");
-            ui.checkbox(&mut profile.show_remote_cursor, "Show remote cursor");
-            ui.checkbox(&mut profile.auto_reconnect, "Auto-reconnect");
-            ui.checkbox(&mut profile.close_on_failure, "Close on connection failure");
-            choice(ui, "Scaling", &mut profile.scaling, &[
-                (Scaling::Fit, "Fit"),
-                (Scaling::Native, "100%"),
-                (Scaling::Fill, "Fill"),
-            ]);
-        });
-
-        ui.collapsing(format!("{} SSH Tunnel", crate::lucide::LOCK), |ui| {
-            ui.checkbox(&mut profile.tunnel_via_ssh, "Tunnel via SSH");
-            if profile.tunnel_via_ssh {
-                ui.label("The VNC connection is carried through this host's SSH connection.");
-            } else {
-                ui.label("Classic VNC is unencrypted. Use an SSH tunnel on untrusted networks.");
-            }
-            #[cfg(target_os = "linux")]
-            ui.label("TCP user timeout only applies to direct connections, not SSH tunnels.");
-        });
-
-        ui.collapsing(format!("{} Notes", crate::lucide::INFO), |ui| {
-            ui.label("Classic VNC clipboard supports Latin-1 text only. Click the remote desktop before pasting.");
-            ui.label("Server bell messages are ignored. Dynamic resolution depends on server support.");
-        });
     });
     if draft.is_some() || profile.enabled {
         *draft = Some(profile);
+    }
+}
+
+pub(crate) fn vnc_credentials(
+    ui: &mut Ui,
+    draft: &mut Option<VncProfile>,
+    password: &mut PasswordDraft,
+    palette: &ThemePalette,
+) {
+    let mut profile = draft.clone().unwrap_or_default();
+    if profile.enabled {
+        password.show(ui, &mut profile.credential_ref, palette);
+        ui.add_space(12.0);
+        if profile.username.trim().is_empty() {
+            kit::status_line(ui, "Classic VNC passwords are limited to eight bytes.");
+        } else if !profile.tunnel_via_ssh {
+            ui.label(
+                egui::RichText::new(
+                    "Enable Tunnel via SSH before using username/password authentication.",
+                )
+                .size(12.0)
+                .color(kit::DANGER),
+            );
+        }
+    }
+    if draft.is_some() || profile.enabled {
+        *draft = Some(profile);
+    }
+}
+
+pub(crate) fn vnc_display(
+    ui: &mut Ui,
+    draft: &mut Option<VncProfile>,
+    defaults: &crate::config::RemoteDesktopSettings,
+    palette: &ThemePalette,
+) {
+    let mut profile = draft
+        .clone()
+        .unwrap_or_else(|| new_vnc_profile("", defaults));
+    ui.add_enabled_ui(profile.enabled, |ui| {
+        kit::two_fields(
+            ui,
+            |ui| {
+                kit::select_field(
+                    ui,
+                    palette,
+                    "Quality",
+                    &mut profile.quality,
+                    quality_items(),
+                    None,
+                )
+            },
+            |ui| {
+                kit::select_field(
+                    ui,
+                    palette,
+                    "Color depth",
+                    &mut profile.color_depth,
+                    color_depth_items(),
+                    None,
+                )
+            },
+        );
+        ui.add_space(12.0);
+        kit::two_fields(
+            ui,
+            |ui| {
+                kit::select_field(
+                    ui,
+                    palette,
+                    "Clipboard",
+                    &mut profile.clipboard,
+                    clipboard_items(),
+                    None,
+                )
+            },
+            |ui| {
+                kit::select_field(
+                    ui,
+                    palette,
+                    "Scaling",
+                    &mut profile.scaling,
+                    scaling_items(),
+                    None,
+                )
+            },
+        );
+    });
+    if draft.is_some() || profile.enabled {
+        *draft = Some(profile);
+    }
+}
+
+pub(crate) fn vnc_behavior(
+    ui: &mut Ui,
+    draft: &mut Option<VncProfile>,
+    palette: &ThemePalette,
+) {
+    let mut profile = draft.clone().unwrap_or_default();
+    ui.add_enabled_ui(profile.enabled, |ui| {
+        kit::two_fields(
+            ui,
+            |ui| {
+                kit::switch(ui, &mut profile.view_only, "View only", None, palette)
+            },
+            |ui| {
+                kit::switch(
+                    ui,
+                    &mut profile.auto_reconnect,
+                    "Auto-reconnect",
+                    None,
+                    palette,
+                )
+            },
+        );
+        ui.add_space(10.0);
+        kit::two_fields(
+            ui,
+            |ui| {
+                kit::switch(ui, &mut profile.shared, "Shared session", None, palette)
+            },
+            |ui| {
+                kit::switch(
+                    ui,
+                    &mut profile.close_on_failure,
+                    "Close on connection failure",
+                    None,
+                    palette,
+                )
+            },
+        );
+        ui.add_space(10.0);
+        kit::switch(
+            ui,
+            &mut profile.show_remote_cursor,
+            "Show remote cursor",
+            None,
+            palette,
+        );
+    });
+    if draft.is_some() || profile.enabled {
+        *draft = Some(profile);
+    }
+}
+
+pub(crate) fn vnc_advanced(
+    ui: &mut Ui,
+    draft: &mut Option<VncProfile>,
+    palette: &ThemePalette,
+) {
+    let mut profile = draft.clone().unwrap_or_default();
+    ui.add_enabled_ui(profile.enabled, |ui| {
+        kit::hint(ui, "Encoding priority (first supported encoding is preferred)");
+        for index in 0..profile.encodings.len() {
+            let encoding = profile.encodings[index];
+            let label = match encoding {
+                Encoding::Tight => "Tight",
+                Encoding::Zrle => "ZRLE",
+                Encoding::CopyRect => "CopyRect",
+                Encoding::Raw => "Raw",
+            };
+            let move_up = ui
+                .push_id(index, |ui| {
+                    egui::Frame::none().fill(kit::WINDOW).rounding(egui::Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(12.0, 3.0)).show(ui, |ui| {
+                            ui.set_width(ui.available_width() - 24.0);
+                            ui.horizontal(|ui| {
+                                ui.add_sized([ui.available_width() - 100.0, 30.0], egui::Label::new(format!("{}. {}", index + 1, label)));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.add_enabled(index > 0, kit::compact_button_widget_enabled("Move up", index > 0)).clicked()
+                                }).inner
+                            }).inner
+                        }).inner
+                })
+                .inner;
+            if move_up {
+                profile.encodings.swap(index, index - 1);
+                break;
+            }
+        }
+
+        ui.add_space(12.0);
+        kit::two_fields(
+            ui,
+            |ui| {
+                #[cfg(target_os = "linux")]
+                {
+                    kit::drag_field(
+                        ui,
+                        palette,
+                        "TCP user timeout (seconds)",
+                        &mut profile.tcp_user_timeout_secs,
+                        0..=2_147_483,
+                        "",
+                        false,
+                        None,
+                    );
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    kit::status_line(
+                        ui,
+                        "TCP user timeout is available for direct Linux connections only.",
+                    );
+                }
+            },
+            |ui| {
+                kit::switch(
+                    ui,
+                    &mut profile.disable_smooth_scrolling,
+                    "Disable smooth scrolling",
+                    None,
+                    palette,
+                );
+            },
+        );
+        #[cfg(target_os = "linux")]
+        kit::hint(ui, "0 uses the operating system default; this is not an idle timeout.");
+        #[cfg(target_os = "linux")]
+        kit::status_line(ui, "TCP user timeout only applies to direct connections, not SSH tunnels.");
+    });
+    if draft.is_some() || profile.enabled {
+        *draft = Some(profile);
+    }
+}
+
+pub(crate) fn vnc_notes(ui: &mut Ui, palette: &ThemePalette) {
+    let _ = palette;
+    kit::status_line(
+        ui,
+        "Classic VNC clipboard supports Latin-1 text only. Click the remote desktop before pasting.",
+    );
+    ui.add_space(6.0);
+    kit::status_line(
+        ui,
+        "Server bell messages are ignored. Dynamic resolution depends on server support.",
+    );
+}
+
+#[derive(Default)]
+pub(crate) struct PasswordDraft {
+    pub value: zeroize::Zeroizing<String>,
+    reveal: bool,
+}
+
+impl PasswordDraft {
+    pub(crate) fn show(
+        &mut self,
+        ui: &mut Ui,
+        reference: &mut Option<String>,
+        palette: &ThemePalette,
+    ) {
+        let compact = ui.available_width() < 440.0;
+        let has_reference = reference.is_some();
+        let mut show_buttons = |ui: &mut Ui| {
+                if has_reference {
+                    if kit::destructive_button(ui, "Forget saved password", palette).clicked() {
+                        *reference = None;
+                        self.value = Default::default();
+                    }
+                }
+                let toggle = if self.reveal { "Hide" } else { "Show" };
+                if kit::compact_button(ui, toggle, palette).clicked() {
+                    self.reveal = !self.reveal;
+                }
+        };
+        ui.vertical(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Password").size(12.0).color(kit::LABEL));
+                if has_reference {
+                    ui.label(
+                        egui::RichText::new(crate::lucide::CHECK)
+                            .size(12.0)
+                            .color(kit::SUCCESS),
+                    );
+                    let status_width = (ui.available_width() - 210.0).max(40.0);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(status_width, 29.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.set_width(status_width);
+                            ui.add(egui::Label::new(
+                                egui::RichText::new("Saved in system credential store")
+                                    .size(11.0)
+                                    .color(kit::TEXT),
+                            ).wrap());
+                        },
+                    );
+                }
+                if !compact {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        show_buttons(ui);
+                    });
+                }
+            });
+            if compact {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    show_buttons(ui);
+                });
+            }
+        });
+
+        ui.add_space(4.0);
+        let hint = if reference.is_some() {
+            "Enter a replacement password"
+        } else {
+            "Enter password"
+        };
+        let response = kit::text_field(ui, &mut self.value, hint, !self.reveal, palette);
+        // egui keeps an undo copy even in password mode.
+        let mut state = egui::TextEdit::load_state(ui.ctx(), response.id).unwrap_or_default();
+        state.clear_undoer();
+        egui::TextEdit::store_state(ui.ctx(), response.id, state);
     }
 }
 
@@ -545,43 +1013,5 @@ mod tests {
         assert_eq!(vnc.clipboard, Clipboard::RemoteToLocal);
         assert_eq!(vnc.scaling, super::Scaling::Native);
         assert!(!vnc.auto_reconnect);
-    }
-}
-
-#[derive(Default)]
-pub(crate) struct PasswordDraft {
-    pub value: zeroize::Zeroizing<String>,
-    reveal: bool,
-}
-
-impl PasswordDraft {
-    pub(crate) fn show(&mut self, ui: &mut Ui, reference: &mut Option<String>) {
-        ui.horizontal(|ui| {
-            ui.label("Password");
-            let toggle = if self.reveal { "Hide" } else { "Show" };
-            if ui.small_button(toggle).clicked() {
-                self.reveal = !self.reveal;
-            }
-            if reference.is_some() {
-                ui.label("Saved in system credential store");
-                if ui.small_button("Forget saved password").clicked() {
-                    *reference = None;
-                    self.value = Default::default();
-                }
-            }
-        });
-        let hint = if reference.is_some() {
-            "Enter a replacement password"
-        } else {
-            "Enter password"
-        };
-        let mut output = TextEdit::singleline(&mut *self.value)
-            .password(!self.reveal)
-            .hint_text(hint)
-            .desired_width(f32::INFINITY)
-            .show(ui);
-        // egui keeps an undo copy even in password mode.
-        output.state.clear_undoer();
-        output.state.store(ui.ctx(), output.response.id);
     }
 }

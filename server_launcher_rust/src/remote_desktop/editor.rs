@@ -93,7 +93,13 @@ pub(crate) fn rdp_enable_switch(
     palette: &ThemePalette,
 ) -> Response {
     let mut profile = draft.clone().unwrap_or_else(|| new_rdp_profile(defaults));
-    let response = kit::switch(ui, &mut profile.enabled, "Enable RDP", None, palette);
+    let response = ui
+        .allocate_ui_with_layout(
+            egui::vec2(120.0, 29.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| kit::switch(ui, &mut profile.enabled, "Enable RDP", None, palette),
+        )
+        .inner;
     if draft.is_some() || profile.enabled {
         *draft = Some(profile);
     }
@@ -110,7 +116,13 @@ pub(crate) fn vnc_enable_switch(
     let mut profile = draft
         .clone()
         .unwrap_or_else(|| new_vnc_profile(host, defaults));
-    let response = kit::switch(ui, &mut profile.enabled, "Enable VNC", None, palette);
+    let response = ui
+        .allocate_ui_with_layout(
+            egui::vec2(120.0, 29.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| kit::switch(ui, &mut profile.enabled, "Enable VNC", None, palette),
+        )
+        .inner;
     if draft.is_some() || profile.enabled {
         *draft = Some(profile);
     }

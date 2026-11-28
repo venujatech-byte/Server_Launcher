@@ -3263,12 +3263,21 @@ fn show_check_strip(
         ("Handshake", hs_ok, hs_val),
     ];
 
+    let gap = 10.0;
+    let column_width = (ui.available_width() - gap) / 2.0;
     for chunk in items.chunks(2) {
         ui.horizontal_top(|ui| {
             ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.x = 10.0;
+            ui.spacing_mut().item_spacing.x = gap;
             for &(title, ok, val) in chunk {
-                check_item(ui, title, ok, val, p);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(column_width, 0.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_width(column_width);
+                        check_item(ui, title, ok, val, p);
+                    },
+                );
             }
         });
         ui.add_space(8.0);

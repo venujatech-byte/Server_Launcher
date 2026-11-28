@@ -470,14 +470,11 @@ pub(crate) fn rdp_input(
             },
             |ui| {
                 ui.add_space(25.5);
-                let mic_hint = profile.mic.then_some(
-                    "The remote PC can receive audio from your selected microphone while connected.",
-                );
                 kit::switch(
                     ui,
                     &mut profile.mic,
                     "Share microphone",
-                    mic_hint,
+                    None,
                     palette,
                 )
             },

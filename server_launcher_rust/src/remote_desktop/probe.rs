@@ -659,48 +659,56 @@ fn switch(
     let track_h = 22.0;
     let knob_r = 9.0;
     let mut toggled = false;
+    let row_width = ui.available_width();
 
-    ui.horizontal(|ui| {
-        let (track_rect, track_resp) =
-            ui.allocate_exact_size(egui::vec2(track_w, track_h), egui::Sense::click());
-        if track_resp.clicked() {
-            *on = !*on;
-            toggled = true;
-            ui.ctx().request_repaint();
-        }
-        let hovered = track_resp.hovered();
-        let track_fill = if *on { p.accent } else { tier_fill(p, 4) };
-        let knob_fill = if *on {
-            Color32::WHITE
-        } else {
-            mix_tint(tier_fill(p, 4), Color32::WHITE, 0.55)
-        };
-        let knob_x = if *on {
-            track_rect.max.x - knob_r - 4.0
-        } else {
-            track_rect.min.x + knob_r + 4.0
-        };
-        let track_color = if hovered {
-            mix_tint(track_fill, Color32::WHITE, 0.12)
-        } else {
-            track_fill
-        };
-        ui.painter()
-            .rect_filled(track_rect, Rounding::same(track_h / 2.0), track_color);
-        let knob_center = egui::pos2(knob_x, track_rect.center().y);
-        ui.painter().circle_filled(knob_center, knob_r, knob_fill);
-        if hovered {
-            ui.painter().circle_filled(
-                knob_center,
-                knob_r * 1.2,
-                mix_tint(track_fill, Color32::WHITE, 0.22),
-            );
-        }
-        ui.add_space(10.0);
-        ui.vertical(|ui| {
-            ui.label(egui::RichText::new(label).strong().color(p.text_primary));
-            ui.label(egui::RichText::new(helper).small().color(p.text_muted));
-        });
+    ui.allocate_ui_with_layout(
+        egui::vec2(row_width, 29.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            let (track_rect, track_resp) =
+                ui.allocate_exact_size(egui::vec2(track_w, track_h), egui::Sense::click());
+            if track_resp.clicked() {
+                *on = !*on;
+                toggled = true;
+                ui.ctx().request_repaint();
+            }
+            let hovered = track_resp.hovered();
+            let track_fill = if *on { p.accent } else { tier_fill(p, 4) };
+            let knob_fill = if *on {
+                Color32::WHITE
+            } else {
+                mix_tint(tier_fill(p, 4), Color32::WHITE, 0.55)
+            };
+            let knob_x = if *on {
+                track_rect.max.x - knob_r - 4.0
+            } else {
+                track_rect.min.x + knob_r + 4.0
+            };
+            let track_color = if hovered {
+                mix_tint(track_fill, Color32::WHITE, 0.12)
+            } else {
+                track_fill
+            };
+            ui.painter()
+                .rect_filled(track_rect, Rounding::same(track_h / 2.0), track_color);
+            let knob_center = egui::pos2(knob_x, track_rect.center().y);
+            ui.painter().circle_filled(knob_center, knob_r, knob_fill);
+            if hovered {
+                ui.painter().circle_filled(
+                    knob_center,
+                    knob_r * 1.2,
+                    mix_tint(track_fill, Color32::WHITE, 0.22),
+                );
+            }
+            ui.add_space(10.0);
+            ui.add(egui::Label::new(
+                egui::RichText::new(label).strong().color(p.text_primary),
+            ).wrap());
+        },
+    );
+    ui.horizontal_top(|ui| {
+        ui.add_space(track_w + 10.0);
+        ui.label(egui::RichText::new(helper).small().color(p.text_muted));
     });
 
     toggled

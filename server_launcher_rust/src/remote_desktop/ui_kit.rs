@@ -416,41 +416,54 @@ pub(crate) fn switch(
     let knob_radius = 7.0;
     let label_color = if enabled { LABEL } else { PLACEHOLDER };
     let hint_color = if enabled { MUTED } else { PLACEHOLDER };
-    let mut response = None;
-    ui.horizontal(|ui| {
-        let (rect, mut switch_response) = ui.allocate_exact_size(track, Sense::click());
-        if switch_response.clicked()
-            || (switch_response.has_focus() && ui.input(|input| input.key_pressed(Key::Enter)))
-        {
-            *on = !*on;
-            switch_response.mark_changed();
-            ui.ctx().request_repaint();
-        }
-        let track_fill = if enabled && switch_response.hovered() {
-            track_fill.gamma_multiply(0.88)
-        } else {
-            track_fill
-        };
-        ui.painter()
-            .rect_filled(rect, Rounding::same(9.0), track_fill);
-        let knob_x = if *on {
-            rect.max.x - 2.0 - knob_radius
-        } else {
-            rect.min.x + 2.0 + knob_radius
-        };
-        ui.painter()
-            .circle_filled(egui::pos2(knob_x, rect.center().y), knob_radius, knob_fill);
-        focus_ring(ui, &switch_response, rect, 10.0);
-        response = Some(switch_response);
-        ui.add_space(8.0);
-        ui.vertical(|ui| {
-            ui.label(RichText::new(label).size(12.0).color(label_color));
-            if let Some(text) = helper {
-                ui.label(RichText::new(text).size(11.0).color(hint_color));
-            }
+    let row_width = ui.available_width();
+    let response = ui
+        .allocate_ui_with_layout(
+            Vec2::new(row_width, 29.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                let (rect, mut switch_response) = ui.allocate_exact_size(track, Sense::click());
+                if switch_response.clicked()
+                    || (switch_response.has_focus()
+                        && ui.input(|input| input.key_pressed(Key::Enter)))
+                {
+                    *on = !*on;
+                    switch_response.mark_changed();
+                    ui.ctx().request_repaint();
+                }
+                let track_fill = if enabled && switch_response.hovered() {
+                    track_fill.gamma_multiply(0.88)
+                } else {
+                    track_fill
+                };
+                ui.painter()
+                    .rect_filled(rect, Rounding::same(9.0), track_fill);
+                let knob_x = if *on {
+                    rect.max.x - 2.0 - knob_radius
+                } else {
+                    rect.min.x + 2.0 + knob_radius
+                };
+                ui.painter().circle_filled(
+                    egui::pos2(knob_x, rect.center().y),
+                    knob_radius,
+                    knob_fill,
+                );
+                focus_ring(ui, &switch_response, rect, 10.0);
+                ui.add_space(8.0);
+                ui.add(egui::Label::new(
+                    RichText::new(label).size(12.0).color(label_color),
+                ).wrap());
+                switch_response
+            },
+        )
+        .inner;
+    if let Some(text) = helper {
+        ui.horizontal_top(|ui| {
+            ui.add_space(track.x + 8.0);
+            ui.label(RichText::new(text).size(11.0).color(hint_color));
         });
-    });
-    response.expect("switch row always allocates its control")
+    }
+    response
 }
 
 /// Static section heading with a padded body.
